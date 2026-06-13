@@ -8,10 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Storage interface {
 	AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error)
+	OpenBlob(ctx context.Context, blobPath string) (*os.File, error)
+	DeleteSite(ctx context.Context, siteSHA string) error
 }
 
 type StoredFile struct {
@@ -111,4 +114,25 @@ func (s *BlobStorage) AcceptFile(ctx context.Context, file StoredFile) (StoredFi
 		FileSHA:  fileSHA,
 		Bytes:    bytes,
 	}, nil
+}
+
+func (s *BlobStorage) OpenBlob(ctx context.Context, blobPath string) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	clean := filepath.Clean(filepath.FromSlash(blobPath))
+	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		return nil, fmt.Errorf("invalid blob path: %s", blobPath)
+	}
+	return os.Open(filepath.Join(s.root, clean))
+}
+
+func (s *BlobStorage) DeleteSite(ctx context.Context, siteSHA string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if siteSHA == "" || strings.Contains(siteSHA, string(filepath.Separator)) || strings.Contains(siteSHA, "/") || strings.Contains(siteSHA, "..") {
+		return fmt.Errorf("invalid site sha: %s", siteSHA)
+	}
+	return os.RemoveAll(filepath.Join(s.root, "blobs", "site:"+siteSHA))
 }
