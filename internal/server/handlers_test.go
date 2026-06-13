@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"quack/internal/protocol"
@@ -144,7 +145,7 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	}
 }
 
-func TestNginxStyleStaticRoutingForExplicitServePath(t *testing.T) {
+func TestExplicitServePathIsDisabled(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "blog-index", "blog index")
 
@@ -162,11 +163,8 @@ func TestNginxStyleStaticRoutingForExplicitServePath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusMovedPermanently {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMovedPermanently)
-	}
-	if got := rec.Header().Get("Location"); got != "/serve/foo/blog/" {
-		t.Fatalf("location = %q, want /serve/foo/blog/", got)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
 
@@ -243,6 +241,55 @@ func TestAdminPathsAllowAdminHost(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestAdminHostRootShowsLoginPlaceholder(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	srv := New("", "token", fakeStorage{}, &fakeDatabase{}, opts)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "quack.example.com"
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("content-type = %q, want html", got)
+	}
+	if !strings.Contains(rec.Body.String(), "Quack Admin") {
+		t.Fatalf("body = %q, want admin placeholder", rec.Body.String())
+	}
+}
+
+func TestSiteHostRootStillServesSite(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "index", "site index")
+
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		files: map[string]UploadFileRecord{
+			fileKey("foo", "index.html"): {
+				RelativePath: "index.html",
+				BlobPath:     "index",
+			},
+		},
+	}, opts)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "site index" {
+		t.Fatalf("body = %q, want site index", rec.Body.String())
 	}
 }
 

@@ -30,14 +30,45 @@ type handler struct {
 }
 
 func (h *handler) adminRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/", h.handleAdminLoginPage)
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
 }
 
 func (h *handler) siteRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/serve/", h.handleServeExplicitSite)
+	mux.HandleFunc("/serve", h.handleServeDisabled)
+	mux.HandleFunc("/serve/", h.handleServeDisabled)
 	mux.HandleFunc("/", h.handleServeFile)
+}
+
+func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Quack Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <main>
+    <h1>Quack Admin</h1>
+    <p>Login interface placeholder.</p>
+  </main>
+</body>
+</html>
+`)
 }
 
 func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +150,10 @@ func (h *handler) handleServeExplicitSite(w http.ResponseWriter, r *http.Request
 	}
 
 	h.serveSiteFile(w, r, site, filePath, "/serve/"+url.PathEscape(site))
+}
+
+func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
 }
 
 func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {

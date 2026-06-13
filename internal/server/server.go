@@ -65,14 +65,22 @@ type adminHostRouter struct {
 
 func (r adminHostRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if isAdminPath(req.URL.Path) {
-		if r.adminHost != "" && normalizeAdminHost(req.Host) != r.adminHost {
+		if r.adminHost != "" && !r.isAdminHost(req.Host) {
 			http.NotFound(w, req)
 			return
 		}
 		r.admin.ServeHTTP(w, req)
 		return
 	}
+	if req.URL.Path == "/" && r.isAdminHost(req.Host) {
+		r.admin.ServeHTTP(w, req)
+		return
+	}
 	r.site.ServeHTTP(w, req)
+}
+
+func (r adminHostRouter) isAdminHost(host string) bool {
+	return r.adminHost != "" && normalizeAdminHost(host) == r.adminHost
 }
 
 func isAdminPath(path string) bool {
