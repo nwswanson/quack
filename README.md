@@ -1,5 +1,5 @@
 # Quack
-
+![Duck](duck.png)
 Quack is a tiny publishing layer for AI-made tools, demos, dashboards, games, and static sites.
 
 The idea is simple: point Quack at a folder, give the site a name, and get something shareable back. No framework ceremony, no deployment pipeline, no project-shaped infrastructure detour. Just upload the files and serve the current version by hostname.
