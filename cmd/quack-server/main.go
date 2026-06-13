@@ -5,15 +5,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"quack/internal/server"
 	"quack/internal/sqlitedb"
 )
 
 func main() {
+	configureLogger()
+
 	root := flag.String("root", "", "root directory for blob storage")
 	databasePath := flag.String("database", "", "sqlite database file")
 	maxUploadBytes := flag.Int64("max-upload-bytes", server.DefaultMaxUploadBytes, "maximum tar upload request size in bytes; 0 disables")
@@ -43,11 +46,13 @@ func main() {
 
 	store, err := server.NewBlobStorage(*root)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("create blob storage failed", "root", *root, "error", err)
+		os.Exit(1)
 	}
 	db, err := sqlitedb.Open(context.Background(), *databasePath)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("open database failed", "database", *databasePath, "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -56,8 +61,37 @@ func main() {
 	opts.MaxUploadFiles = *maxUploadFiles
 
 	srv := server.New(addr, os.Getenv("UPLOAD_TOKEN"), store, db, opts)
-	log.Printf("listening on %s max_upload_bytes=%d max_upload_files=%d", addr, opts.MaxUploadBytes, opts.MaxUploadFiles)
+	slog.Info("starting quack server",
+		"addr", addr,
+		"root", *root,
+		"database", *databasePath,
+		"max_upload_bytes", opts.MaxUploadBytes,
+		"max_upload_files", opts.MaxUploadFiles,
+		"auth_enabled", os.Getenv("UPLOAD_TOKEN") != "",
+	)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+		slog.Error("server stopped unexpectedly", "error", err)
+		os.Exit(1)
 	}
+}
+
+func configureLogger() {
+	var level slog.Level
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
+	case "", "info":
+		level = slog.LevelInfo
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	}))
+	slog.SetDefault(logger)
 }

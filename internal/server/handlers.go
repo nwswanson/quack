@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,18 +54,19 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	siteSHA := sha256Hex(site)
 	deleted, err := h.db.DeleteSite(r.Context(), site, siteSHA)
 	if err != nil {
-		log.Printf("delete site metadata failed: %v", err)
+		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if deleted {
 		if err := h.store.DeleteSite(r.Context(), siteSHA); err != nil {
-			log.Printf("delete site blobs failed: %v", err)
+			slog.ErrorContext(r.Context(), "delete site blobs failed", "site", site, "site_sha", siteSHA, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 	}
 
+	slog.InfoContext(r.Context(), "site delete completed", "site", site, "deleted", deleted)
 	writeJSON(w, http.StatusOK, protocol.DeleteSiteResponse{
 		OK:      true,
 		Site:    site,
@@ -107,12 +108,12 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	relativePath, wantsIndex := requestedRelativePath(urlPath)
 	file, ok, err := h.db.FindCurrentFile(r.Context(), site, relativePath)
 	if err != nil {
-		log.Printf("lookup file failed: %v", err)
+		slog.ErrorContext(r.Context(), "lookup file failed", "site", site, "path", relativePath, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if ok {
-		h.serveBlob(w, r, relativePath, file)
+		h.serveBlob(w, r, site, relativePath, file)
 		return
 	}
 
@@ -120,7 +121,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 		indexPath := path.Join(relativePath, "index.html")
 		_, ok, err := h.db.FindCurrentFile(r.Context(), site, indexPath)
 		if err != nil {
-			log.Printf("lookup directory index failed: %v", err)
+			slog.ErrorContext(r.Context(), "lookup directory index failed", "site", site, "path", indexPath, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
@@ -138,14 +139,15 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	http.NotFound(w, r)
 }
 
-func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, relativePath string, file UploadFileRecord) {
+func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file UploadFileRecord) {
 	blob, err := h.store.OpenBlob(r.Context(), file.BlobPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			slog.WarnContext(r.Context(), "blob missing for current file", "site", site, "path", relativePath, "blob_path", file.BlobPath)
 			http.NotFound(w, r)
 			return
 		}
-		log.Printf("open blob failed: %v", err)
+		slog.ErrorContext(r.Context(), "open blob failed", "site", site, "path", relativePath, "blob_path", file.BlobPath, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -166,7 +168,6 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("accepted upload: site=%s version=%d files=%d bytes=%d", resp.Site, resp.Version, resp.Files, resp.Bytes)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -202,7 +203,6 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 	case errors.As(err, &badRequest):
 		writeError(w, http.StatusBadRequest, badRequest.Error())
 	default:
-		log.Printf("upload failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
 }
@@ -215,22 +215,26 @@ func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadAr
 	if err != nil {
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("begin upload: %w", err)
 	}
+	slog.InfoContext(ctx, "upload started", "site", upload.Site, "version", upload.Version)
 
 	files, bytes, err := h.acceptArchive(r, &upload)
 	if err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
-			log.Printf("mark upload failed: %v", markErr)
+			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
 		}
+		slog.WarnContext(ctx, "upload failed", "site", upload.Site, "version", upload.Version, "error", err)
 		return protocol.UploadArchiveResponse{}, err
 	}
 
 	if err := h.db.FinishUpload(ctx, upload); err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
-			log.Printf("mark upload failed: %v", markErr)
+			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
 		}
+		slog.ErrorContext(ctx, "finish upload metadata failed", "site", upload.Site, "version", upload.Version, "error", err)
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("finish upload metadata: %w", err)
 	}
 
+	slog.InfoContext(ctx, "upload finished", "site", upload.Site, "version", upload.Version, "files", files, "bytes", bytes)
 	return protocol.UploadArchiveResponse{
 		OK:      true,
 		Site:    upload.Site,
