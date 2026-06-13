@@ -59,6 +59,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	admin, err := db.BootstrapAdmin(context.Background())
+	if err != nil {
+		slog.Error("bootstrap admin user failed", "error", err)
+		os.Exit(1)
+	}
+	if admin.Created {
+		slog.Warn("bootstrap admin user created",
+			"username", admin.Username,
+			"password", admin.Password,
+			"token", admin.Token,
+		)
+	}
 
 	opts := server.DefaultOptions()
 	opts.MaxUploadBytes = *maxUploadBytes

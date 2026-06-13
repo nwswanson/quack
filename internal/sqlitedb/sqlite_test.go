@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -74,6 +75,112 @@ func TestFinishUploadPersistsMetadata(t *testing.T) {
 	}
 	if relativePath != upload.Files[0].RelativePath || blobPath != upload.Files[0].BlobPath {
 		t.Fatalf("file row = (%q, %q), want (%q, %q)", relativePath, blobPath, upload.Files[0].RelativePath, upload.Files[0].BlobPath)
+	}
+}
+
+func TestBootstrapAdminCreatesInitialUserOnce(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	first, err := db.BootstrapAdmin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created {
+		t.Fatal("first bootstrap did not create admin")
+	}
+	if first.Username != adminUsername {
+		t.Fatalf("username = %q, want %q", first.Username, adminUsername)
+	}
+	if first.Password == "" {
+		t.Fatal("password is empty")
+	}
+	if first.Token == "" {
+		t.Fatal("token is empty")
+	}
+
+	second, err := db.BootstrapAdmin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Created {
+		t.Fatal("second bootstrap created another admin")
+	}
+
+	var count int
+	var passwordHash string
+	var tokenHash string
+	var adminPriv string
+	if err := db.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(password_hash), MIN(token_hash), MIN(admin_priv)
+		FROM users
+	`).Scan(&count, &passwordHash, &tokenHash, &adminPriv); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("users = %d, want 1", count)
+	}
+	if passwordHash == first.Password {
+		t.Fatal("password was stored in plaintext")
+	}
+	if tokenHash == first.Token {
+		t.Fatal("token was stored in plaintext")
+	}
+	if !strings.HasPrefix(passwordHash, "pbkdf2-sha256$") {
+		t.Fatalf("password hash = %q, want pbkdf2 prefix", passwordHash)
+	}
+	if !strings.HasPrefix(tokenHash, "sha256:") {
+		t.Fatalf("token hash = %q, want sha256 prefix", tokenHash)
+	}
+	if adminPriv != adminPermission {
+		t.Fatalf("admin priv = %q, want %q", adminPriv, adminPermission)
+	}
+}
+
+func TestUserSitesTableJoinsUsersToUploadedSites(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	admin, err := db.BootstrapAdmin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload, err := db.BeginUpload(ctx, "example.com", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishUpload(ctx, upload); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.writeDB.ExecContext(ctx, `
+		INSERT INTO user_sites (user_id, site_sha)
+		SELECT id, ? FROM users WHERE username = ?
+	`, upload.SiteSHA, admin.Username)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var site string
+	if err := db.readDB.QueryRowContext(ctx, `
+		SELECT s.site
+		FROM user_sites us
+		JOIN users u ON u.id = us.user_id
+		JOIN sites s ON s.site_sha = us.site_sha
+		WHERE u.username = ?
+	`, admin.Username).Scan(&site); err != nil {
+		t.Fatal(err)
+	}
+	if site != upload.Site {
+		t.Fatalf("site = %q, want %q", site, upload.Site)
 	}
 }
 

@@ -2,7 +2,12 @@ package sqlitedb
 
 import (
 	"context"
+	"crypto/pbkdf2"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,6 +15,14 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/server"
+)
+
+const (
+	adminUsername   = "admin"
+	adminPermission = "admin:*"
+	pbkdf2Iters     = 210000
+	hashBytes       = 32
+	saltBytes       = 16
 )
 
 type Database struct {
@@ -110,6 +123,22 @@ func (d *Database) init(ctx context.Context) error {
 			PRIMARY KEY(upload_id, relative_path),
 			FOREIGN KEY(upload_id) REFERENCES uploads(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL,
+			admin_priv TEXT NOT NULL DEFAULT '',
+			token_hash TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_sites (
+			user_id INTEGER NOT NULL,
+			site_sha TEXT NOT NULL,
+			uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(user_id, site_sha),
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY(site_sha) REFERENCES sites(site_sha) ON DELETE CASCADE
+		)`,
 	}
 
 	for _, statement := range statements {
@@ -133,6 +162,63 @@ func (d *Database) init(ctx context.Context) error {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
 	}
 	return nil
+}
+
+type BootstrapAdminResult struct {
+	Created  bool
+	Username string
+	Password string
+	Token    string
+}
+
+func (d *Database) BootstrapAdmin(ctx context.Context) (BootstrapAdminResult, error) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("begin bootstrap admin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("count users: %w", err)
+	}
+	if count > 0 {
+		return BootstrapAdminResult{}, nil
+	}
+
+	password, err := randomSecret(24)
+	if err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("generate admin password: %w", err)
+	}
+	token, err := randomSecret(32)
+	if err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("generate admin token: %w", err)
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("hash admin password: %w", err)
+	}
+	tokenHash := hashToken(token)
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users (username, password_hash, admin_priv, token_hash)
+		VALUES (?, ?, ?, ?)
+	`, adminUsername, passwordHash, adminPermission, tokenHash); err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("create bootstrap admin user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return BootstrapAdminResult{}, fmt.Errorf("commit bootstrap admin transaction: %w", err)
+	}
+
+	return BootstrapAdminResult{
+		Created:  true,
+		Username: adminUsername,
+		Password: password,
+		Token:    token,
+	}, nil
 }
 
 func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string) (server.UploadRecord, error) {
@@ -357,6 +443,36 @@ func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) 
 		return false, fmt.Errorf("commit delete site transaction: %w", err)
 	}
 	return true, nil
+}
+
+func randomSecret(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func hashPassword(password string) (string, error) {
+	salt := make([]byte, saltBytes)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	key, err := pbkdf2.Key(sha256.New, password, salt, pbkdf2Iters, hashBytes)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		"pbkdf2-sha256$%d$%s$%s",
+		pbkdf2Iters,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key),
+	), nil
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func uploadID(ctx context.Context, tx *sql.Tx, upload server.UploadRecord) (int64, error) {
