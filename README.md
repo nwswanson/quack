@@ -58,6 +58,74 @@ docker run --rm -p 8080:8080 \
   quack-server:dev
 ```
 
+## Cloudflare Tunnel
+
+`quack-server` works behind Cloudflare Tunnel when Cloudflare routes a public hostname to the Kubernetes Service for the server.
+
+The request flow is:
+
+```text
+Browser
+  -> Cloudflare edge
+  -> Cloudflare Tunnel
+  -> cloudflared pod in Kubernetes
+  -> quack-server Kubernetes Service
+  -> quack-server pod
+```
+
+For a Kubernetes Service named `quack-server` in the `default` namespace, an explicit Cloudflare Tunnel route can look like:
+
+```yaml
+ingress:
+  - hostname: foo.example.com
+    service: http://quack-server.default.svc.cluster.local:8080
+
+  - service: http_status:404
+```
+
+Then upload a site named `foo`:
+
+```bash
+quack deploy ./site foo \
+  --token dev-token \
+  --serverURL https://foo.example.com
+```
+
+Public requests to `https://foo.example.com/` will reach `quack-server`, which reads the request `Host` header and maps the left-most label to the site name:
+
+```text
+foo.example.com -> foo
+```
+
+The important requirement is that `quack-server` receives the original public `Host` header. If the tunnel rewrites `Host` to the internal Kubernetes service name, set the host header explicitly:
+
+```yaml
+ingress:
+  - hostname: foo.example.com
+    service: http://quack-server.default.svc.cluster.local:8080
+    originRequest:
+      httpHostHeader: foo.example.com
+
+  - service: http_status:404
+```
+
+For multiple sites, a wildcard hostname can route all site subdomains to the same service:
+
+```yaml
+ingress:
+  - hostname: "*.example.com"
+    service: http://quack-server.default.svc.cluster.local:8080
+
+  - service: http_status:404
+```
+
+With that setup:
+
+```text
+foo.example.com -> site foo
+bar.example.com -> site bar
+```
+
 ## Run the Uploader
 
 Upload a folder to a running server:

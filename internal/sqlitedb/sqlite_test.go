@@ -3,6 +3,7 @@ package sqlitedb
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -225,6 +226,107 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 	}
 	if file.BlobPath != "blobs/site:foo-sha/2/file:v2" {
 		t.Fatalf("blob path after publish = %q, want v2 blob", file.BlobPath)
+	}
+}
+
+func TestConcurrentUploadsForDifferentSitesServeIndependently(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type siteUpload struct {
+		site    string
+		siteSHA string
+		blob    string
+	}
+	initial := []siteUpload{
+		{site: "site-a", siteSHA: "site-a-sha", blob: "blobs/site:site-a-sha/1/file:a-v1"},
+		{site: "site-b", siteSHA: "site-b-sha", blob: "blobs/site:site-b-sha/1/file:b-v1"},
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(initial))
+	for _, item := range initial {
+		item := item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			upload, err := db.BeginUpload(ctx, item.site, item.siteSHA)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if upload.Version != 1 {
+				errs <- fmt.Errorf("%s version = %d, want 1", item.site, upload.Version)
+				return
+			}
+			upload.Files = []server.UploadFileRecord{
+				{RelativePath: "index.html", BlobPath: item.blob, FileSHA: item.blob, Bytes: 1},
+			}
+			if err := db.FinishUpload(ctx, upload); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/1/file:a-v1")
+	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/1/file:b-v1")
+
+	a2, err := db.BeginUpload(ctx, "site-a", "site-a-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := db.BeginUpload(ctx, "site-b", "site-b-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a2.Version != 2 || b2.Version != 2 {
+		t.Fatalf("second versions = (%d, %d), want (2, 2)", a2.Version, b2.Version)
+	}
+
+	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/1/file:a-v1")
+	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/1/file:b-v1")
+
+	b2.Files = []server.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:site-b-sha/2/file:b-v2", FileSHA: "b-v2", Bytes: 2},
+	}
+	if err := db.FinishUpload(ctx, b2); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/1/file:a-v1")
+	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/2/file:b-v2")
+
+	a2.Files = []server.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:site-a-sha/2/file:a-v2", FileSHA: "a-v2", Bytes: 2},
+	}
+	if err := db.FinishUpload(ctx, a2); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/2/file:a-v2")
+	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/2/file:b-v2")
+}
+
+func assertCurrentBlob(t *testing.T, ctx context.Context, db *Database, site string, want string) {
+	t.Helper()
+	file, ok, err := db.FindCurrentFile(ctx, site, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatalf("site %s has no current index.html", site)
+	}
+	if file.BlobPath != want {
+		t.Fatalf("site %s blob = %q, want %q", site, file.BlobPath, want)
 	}
 }
 

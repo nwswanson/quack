@@ -4,16 +4,28 @@ This project currently accepts a streamed tar archive, hashes each regular file,
 
 ## Current Behavior
 
-The server processes uploads sequentially:
+The server processes each upload through one coordinator function:
 
-1. Read one tar header.
-2. Validate and sanitize the archive path.
-3. For regular files, stream the file body through SHA-256 and into a temporary file.
-4. Rename the temporary file to `blobs/site:<site-sha>/<version>/file:<file-sha>`.
-5. Append one metadata record to the in-memory upload record.
-6. After the tar stream reaches EOF, call the database adapter once with the full upload record.
+1. Create an upload row in SQLite with state `uploading`.
+2. Read one tar header at a time.
+3. Validate and sanitize the archive path.
+4. For regular files, stream the file body through SHA-256 and into a temporary file.
+5. Rename the temporary file to `blobs/site:<site-sha>/<version>/file:<file-sha>`.
+6. Append one metadata record to the in-memory upload record.
+7. After the tar stream reaches EOF, write file metadata, mark the upload `finished`, and publish the site's current version in one SQLite transaction.
+8. If upload processing fails, mark the upload `error`.
 
 File contents are streamed. The server does not load a whole uploaded archive or whole file into memory.
+
+SQLite upload state is an enum-style text field with these values:
+
+- `uploading`
+- `finished`
+- `error`
+
+Only `finished` uploads are eligible for serving. `uploading` and `error` versions are ignored by the file-serving query.
+
+SQLite access is split into a serialized writer and a separate reader pool. All writes go through a single writer connection guarded by a mutex, while serving lookups use read connections. This preserves SQLite's single-writer model without forcing all reads through the writer.
 
 ## Default Upload Limits
 
@@ -76,7 +88,7 @@ An upload containing 10,000 regular files will result in:
 - 10,000 SHA-256 hashes computed.
 - 10,000 filesystem renames into the blob store.
 - 10,000 metadata records held in memory until the upload completes.
-- One final SQLite-backed metadata save call after the entire upload succeeds.
+- One final SQLite transaction that records file metadata, marks the upload `finished`, and publishes the version after the entire upload succeeds.
 
 This should work for ordinary small files, but it will be filesystem-operation-heavy and slower than a bulk write or batched metadata pipeline.
 
@@ -92,7 +104,7 @@ The current implementation still has no explicit guardrails for:
 - Disk space reservation or quota.
 - Cleanup of blobs if an upload fails halfway.
 
-Versions are allocated from the database. A new site starts at version `1`; later uploads use the stored current version plus one. Concurrent uploads for the same site still need stronger per-site locking or transactional reservation to avoid allocation races.
+Versions are reserved through the serialized SQLite writer. A new site starts at version `1`; later uploads use the next reserved version. Concurrent uploads for the same site receive distinct versions, and only the version whose upload reaches `finished` is published for serving.
 
 ## Important Edge Cases
 
@@ -115,7 +127,7 @@ Before treating uploads as production-safe, add:
 - Maximum accepted file size.
 - Maximum accepted sanitized path length.
 - Server read and write timeouts.
-- Per-site upload locking or transactional version reservation.
+- Per-site upload cancellation and cleanup for superseded or abandoned `uploading` versions.
 - Staged upload directories with cleanup on failure.
 - Atomic publish of upload metadata only after all blobs are written.
 - Collision detection for sanitized relative paths.
