@@ -12,7 +12,6 @@ import (
 
 type Storage interface {
 	AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error)
-	SaveUpload(ctx context.Context, upload UploadRecord) error
 }
 
 type StoredFile struct {
@@ -44,23 +43,16 @@ type UploadFileRecord struct {
 	Bytes        int64
 }
 
-type UploadSaver func(ctx context.Context, upload UploadRecord) error
-
 type BlobStorage struct {
-	root       string
-	saveUpload UploadSaver
+	root string
 }
 
-func NewBlobStorage(root string, saveUpload UploadSaver) (*BlobStorage, error) {
+func NewBlobStorage(root string) (*BlobStorage, error) {
 	if root == "" {
 		return nil, fmt.Errorf("root is required")
 	}
-	if saveUpload == nil {
-		saveUpload = StubSaveUpload
-	}
 	return &BlobStorage{
-		root:       root,
-		saveUpload: saveUpload,
+		root: root,
 	}, nil
 }
 
@@ -119,12 +111,4 @@ func (s *BlobStorage) AcceptFile(ctx context.Context, file StoredFile) (StoredFi
 		FileSHA:  fileSHA,
 		Bytes:    bytes,
 	}, nil
-}
-
-func (s *BlobStorage) SaveUpload(ctx context.Context, upload UploadRecord) error {
-	return s.saveUpload(ctx, upload)
-}
-
-func StubSaveUpload(ctx context.Context, upload UploadRecord) error {
-	return ctx.Err()
 }

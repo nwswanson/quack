@@ -19,6 +19,7 @@ import (
 type handler struct {
 	token string
 	store Storage
+	db    Database
 }
 
 func (h *handler) routes(mux *http.ServeMux) {
@@ -44,8 +45,14 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version := int64(1)
-	files, bytes, err := h.acceptArchive(r, site, version)
+	siteSHA := sha256Hex(site)
+	version, err := h.db.AllocateVersion(r.Context(), site, siteSHA)
+	if err != nil {
+		log.Printf("allocate upload version: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	files, bytes, err := h.acceptArchive(r, site, siteSHA, version)
 	if err != nil {
 		var badRequest badArchiveError
 		if errors.As(err, &badRequest) {
@@ -67,9 +74,8 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *handler) acceptArchive(r *http.Request, site string, version int64) (int64, int64, error) {
+func (h *handler) acceptArchive(r *http.Request, site string, siteSHA string, version int64) (int64, int64, error) {
 	tr := tar.NewReader(r.Body)
-	siteSHA := sha256Hex(site)
 	upload := UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,
@@ -81,7 +87,7 @@ func (h *handler) acceptArchive(r *http.Request, site string, version int64) (in
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			if err := h.store.SaveUpload(r.Context(), upload); err != nil {
+			if err := h.db.SaveUpload(r.Context(), upload); err != nil {
 				return 0, 0, fmt.Errorf("save upload metadata: %w", err)
 			}
 			return files, bytes, nil

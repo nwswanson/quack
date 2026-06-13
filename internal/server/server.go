@@ -2,7 +2,7 @@ package server
 
 import "net/http"
 
-func New(addr string, token string, store Storage) *http.Server {
+func New(addr string, token string, store Storage, db Database) *http.Server {
 	if addr == "" {
 		addr = ":8080"
 	}
@@ -11,6 +11,7 @@ func New(addr string, token string, store Storage) *http.Server {
 	h := &handler{
 		token: token,
 		store: store,
+		db:    db,
 	}
 	h.routes(mux)
 

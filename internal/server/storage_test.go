@@ -12,7 +12,7 @@ import (
 
 func TestBlobStorageAcceptFileWritesHashedBlob(t *testing.T) {
 	root := t.TempDir()
-	store, err := NewBlobStorage(root, StubSaveUpload)
+	store, err := NewBlobStorage(root)
 	if err != nil {
 		t.Fatal(err)
 	}

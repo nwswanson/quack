@@ -9,13 +9,13 @@ The first version is intentionally minimal: uploads are parsed and counted, but 
 Start the server without upload authentication:
 
 ```bash
-go run ./cmd/quack-server -root ./data
+go run ./cmd/quack-server -root ./data -database ./quack.sqlite
 ```
 
 Start the server with bearer-token authentication:
 
 ```bash
-UPLOAD_TOKEN=dev-token go run ./cmd/quack-server -root ./data
+UPLOAD_TOKEN=dev-token go run ./cmd/quack-server -root ./data -database ./quack.sqlite
 ```
 
 The server listens on `:8080` by default. Set `ADDR` to override it.
@@ -37,10 +37,10 @@ The uploader streams a tar archive directly into the HTTP request. It does not w
 ## Current Limitations
 
 - Files are stored as SHA-256-addressed blobs under `blobs/site:<site-sha>/<version>/file:<file-sha>`.
-- Upload metadata saving is still stubbed; the server passes the site, version, sanitized relative paths, and blob references to a no-op saver after a complete upload.
+- Upload metadata is saved through a database adapter. The current concrete implementation uses SQLite via `modernc.org/sqlite`.
 - Symlinks and unusual filesystem entries are skipped by the client.
 - Symlinks and unsupported tar entries are rejected by the server.
-- There is no compression, chunking, resumable upload, deduplication, database, TLS setup, file serving, or user account system.
+- There is no compression, chunking, resumable upload, deduplication, TLS setup, file serving, or user account system.
 
 ## Roadmap
 

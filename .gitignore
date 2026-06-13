@@ -1,2 +1,8 @@
 /quack
 /quack-server
+/data/
+/uploads/
+/.idea/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
