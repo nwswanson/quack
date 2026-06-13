@@ -16,7 +16,7 @@ jobs:
       REGISTRY: registry.k3s.nathanielswanson.com
       IMAGE_NAME: quack 
       DEPLOY_REPO_SSH: git@forge.nathanielswanson.com:nate/deployments.git
-      DEPLOY_FILE: platform-gitops/apps/homepage/kustomization.yaml
+      DEPLOY_FILE: platform-gitops/apps/quack/kustomization.yaml
 
       # POC creds via vars (as requested)
       DOCKER_USERNAME: ${{ vars.DOCKER_USERNAME }}
