@@ -109,12 +109,14 @@ func (d *Database) init(ctx context.Context) error {
 			site_sha TEXT NOT NULL,
 			site TEXT NOT NULL,
 			version INTEGER NOT NULL,
+			publisher_user_id INTEGER,
 			files INTEGER NOT NULL,
 			bytes INTEGER NOT NULL,
 			state TEXT NOT NULL DEFAULT 'finished' CHECK (state IN ('uploading', 'finished', 'error')),
 			error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			finished_at TEXT,
+			FOREIGN KEY(publisher_user_id) REFERENCES users(id) ON DELETE SET NULL,
 			UNIQUE(site_sha, version)
 		)`,
 		`CREATE TABLE IF NOT EXISTS upload_files (
@@ -173,6 +175,9 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN finished_at TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite upload finished_at: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN publisher_user_id INTEGER`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite upload publisher: %w", err)
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
@@ -248,33 +253,71 @@ func (d *Database) CreateUser(ctx context.Context, username string, adminPriv st
 }
 
 func (d *Database) ListUserSites(ctx context.Context, userID int64) ([]server.PublishedSite, error) {
-	if userID <= 0 {
+	return d.listPublishedSites(ctx, userID, false)
+}
+
+func (d *Database) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]server.PublishedSite, error) {
+	return d.listPublishedSites(ctx, userID, includeAll)
+}
+
+func (d *Database) listPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]server.PublishedSite, error) {
+	if !includeAll && userID <= 0 {
 		return nil, nil
 	}
-	rows, err := d.readDB.QueryContext(ctx, `
-		SELECT s.site, s.site_sha, s.current_version, COUNT(u.id), COALESCE(SUM(u.files), 0), COALESCE(SUM(u.bytes), 0), s.updated_at
-		FROM user_sites us
-		JOIN sites s ON s.site_sha = us.site_sha
-		LEFT JOIN uploads u ON u.site_sha = s.site_sha AND u.state = ?
-		WHERE us.user_id = ?
-		GROUP BY s.site, s.site_sha, s.current_version, s.updated_at
-		ORDER BY s.updated_at DESC, s.site ASC
-	`, string(server.UploadStateFinished), userID)
+
+	query := `
+		SELECT s.site,
+			s.site_sha,
+			COALESCE(pub.username, legacy.username, '') AS published_by,
+			s.current_version,
+			(SELECT COUNT(*) FROM uploads u2 WHERE u2.site_sha = s.site_sha AND u2.state = ?) AS version_count,
+			COALESCE(cur.files, 0) AS file_count,
+			COALESCE(cur.bytes, 0) AS byte_count,
+			s.updated_at
+		FROM sites s
+		JOIN uploads cur
+			ON cur.site_sha = s.site_sha
+			AND cur.version = s.current_version
+			AND cur.state = ?
+		LEFT JOIN users pub ON pub.id = cur.publisher_user_id
+		LEFT JOIN (
+			SELECT us.site_sha, MIN(u.username) AS username
+			FROM user_sites us
+			JOIN users u ON u.id = us.user_id
+			GROUP BY us.site_sha
+		) legacy ON legacy.site_sha = s.site_sha
+	`
+	args := []any{string(server.UploadStateFinished), string(server.UploadStateFinished)}
+	if !includeAll {
+		query += `
+		WHERE cur.publisher_user_id = ? OR EXISTS (
+			SELECT 1 FROM user_sites us
+			WHERE us.site_sha = s.site_sha AND us.user_id = ?
+		)
+		`
+		args = append(args, userID, userID)
+	}
+	query += ` ORDER BY s.updated_at DESC, s.site ASC`
+
+	rows, err := d.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list user sites: %w", err)
+		return nil, fmt.Errorf("list published sites: %w", err)
 	}
 	defer rows.Close()
+	return scanPublishedSites(rows)
+}
 
+func scanPublishedSites(rows *sql.Rows) ([]server.PublishedSite, error) {
 	var sites []server.PublishedSite
 	for rows.Next() {
 		var site server.PublishedSite
-		if err := rows.Scan(&site.Site, &site.SiteSHA, &site.CurrentVersion, &site.VersionCount, &site.FileCount, &site.ByteCount, &site.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan user site: %w", err)
+		if err := rows.Scan(&site.Site, &site.SiteSHA, &site.PublishedBy, &site.CurrentVersion, &site.VersionCount, &site.FileCount, &site.ByteCount, &site.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan published site: %w", err)
 		}
 		sites = append(sites, site)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate user sites: %w", err)
+		return nil, fmt.Errorf("iterate published sites: %w", err)
 	}
 	return sites, nil
 }
@@ -536,7 +579,7 @@ func (d *Database) BootstrapAdmin(ctx context.Context) (BootstrapAdminResult, er
 	}, nil
 }
 
-func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string) (server.UploadRecord, error) {
+func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64) (server.UploadRecord, error) {
 	if site == "" {
 		return server.UploadRecord{}, fmt.Errorf("site is required")
 	}
@@ -567,9 +610,9 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO uploads (site_sha, site, version, files, bytes, state)
-		VALUES (?, ?, ?, 0, 0, ?)
-	`, siteSHA, site, version, string(server.UploadStateUploading)); err != nil {
+		INSERT INTO uploads (site_sha, site, version, publisher_user_id, files, bytes, state)
+		VALUES (?, ?, ?, NULLIF(?, 0), 0, 0, ?)
+	`, siteSHA, site, version, publisherUserID, string(server.UploadStateUploading)); err != nil {
 		return server.UploadRecord{}, fmt.Errorf("create uploading record: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

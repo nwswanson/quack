@@ -106,6 +106,7 @@
             <thead>
               <tr>
                 <th>Site</th>
+                <th>Published by</th>
                 <th>Current</th>
                 <th>Versions</th>
                 <th>Files</th>
@@ -117,6 +118,7 @@
               {{range .Sites}}
                 <tr>
                   <td>{{.Site}}</td>
+                  <td>{{if .PublishedBy}}{{.PublishedBy}}{{else}}-{{end}}</td>
                   <td>{{.CurrentVersion}}</td>
                   <td>{{.VersionCount}}</td>
                   <td>{{.FileCount}}</td>

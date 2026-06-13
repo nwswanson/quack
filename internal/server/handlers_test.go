@@ -271,7 +271,11 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{},
+		sites: []PublishedSite{
+			{Site: "alpha", PublishedBy: "alice", CurrentVersion: 2, VersionCount: 2, FileCount: 3, ByteCount: 300, UpdatedAt: "2026-01-01T00:00:00Z"},
+			{Site: "beta", PublishedBy: "bob", CurrentVersion: 1, VersionCount: 1, FileCount: 1, ByteCount: 100, UpdatedAt: "2026-01-02T00:00:00Z"},
+		},
+		sessions: map[string]AdminUser{},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -311,6 +315,12 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	}
 	if !strings.Contains(rootRec.Body.String(), "Published Sites") {
 		t.Fatalf("body = %q, want published sites section", rootRec.Body.String())
+	}
+	if !strings.Contains(rootRec.Body.String(), "alpha") || !strings.Contains(rootRec.Body.String(), "alice") {
+		t.Fatalf("body = %q, want alpha by alice", rootRec.Body.String())
+	}
+	if !strings.Contains(rootRec.Body.String(), "beta") || !strings.Contains(rootRec.Body.String(), "bob") {
+		t.Fatalf("body = %q, want beta by bob", rootRec.Body.String())
 	}
 	if !strings.Contains(rootRec.Body.String(), "Server Settings") {
 		t.Fatalf("body = %q, want server settings section", rootRec.Body.String())
@@ -543,7 +553,7 @@ type fakeDatabase struct {
 	sites     []PublishedSite
 }
 
-func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string) (UploadRecord, error) {
+func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64) (UploadRecord, error) {
 	return UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,
@@ -611,6 +621,13 @@ func (db *fakeDatabase) CreateUser(ctx context.Context, username string, adminPr
 }
 
 func (db *fakeDatabase) ListUserSites(ctx context.Context, userID int64) ([]PublishedSite, error) {
+	return db.sites, nil
+}
+
+func (db *fakeDatabase) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]PublishedSite, error) {
+	if includeAll {
+		return db.sites, nil
+	}
 	return db.sites, nil
 }
 

@@ -224,7 +224,7 @@ func (d adminPageData) HasCreatedUser() bool {
 }
 
 func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData, error) {
-	sites, err := h.db.ListUserSites(r.Context(), user.ID)
+	sites, err := h.db.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
 	if err != nil {
 		return adminPageData{}, err
 	}
@@ -536,7 +536,7 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, se
 	ctx := r.Context()
 	siteSHA := sha256Hex(site)
 
-	upload, err := h.db.BeginUpload(ctx, site, siteSHA)
+	upload, err := h.db.BeginUpload(ctx, site, siteSHA, user.ID)
 	if err != nil {
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("begin upload: %w", err)
 	}

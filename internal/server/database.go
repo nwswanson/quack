@@ -3,7 +3,7 @@ package server
 import "context"
 
 type Database interface {
-	BeginUpload(ctx context.Context, site string, siteSHA string) (UploadRecord, error)
+	BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64) (UploadRecord, error)
 	FinishUpload(ctx context.Context, upload UploadRecord) error
 	FailUpload(ctx context.Context, upload UploadRecord, reason string) error
 	FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error)
@@ -15,6 +15,7 @@ type Database interface {
 	DeleteAdminSession(ctx context.Context, token string) error
 	CreateUser(ctx context.Context, username string, adminPriv string) (CreatedUser, error)
 	ListUserSites(ctx context.Context, userID int64) ([]PublishedSite, error)
+	ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]PublishedSite, error)
 	LinkUserSite(ctx context.Context, userID int64, siteSHA string) error
 	GetServerSettings(ctx context.Context) (ServerSettings, error)
 	SaveServerSettings(ctx context.Context, settings ServerSettings) error
@@ -40,6 +41,7 @@ type CreatedUser struct {
 type PublishedSite struct {
 	Site           string
 	SiteSHA        string
+	PublishedBy    string
 	CurrentVersion int64
 	VersionCount   int64
 	FileCount      int64
