@@ -27,6 +27,37 @@ The server applies upload limits by default:
 
 Use `0` for either flag to disable that limit. These defaults are intended to fit ordinary static-site uploads, including moderately large sites, while preventing unbounded request bodies and unbounded metadata growth.
 
+## Docker
+
+Build the server image:
+
+```bash
+docker build -t quack-server:dev .
+```
+
+Run it locally with ephemeral in-container SQLite and blob storage:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e UPLOAD_TOKEN=dev-token \
+  quack-server:dev
+```
+
+The image starts `quack-server` with:
+
+```text
+-root /var/lib/quack -database /var/lib/quack/quack.sqlite
+```
+
+That directory is writable inside the container, but it is not persistent unless you mount a volume. For example:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e UPLOAD_TOKEN=dev-token \
+  -v quack-data:/var/lib/quack \
+  quack-server:dev
+```
+
 ## Run the Uploader
 
 Upload a folder to a running server:

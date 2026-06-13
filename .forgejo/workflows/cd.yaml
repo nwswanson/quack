@@ -1,0 +1,39 @@
+name: cd
+
+on:
+  push:
+    branches: ["master"]
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+
+jobs:
+  build_and_deploy:
+    runs-on: docker
+
+    env:
+      # app-specific
+      REGISTRY: registry.k3s.nathanielswanson.com
+      IMAGE_NAME: quack 
+      DEPLOY_REPO_SSH: git@forge.nathanielswanson.com:nate/deployments.git
+      DEPLOY_FILE: platform-gitops/apps/homepage/kustomization.yaml
+
+      # POC creds via vars (as requested)
+      DOCKER_USERNAME: ${{ vars.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ vars.DOCKER_PASSWORD }}
+      FORGE_SSH: ${{ vars.FORGE_SSH }}
+
+      # optional overrides (defaults match your current setup)
+      FORGE_HOST: forge.nathanielswanson.com
+      FORGE_PORT: "2222"
+
+      # optional identity
+      GIT_USER_NAME: forgejo-actions
+      GIT_USER_EMAIL: forgejo-actions@forge.nathanielswanson.com
+
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+
+      - name: Build, push, bump GitOps
+        uses: https://forge.nathanielswanson.com/nate/ci-templates/actions/build-push-bump@main

@@ -1,0 +1,12 @@
+.git
+.idea
+.forgejo
+data
+uploads
+quack
+quack-server
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+Dockerfile
+first.md
