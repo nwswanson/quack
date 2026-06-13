@@ -260,8 +260,93 @@ func TestAdminHostRootShowsLoginPlaceholder(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Fatalf("content-type = %q, want html", got)
 	}
-	if !strings.Contains(rec.Body.String(), "Quack Admin") {
-		t.Fatalf("body = %q, want admin placeholder", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "Quack Admin") || !strings.Contains(body, `action="/login"`) {
+		t.Fatalf("body = %q, want login form", body)
+	}
+}
+
+func TestAdminLoginAndLogout(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	loginBody := strings.NewReader("username=admin&password=secret")
+	loginReq := httptest.NewRequest(http.MethodPost, "/login", loginBody)
+	loginReq.Host = "quack.example.com"
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("X-Forwarded-Proto", "https")
+	loginRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusSeeOther {
+		t.Fatalf("login status = %d, want %d; body=%s", loginRec.Code, http.StatusSeeOther, loginRec.Body.String())
+	}
+	cookie := loginRec.Result().Cookies()[0]
+	if cookie.Name != adminSessionCookieName {
+		t.Fatalf("cookie = %q, want %q", cookie.Name, adminSessionCookieName)
+	}
+	if !cookie.HttpOnly {
+		t.Fatal("session cookie is not HttpOnly")
+	}
+	if !cookie.Secure {
+		t.Fatal("session cookie is not Secure behind https proxy")
+	}
+
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootReq.Host = "quack.example.com"
+	rootReq.AddCookie(cookie)
+	rootRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rootRec, rootReq)
+
+	if rootRec.Code != http.StatusOK {
+		t.Fatalf("root status = %d, want %d; body=%s", rootRec.Code, http.StatusOK, rootRec.Body.String())
+	}
+	if !strings.Contains(rootRec.Body.String(), "Signed in as admin") {
+		t.Fatalf("body = %q, want signed-in state", rootRec.Body.String())
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	logoutReq.Host = "quack.example.com"
+	logoutReq.AddCookie(cookie)
+	logoutRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(logoutRec, logoutReq)
+
+	if logoutRec.Code != http.StatusSeeOther {
+		t.Fatalf("logout status = %d, want %d", logoutRec.Code, http.StatusSeeOther)
+	}
+	if _, ok := db.sessions[cookie.Value]; ok {
+		t.Fatal("session still exists after logout")
+	}
+}
+
+func TestAdminLoginRejectsInvalidPassword(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=bad"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatal("invalid login set cookies")
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid username or password") {
+		t.Fatalf("body = %q, want invalid login message", rec.Body.String())
 	}
 }
 
@@ -386,7 +471,9 @@ func (fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
 }
 
 type fakeDatabase struct {
-	files map[string]UploadFileRecord
+	files     map[string]UploadFileRecord
+	adminUser AdminUser
+	sessions  map[string]AdminUser
 }
 
 func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string) (UploadRecord, error) {
@@ -413,6 +500,32 @@ func (db fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativ
 
 func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
 	return true, nil
+}
+
+func (db *fakeDatabase) AuthenticateAdmin(ctx context.Context, username string, password string) (AdminUser, bool, error) {
+	if db.adminUser.ID == 0 || username != db.adminUser.Username || password != "secret" {
+		return AdminUser{}, false, nil
+	}
+	return db.adminUser, true, nil
+}
+
+func (db *fakeDatabase) CreateAdminSession(ctx context.Context, userID int64) (string, error) {
+	if db.sessions == nil {
+		db.sessions = map[string]AdminUser{}
+	}
+	token := "test-session-token"
+	db.sessions[token] = db.adminUser
+	return token, nil
+}
+
+func (db *fakeDatabase) FindAdminSession(ctx context.Context, token string) (AdminUser, bool, error) {
+	user, ok := db.sessions[token]
+	return user, ok, nil
+}
+
+func (db *fakeDatabase) DeleteAdminSession(ctx context.Context, token string) error {
+	delete(db.sessions, token)
+	return nil
 }
 
 func (fakeDatabase) Close() error {

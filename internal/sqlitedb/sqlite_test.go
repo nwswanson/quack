@@ -184,6 +184,76 @@ func TestUserSitesTableJoinsUsersToUploadedSites(t *testing.T) {
 	}
 }
 
+func TestAuthenticateAdminAndSessions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	admin, err := db.BootstrapAdmin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user, ok, err := db.AuthenticateAdmin(ctx, admin.Username, admin.Password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("admin credentials did not authenticate")
+	}
+	if user.Username != admin.Username || user.ID <= 0 {
+		t.Fatalf("user = %#v, want bootstrapped admin", user)
+	}
+
+	if _, ok, err := db.AuthenticateAdmin(ctx, admin.Username, "wrong"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("wrong password authenticated")
+	}
+
+	sessionToken, err := db.CreateAdminSession(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionToken == "" {
+		t.Fatal("session token is empty")
+	}
+
+	sessionUser, ok, err := db.FindAdminSession(ctx, sessionToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if sessionUser.Username != admin.Username {
+		t.Fatalf("session user = %#v, want admin", sessionUser)
+	}
+
+	var storedHash string
+	if err := db.readDB.QueryRowContext(ctx, `SELECT token_hash FROM user_sessions`).Scan(&storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedHash == sessionToken {
+		t.Fatal("session token was stored in plaintext")
+	}
+	if !strings.HasPrefix(storedHash, "sha256:") {
+		t.Fatalf("session token hash = %q, want sha256 prefix", storedHash)
+	}
+
+	if err := db.DeleteAdminSession(ctx, sessionToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := db.FindAdminSession(ctx, sessionToken); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("deleted session still authenticates")
+	}
+}
+
 func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

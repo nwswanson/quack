@@ -72,7 +72,7 @@ func (r adminHostRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.admin.ServeHTTP(w, req)
 		return
 	}
-	if req.URL.Path == "/" && r.isAdminHost(req.Host) {
+	if r.isAdminHost(req.Host) {
 		r.admin.ServeHTTP(w, req)
 		return
 	}

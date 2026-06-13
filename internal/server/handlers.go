@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net"
@@ -21,6 +22,10 @@ import (
 	"quack/internal/protocol"
 )
 
+const adminSessionCookieName = "quack_admin_session"
+
+var adminTemplates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
+
 type handler struct {
 	token          string
 	store          Storage
@@ -31,6 +36,8 @@ type handler struct {
 
 func (h *handler) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleAdminLoginPage)
+	mux.HandleFunc("/login", h.handleAdminLogin)
+	mux.HandleFunc("/logout", h.handleAdminLogout)
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
@@ -52,23 +59,102 @@ func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user, _, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	h.renderAdminPage(w, r, adminPageData{User: user})
+}
+
+func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.renderAdminPage(w, r, adminPageData{Error: "Unable to read login form."})
+		return
+	}
+
+	username := strings.TrimSpace(r.Form.Get("username"))
+	password := r.Form.Get("password")
+	user, ok, err := h.db.AuthenticateAdmin(r.Context(), username, password)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "admin login failed", "username", username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		slog.WarnContext(r.Context(), "admin login rejected", "username", username)
+		h.renderAdminPage(w, r, adminPageData{Error: "Invalid username or password."})
+		return
+	}
+
+	token, err := h.db.CreateAdminSession(r.Context(), user.ID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "create admin session failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	http.SetCookie(w, adminSessionCookie(r, token, 86400))
+	slog.InfoContext(r.Context(), "admin login accepted", "username", user.Username)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	cookie, err := r.Cookie(adminSessionCookieName)
+	if err == nil && cookie.Value != "" {
+		if err := h.db.DeleteAdminSession(r.Context(), cookie.Value); err != nil {
+			slog.ErrorContext(r.Context(), "delete admin session failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	}
+	http.SetCookie(w, adminSessionCookie(r, "", -1))
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+type adminPageData struct {
+	User  AdminUser
+	Error string
+}
+
+func (d adminPageData) LoggedIn() bool {
+	return d.User.ID > 0
+}
+
+func (h *handler) renderAdminPage(w http.ResponseWriter, r *http.Request, data adminPageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Quack Admin</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <main>
-    <h1>Quack Admin</h1>
-    <p>Login interface placeholder.</p>
-  </main>
-</body>
-</html>
-`)
+	if err := adminTemplates.ExecuteTemplate(w, "admin.html", data); err != nil {
+		slog.ErrorContext(r.Context(), "render admin page failed", "error", err)
+	}
+}
+
+func (h *handler) currentAdminUser(r *http.Request) (AdminUser, bool, error) {
+	cookie, err := r.Cookie(adminSessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return AdminUser{}, false, nil
+	}
+	return h.db.FindAdminSession(r.Context(), cookie.Value)
+}
+
+func adminSessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     adminSessionCookieName,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+	}
 }
 
 func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {

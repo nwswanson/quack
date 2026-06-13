@@ -5,10 +5,12 @@ import (
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -23,6 +25,7 @@ const (
 	pbkdf2Iters     = 210000
 	hashBytes       = 32
 	saltBytes       = 16
+	sessionBytes    = 32
 )
 
 type Database struct {
@@ -139,6 +142,14 @@ func (d *Database) init(ctx context.Context) error {
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
 			FOREIGN KEY(site_sha) REFERENCES sites(site_sha) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS user_sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at TEXT NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
 	}
 
 	for _, statement := range statements {
@@ -160,6 +171,94 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) AuthenticateAdmin(ctx context.Context, username string, password string) (server.AdminUser, bool, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || password == "" {
+		return server.AdminUser{}, false, nil
+	}
+
+	var user server.AdminUser
+	var passwordHash string
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT id, username, admin_priv, password_hash
+		FROM users
+		WHERE username = ?
+	`, username).Scan(&user.ID, &user.Username, &user.AdminPriv, &passwordHash)
+	if err == sql.ErrNoRows {
+		return server.AdminUser{}, false, nil
+	}
+	if err != nil {
+		return server.AdminUser{}, false, fmt.Errorf("lookup admin user: %w", err)
+	}
+	ok, err := verifyPassword(password, passwordHash)
+	if err != nil {
+		return server.AdminUser{}, false, fmt.Errorf("verify admin password: %w", err)
+	}
+	if !ok {
+		return server.AdminUser{}, false, nil
+	}
+	return user, true, nil
+}
+
+func (d *Database) CreateAdminSession(ctx context.Context, userID int64) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("user id is required")
+	}
+	token, err := randomSecret(sessionBytes)
+	if err != nil {
+		return "", fmt.Errorf("generate session token: %w", err)
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	if _, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO user_sessions (user_id, token_hash, expires_at)
+		VALUES (?, ?, datetime('now', '+7 days'))
+	`, userID, hashToken(token)); err != nil {
+		return "", fmt.Errorf("create admin session: %w", err)
+	}
+	return token, nil
+}
+
+func (d *Database) FindAdminSession(ctx context.Context, token string) (server.AdminUser, bool, error) {
+	if token == "" {
+		return server.AdminUser{}, false, nil
+	}
+	var user server.AdminUser
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT u.id, u.username, u.admin_priv
+		FROM user_sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.token_hash = ?
+			AND s.expires_at > CURRENT_TIMESTAMP
+	`, hashToken(token)).Scan(&user.ID, &user.Username, &user.AdminPriv)
+	if err == sql.ErrNoRows {
+		return server.AdminUser{}, false, nil
+	}
+	if err != nil {
+		return server.AdminUser{}, false, fmt.Errorf("find admin session: %w", err)
+	}
+	return user, true, nil
+}
+
+func (d *Database) DeleteAdminSession(ctx context.Context, token string) error {
+	if token == "" {
+		return nil
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	if _, err := d.writeDB.ExecContext(ctx, `
+		DELETE FROM user_sessions
+		WHERE token_hash = ?
+	`, hashToken(token)); err != nil {
+		return fmt.Errorf("delete admin session: %w", err)
 	}
 	return nil
 }
@@ -468,6 +567,30 @@ func hashPassword(password string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	), nil
+}
+
+func verifyPassword(password string, encoded string) (bool, error) {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
+		return false, fmt.Errorf("unsupported password hash")
+	}
+	iters, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false, fmt.Errorf("parse password hash iterations: %w", err)
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false, fmt.Errorf("decode password salt: %w", err)
+	}
+	want, err := base64.RawStdEncoding.DecodeString(parts[3])
+	if err != nil {
+		return false, fmt.Errorf("decode password hash: %w", err)
+	}
+	got, err := pbkdf2.Key(sha256.New, password, salt, iters, len(want))
+	if err != nil {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
 func hashToken(token string) string {
