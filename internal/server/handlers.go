@@ -85,7 +85,7 @@ func (h *handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.serveSiteFile(w, r, site, r.URL.Path)
+	h.serveSiteFile(w, r, site, r.URL.Path, "")
 }
 
 func (h *handler) handleServeExplicitSite(w http.ResponseWriter, r *http.Request) {
@@ -100,10 +100,10 @@ func (h *handler) handleServeExplicitSite(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.serveSiteFile(w, r, site, filePath)
+	h.serveSiteFile(w, r, site, filePath, "/serve/"+url.PathEscape(site))
 }
 
-func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string) {
+func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
 	relativePath, wantsIndex := requestedRelativePath(urlPath)
 	file, ok, err := h.db.FindCurrentFile(r.Context(), site, relativePath)
 	if err != nil {
@@ -111,16 +111,34 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if !ok {
-		if wantsIndex {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		http.NotFound(w, r)
+	if ok {
+		h.serveBlob(w, r, relativePath, file)
 		return
 	}
 
+	if shouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
+		indexPath := path.Join(relativePath, "index.html")
+		_, ok, err := h.db.FindCurrentFile(r.Context(), site, indexPath)
+		if err != nil {
+			log.Printf("lookup directory index failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if ok {
+			http.Redirect(w, r, directoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
+			return
+		}
+	}
+
+	if wantsIndex {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, relativePath string, file UploadFileRecord) {
 	blob, err := h.store.OpenBlob(r.Context(), file.BlobPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -355,6 +373,25 @@ func requestedRelativePath(urlPath string) (string, bool) {
 		return "index.html", true
 	}
 	return sanitized, sanitized == "index.html"
+}
+
+func shouldTryDirectoryIndex(urlPath string, relativePath string, wantsIndex bool) bool {
+	if wantsIndex || strings.HasSuffix(urlPath, "/") {
+		return false
+	}
+	return path.Base(relativePath) != "index.html"
+}
+
+func directoryRedirectPath(r *http.Request, prefix string, urlPath string) string {
+	clean := path.Clean("/" + strings.TrimPrefix(urlPath, "/"))
+	if clean == "/" {
+		clean = ""
+	}
+	target := prefix + clean + "/"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	return target
 }
 
 func siteAndPathFromServePath(urlPath string) (string, string, bool) {

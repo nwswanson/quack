@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"quack/internal/protocol"
@@ -72,6 +73,100 @@ func TestSiteAndPathFromServePath(t *testing.T) {
 		if site != tc.site || filePath != tc.filePath || ok != tc.ok {
 			t.Fatalf("%s: siteAndPathFromServePath(%q) = (%q, %q, %v), want (%q, %q, %v)", name, tc.path, site, filePath, ok, tc.site, tc.filePath, tc.ok)
 		}
+	}
+}
+
+func TestNginxStyleStaticRouting(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "blog-index", "blog index")
+	writeTestBlob(t, root, "file-js", "file js")
+
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		files: map[string]UploadFileRecord{
+			fileKey("foo", "blog/index.html"): {
+				RelativePath: "blog/index.html",
+				BlobPath:     "blog-index",
+			},
+			fileKey("foo", "file.js"): {
+				RelativePath: "file.js",
+				BlobPath:     "file-js",
+			},
+		},
+	}, DefaultOptions())
+
+	tests := map[string]struct {
+		path     string
+		status   int
+		location string
+		body     string
+	}{
+		"directory slash serves index": {
+			path:   "/blog/",
+			status: http.StatusOK,
+			body:   "blog index",
+		},
+		"index file serves directly": {
+			path:   "/blog/index.html",
+			status: http.StatusOK,
+			body:   "blog index",
+		},
+		"directory without slash redirects": {
+			path:     "/blog",
+			status:   http.StatusMovedPermanently,
+			location: "/blog/",
+		},
+		"exact file still wins": {
+			path:   "/file.js",
+			status: http.StatusOK,
+			body:   "file js",
+		},
+		"missing path is not an index": {
+			path:   "/missing",
+			status: http.StatusNotFound,
+		},
+	}
+
+	for name, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Host = "foo.example.com"
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != tc.status {
+			t.Fatalf("%s: status = %d, want %d; body=%s", name, rec.Code, tc.status, rec.Body.String())
+		}
+		if got := rec.Header().Get("Location"); got != tc.location {
+			t.Fatalf("%s: location = %q, want %q", name, got, tc.location)
+		}
+		if tc.body != "" && rec.Body.String() != tc.body {
+			t.Fatalf("%s: body = %q, want %q", name, rec.Body.String(), tc.body)
+		}
+	}
+}
+
+func TestNginxStyleStaticRoutingForExplicitServePath(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "blog-index", "blog index")
+
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		files: map[string]UploadFileRecord{
+			fileKey("foo", "blog/index.html"): {
+				RelativePath: "blog/index.html",
+				BlobPath:     "blog-index",
+			},
+		},
+	}, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, "/serve/foo/blog", nil)
+	req.Host = "anything.example.com"
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMovedPermanently)
+	}
+	if got := rec.Header().Get("Location"); got != "/serve/foo/blog/" {
+		t.Fatalf("location = %q, want /serve/foo/blog/", got)
 	}
 }
 
@@ -140,7 +235,9 @@ func tarArchive(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-type fakeStorage struct{}
+type fakeStorage struct {
+	root string
+}
 
 func (fakeStorage) AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error) {
 	n, err := io.Copy(io.Discard, file.Body)
@@ -154,7 +251,10 @@ func (fakeStorage) AcceptFile(ctx context.Context, file StoredFile) (StoredFileR
 	}, nil
 }
 
-func (fakeStorage) OpenBlob(ctx context.Context, blobPath string) (*os.File, error) {
+func (s fakeStorage) OpenBlob(ctx context.Context, blobPath string) (*os.File, error) {
+	if s.root != "" {
+		return os.Open(filepath.Join(s.root, blobPath))
+	}
 	return nil, os.ErrNotExist
 }
 
@@ -162,7 +262,9 @@ func (fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
 	return nil
 }
 
-type fakeDatabase struct{}
+type fakeDatabase struct {
+	files map[string]UploadFileRecord
+}
 
 func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string) (UploadRecord, error) {
 	return UploadRecord{
@@ -181,8 +283,9 @@ func (fakeDatabase) FailUpload(ctx context.Context, upload UploadRecord, reason 
 	return nil
 }
 
-func (fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error) {
-	return UploadFileRecord{}, false, nil
+func (db fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error) {
+	file, ok := db.files[fileKey(site, relativePath)]
+	return file, ok, nil
 }
 
 func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
@@ -191,4 +294,15 @@ func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string)
 
 func (fakeDatabase) Close() error {
 	return nil
+}
+
+func fileKey(site string, relativePath string) string {
+	return site + "\x00" + relativePath
+}
+
+func writeTestBlob(t *testing.T, root string, name string, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
