@@ -99,7 +99,7 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, adminSessionCookie(r, token, 86400))
-	slog.InfoContext(r.Context(), "admin login accepted", "username", user.Username)
+	slog.WarnContext(r.Context(), "admin login accepted", "username", user.Username)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -200,7 +200,7 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slog.InfoContext(r.Context(), "site delete completed", "site", site, "deleted", deleted)
+	slog.WarnContext(r.Context(), "site delete completed", "site", site, "deleted", deleted)
 	writeJSON(w, http.StatusOK, protocol.DeleteSiteResponse{
 		OK:      true,
 		Site:    site,
@@ -353,7 +353,7 @@ func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadAr
 	if err != nil {
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("begin upload: %w", err)
 	}
-	slog.InfoContext(ctx, "upload started", "site", upload.Site, "version", upload.Version)
+	slog.WarnContext(ctx, "upload started", "site", upload.Site, "version", upload.Version)
 
 	files, bytes, err := h.acceptArchive(r, &upload)
 	if err != nil {
@@ -372,7 +372,7 @@ func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadAr
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("finish upload metadata: %w", err)
 	}
 
-	slog.InfoContext(ctx, "upload finished", "site", upload.Site, "version", upload.Version, "files", files, "bytes", bytes)
+	slog.WarnContext(ctx, "upload finished", "site", upload.Site, "version", upload.Version, "files", files, "bytes", bytes)
 	return protocol.UploadArchiveResponse{
 		OK:      true,
 		Site:    upload.Site,

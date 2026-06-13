@@ -78,7 +78,7 @@ func main() {
 	opts.AdminHost = *adminHost
 
 	srv := server.New(addr, os.Getenv("UPLOAD_TOKEN"), store, db, opts)
-	slog.Info("starting quack server",
+	slog.Warn("starting quack server",
 		"addr", addr,
 		"root", *root,
 		"database", *databasePath,
