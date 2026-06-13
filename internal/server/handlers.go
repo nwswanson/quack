@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -136,25 +137,9 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 }
 
 func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	site, ok := h.validUploadRequest(w, r)
+	if !ok {
 		return
-	}
-	if !authorized(r, h.token) {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	if contentType := r.Header.Get("Content-Type"); contentType != protocol.ContentTypeTar {
-		writeError(w, http.StatusBadRequest, "content type must be application/x-tar")
-		return
-	}
-	site := strings.TrimSpace(r.Header.Get(protocol.HeaderSite))
-	if site == "" {
-		writeError(w, http.StatusBadRequest, "site is required")
-		return
-	}
-	if h.maxUploadBytes > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
 	}
 
 	siteSHA := sha256Hex(site)
@@ -164,97 +149,138 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+
 	files, bytes, err := h.acceptArchive(r, site, siteSHA, version)
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		var limitErr uploadLimitError
-		if errors.As(err, &maxBytesErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds maximum size")
-			return
-		}
-		if errors.As(err, &limitErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, limitErr.Error())
-			return
-		}
-		var badRequest badArchiveError
-		if errors.As(err, &badRequest) {
-			writeError(w, http.StatusBadRequest, badRequest.Error())
-			return
-		}
-		log.Printf("upload failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		h.writeUploadError(w, err)
 		return
 	}
 
 	log.Printf("accepted upload: files=%d bytes=%d", files, bytes)
 	writeJSON(w, http.StatusOK, protocol.UploadArchiveResponse{
-		OK:      true,
-		Site:    site,
-		Version: version,
-		Files:   files,
-		Bytes:   bytes,
+		OK: true, Site: site, Version: version, Files: files, Bytes: bytes,
 	})
 }
 
-func (h *handler) acceptArchive(r *http.Request, site string, siteSHA string, version int64) (int64, int64, error) {
-	tr := tar.NewReader(r.Body)
-	upload := UploadRecord{
-		Site:    site,
-		SiteSHA: siteSHA,
-		Version: version,
+func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	switch {
+	case r.Method != http.MethodPost:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	case !authorized(r, h.token):
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+	case r.Header.Get("Content-Type") != protocol.ContentTypeTar:
+		writeError(w, http.StatusBadRequest, "content type must be application/x-tar")
+	case strings.TrimSpace(r.Header.Get(protocol.HeaderSite)) == "":
+		writeError(w, http.StatusBadRequest, "site is required")
+	default:
+		if h.maxUploadBytes > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+		}
+		return strings.TrimSpace(r.Header.Get(protocol.HeaderSite)), true
 	}
-	var files int64
-	var bytes int64
+	return "", false
+}
 
+func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	var limitErr uploadLimitError
+	var badRequest badArchiveError
+
+	switch {
+	case errors.As(err, &maxBytesErr):
+		writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds maximum size")
+	case errors.As(err, &limitErr):
+		writeError(w, http.StatusRequestEntityTooLarge, limitErr.Error())
+	case errors.As(err, &badRequest):
+		writeError(w, http.StatusBadRequest, badRequest.Error())
+	default:
+		log.Printf("upload failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+	}
+}
+func (h *handler) acceptArchive(r *http.Request, site, siteSHA string, version int64) (int64, int64, error) {
+	ctx := r.Context()
+	tr := tar.NewReader(r.Body)
+	upload := UploadRecord{Site: site, SiteSHA: siteSHA, Version: version}
+
+	var files, bytes int64
 	for {
 		header, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			if err := h.db.SaveUpload(r.Context(), upload); err != nil {
+		switch {
+		case errors.Is(err, io.EOF):
+			if err := h.db.SaveUpload(ctx, upload); err != nil {
 				return 0, 0, fmt.Errorf("save upload metadata: %w", err)
 			}
 			return files, bytes, nil
-		}
-		if err != nil {
+		case err != nil:
 			return 0, 0, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
 		}
-		if err := validateArchivePath(header.Name); err != nil {
+
+		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, siteSHA, version, files)
+		if err != nil {
 			return 0, 0, err
 		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
+		if rec == nil {
 			continue
-		case tar.TypeReg, tar.TypeRegA:
-			if h.maxUploadFiles > 0 && files >= h.maxUploadFiles {
-				return 0, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", h.maxUploadFiles)}
-			}
-			sanitizedPath, err := sanitizeServingPath(header.Name)
-			if err != nil {
-				return 0, 0, err
-			}
-			result, err := h.store.AcceptFile(r.Context(), StoredFile{
-				SiteSHA:      siteSHA,
-				Version:      version,
-				RelativePath: sanitizedPath,
-				Mode:         header.Mode,
-				Size:         header.Size,
-				Body:         tr,
-			})
-			if err != nil {
-				return 0, 0, fmt.Errorf("accept file %s: %w", header.Name, err)
-			}
-			upload.Files = append(upload.Files, UploadFileRecord{
-				RelativePath: sanitizedPath,
-				BlobPath:     result.BlobPath,
-				FileSHA:      result.FileSHA,
-				Bytes:        result.Bytes,
-			})
-			files++
-			bytes += result.Bytes
-		default:
-			return 0, 0, badArchiveError{err: fmt.Errorf("unsupported archive entry type for %s", header.Name)}
 		}
+
+		upload.Files = append(upload.Files, *rec)
+		files++
+		bytes += n
 	}
+}
+
+func (h *handler) acceptArchiveEntry(
+	ctx context.Context,
+	body io.Reader,
+	header *tar.Header,
+	siteSHA string,
+	version, files int64,
+) (*UploadFileRecord, int64, error) {
+	if err := validateArchivePath(header.Name); err != nil {
+		return nil, 0, err
+	}
+
+	switch header.Typeflag {
+	case tar.TypeDir:
+		return nil, 0, nil
+	case tar.TypeReg, tar.TypeRegA:
+		return h.acceptRegularFile(ctx, body, header, siteSHA, version, files)
+	default:
+		return nil, 0, badArchiveError{err: fmt.Errorf("unsupported archive entry type for %s", header.Name)}
+	}
+}
+
+func (h *handler) acceptRegularFile(
+	ctx context.Context,
+	body io.Reader,
+	header *tar.Header,
+	siteSHA string,
+	version, files int64,
+) (*UploadFileRecord, int64, error) {
+	if h.maxUploadFiles > 0 && files >= h.maxUploadFiles {
+		return nil, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", h.maxUploadFiles)}
+	}
+
+	path, err := sanitizeServingPath(header.Name)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	result, err := h.store.AcceptFile(ctx, StoredFile{
+		SiteSHA: siteSHA, Version: version, RelativePath: path,
+		Mode: header.Mode, Size: header.Size, Body: body,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("accept file %s: %w", header.Name, err)
+	}
+
+	return &UploadFileRecord{
+		RelativePath: path,
+		BlobPath:     result.BlobPath,
+		FileSHA:      result.FileSHA,
+		Bytes:        result.Bytes,
+	}, result.Bytes, nil
 }
 
 func validateArchivePath(name string) error {
