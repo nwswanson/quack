@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -11,7 +12,7 @@ import (
 	"quack/internal/server"
 )
 
-func TestSaveUploadPersistsMetadata(t *testing.T) {
+func TestFinishUploadPersistsMetadata(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "quack.sqlite")
 	db, err := Open(ctx, path)
@@ -20,20 +21,19 @@ func TestSaveUploadPersistsMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	upload := server.UploadRecord{
-		Site:    "example.com",
-		SiteSHA: "site-sha",
-		Version: 1,
-		Files: []server.UploadFileRecord{
-			{
-				RelativePath: "index.html",
-				BlobPath:     "blobs/site:site-sha/1/file:file-sha",
-				FileSHA:      "file-sha",
-				Bytes:        12,
-			},
+	upload, err := db.BeginUpload(ctx, "example.com", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload.Files = []server.UploadFileRecord{
+		{
+			RelativePath: "index.html",
+			BlobPath:     "blobs/site:site-sha/1/file:file-sha",
+			FileSHA:      "file-sha",
+			Bytes:        12,
 		},
 	}
-	if err := db.SaveUpload(ctx, upload); err != nil {
+	if err := db.FinishUpload(ctx, upload); err != nil {
 		t.Fatal(err)
 	}
 
@@ -45,13 +45,20 @@ func TestSaveUploadPersistsMetadata(t *testing.T) {
 
 	var site string
 	var version int64
+	var state string
 	if err := raw.QueryRowContext(ctx, `
-		SELECT site, current_version FROM sites WHERE site_sha = ?
-	`, upload.SiteSHA).Scan(&site, &version); err != nil {
+		SELECT s.site, s.current_version, u.state
+		FROM sites s
+		JOIN uploads u ON u.site_sha = s.site_sha AND u.version = s.current_version
+		WHERE s.site_sha = ?
+	`, upload.SiteSHA).Scan(&site, &version, &state); err != nil {
 		t.Fatal(err)
 	}
 	if site != upload.Site || version != upload.Version {
 		t.Fatalf("site row = (%q, %d), want (%q, %d)", site, version, upload.Site, upload.Version)
+	}
+	if state != string(server.UploadStateFinished) {
+		t.Fatalf("upload state = %q, want %q", state, server.UploadStateFinished)
 	}
 
 	var relativePath string
@@ -69,7 +76,7 @@ func TestSaveUploadPersistsMetadata(t *testing.T) {
 	}
 }
 
-func TestAllocateVersionIncrementsAndRetainsUploads(t *testing.T) {
+func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
 	if err != nil {
@@ -77,54 +84,90 @@ func TestAllocateVersionIncrementsAndRetainsUploads(t *testing.T) {
 	}
 	defer db.Close()
 
-	version, err := db.AllocateVersion(ctx, "example.com", "site-sha")
+	upload, err := db.BeginUpload(ctx, "example.com", "site-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("initial version = %d, want 1", version)
+	if upload.Version != 1 {
+		t.Fatalf("initial version = %d, want 1", upload.Version)
 	}
 
-	if err := db.SaveUpload(ctx, server.UploadRecord{
-		Site:    "example.com",
-		SiteSHA: "site-sha",
-		Version: version,
-	}); err != nil {
+	if err := db.FinishUpload(ctx, upload); err != nil {
 		t.Fatal(err)
 	}
 
-	version, err = db.AllocateVersion(ctx, "example.com", "site-sha")
+	upload, err = db.BeginUpload(ctx, "example.com", "site-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("second version = %d, want 2", version)
+	if upload.Version != 2 {
+		t.Fatalf("second version = %d, want 2", upload.Version)
 	}
 
-	if err := db.SaveUpload(ctx, server.UploadRecord{
-		Site:    "example.com",
-		SiteSHA: "site-sha",
-		Version: version,
-	}); err != nil {
+	if err := db.FinishUpload(ctx, upload); err != nil {
 		t.Fatal(err)
 	}
 
-	version, err = db.AllocateVersion(ctx, "example.com", "site-sha")
+	upload, err = db.BeginUpload(ctx, "example.com", "site-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
-		t.Fatalf("third version = %d, want 3", version)
+	if upload.Version != 3 {
+		t.Fatalf("third version = %d, want 3", upload.Version)
 	}
 
 	var count int
-	if err := db.db.QueryRowContext(ctx, `
+	if err := db.readDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM uploads WHERE site_sha = ?
 	`, "site-sha").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("upload rows = %d, want 2", count)
+	if count != 3 {
+		t.Fatalf("upload rows = %d, want 3", count)
+	}
+}
+
+func TestConcurrentBeginUploadAllocatesUniqueVersions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const uploads = 20
+	versions := make(chan int64, uploads)
+	errs := make(chan error, uploads)
+
+	var wg sync.WaitGroup
+	for i := 0; i < uploads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			upload, err := db.BeginUpload(ctx, "example.com", "site-sha")
+			if err != nil {
+				errs <- err
+				return
+			}
+			versions <- upload.Version
+		}()
+	}
+	wg.Wait()
+	close(versions)
+	close(errs)
+
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	seen := make(map[int64]bool)
+	for version := range versions {
+		seen[version] = true
+	}
+	for version := int64(1); version <= uploads; version++ {
+		if !seen[version] {
+			t.Fatalf("missing allocated version %d; got %#v", version, seen)
+		}
 	}
 }
 
@@ -136,27 +179,23 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 	}
 	defer db.Close()
 
-	v1, err := db.AllocateVersion(ctx, "foo", "foo-sha")
+	v1, err := db.BeginUpload(ctx, "foo", "foo-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SaveUpload(ctx, server.UploadRecord{
-		Site:    "foo",
-		SiteSHA: "foo-sha",
-		Version: v1,
-		Files: []server.UploadFileRecord{
-			{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
-		},
-	}); err != nil {
+	v1.Files = []server.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
+	}
+	if err := db.FinishUpload(ctx, v1); err != nil {
 		t.Fatal(err)
 	}
 
-	v2, err := db.AllocateVersion(ctx, "foo", "foo-sha")
+	v2, err := db.BeginUpload(ctx, "foo", "foo-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v2 != 2 {
-		t.Fatalf("second version = %d, want 2", v2)
+	if v2.Version != 2 {
+		t.Fatalf("second version = %d, want 2", v2.Version)
 	}
 
 	file, ok, err := db.FindCurrentFile(ctx, "foo", "index.html")
@@ -170,14 +209,10 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 		t.Fatalf("blob path before publish = %q, want v1 blob", file.BlobPath)
 	}
 
-	if err := db.SaveUpload(ctx, server.UploadRecord{
-		Site:    "foo",
-		SiteSHA: "foo-sha",
-		Version: v2,
-		Files: []server.UploadFileRecord{
-			{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/2/file:v2", FileSHA: "v2", Bytes: 2},
-		},
-	}); err != nil {
+	v2.Files = []server.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/2/file:v2", FileSHA: "v2", Bytes: 2},
+	}
+	if err := db.FinishUpload(ctx, v2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,6 +228,42 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 	}
 }
 
+func TestFindCurrentFileIgnoresUploadingAndErrorVersions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	upload, err := db.BeginUpload(ctx, "foo", "foo-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload.Files = []server.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
+	}
+
+	_, ok, err := db.FindCurrentFile(ctx, "foo", "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("uploading version should not serve")
+	}
+
+	if err := db.FailUpload(ctx, upload, "test failure"); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err = db.FindCurrentFile(ctx, "foo", "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("error version should not serve")
+	}
+}
+
 func TestDeleteSiteRemovesMetadata(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
@@ -201,18 +272,14 @@ func TestDeleteSiteRemovesMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	version, err := db.AllocateVersion(ctx, "foo", "foo-sha")
+	upload, err := db.BeginUpload(ctx, "foo", "foo-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SaveUpload(ctx, server.UploadRecord{
-		Site:    "foo",
-		SiteSHA: "foo-sha",
-		Version: version,
-		Files: []server.UploadFileRecord{
-			{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
-		},
-	}); err != nil {
+	upload.Files = []server.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
+	}
+	if err := db.FinishUpload(ctx, upload); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,7 +300,7 @@ func TestDeleteSiteRemovesMetadata(t *testing.T) {
 	}
 
 	var siteCount int
-	if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE site_sha = ?`, "foo-sha").Scan(&siteCount); err != nil {
+	if err := db.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE site_sha = ?`, "foo-sha").Scan(&siteCount); err != nil {
 		t.Fatal(err)
 	}
 	if siteCount != 0 {

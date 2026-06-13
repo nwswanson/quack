@@ -142,24 +142,14 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	siteSHA := sha256Hex(site)
-	version, err := h.db.AllocateVersion(r.Context(), site, siteSHA)
-	if err != nil {
-		log.Printf("allocate upload version: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
-
-	files, bytes, err := h.acceptArchive(r, site, siteSHA, version)
+	resp, err := h.uploadArchive(r, site)
 	if err != nil {
 		h.writeUploadError(w, err)
 		return
 	}
 
-	log.Printf("accepted upload: files=%d bytes=%d", files, bytes)
-	writeJSON(w, http.StatusOK, protocol.UploadArchiveResponse{
-		OK: true, Site: site, Version: version, Files: files, Bytes: bytes,
-	})
+	log.Printf("accepted upload: site=%s version=%d files=%d bytes=%d", resp.Site, resp.Version, resp.Files, resp.Bytes)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -198,25 +188,55 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
 }
-func (h *handler) acceptArchive(r *http.Request, site, siteSHA string, version int64) (int64, int64, error) {
+
+func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadArchiveResponse, error) {
+	ctx := r.Context()
+	siteSHA := sha256Hex(site)
+
+	upload, err := h.db.BeginUpload(ctx, site, siteSHA)
+	if err != nil {
+		return protocol.UploadArchiveResponse{}, fmt.Errorf("begin upload: %w", err)
+	}
+
+	files, bytes, err := h.acceptArchive(r, &upload)
+	if err != nil {
+		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
+			log.Printf("mark upload failed: %v", markErr)
+		}
+		return protocol.UploadArchiveResponse{}, err
+	}
+
+	if err := h.db.FinishUpload(ctx, upload); err != nil {
+		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
+			log.Printf("mark upload failed: %v", markErr)
+		}
+		return protocol.UploadArchiveResponse{}, fmt.Errorf("finish upload metadata: %w", err)
+	}
+
+	return protocol.UploadArchiveResponse{
+		OK:      true,
+		Site:    upload.Site,
+		Version: upload.Version,
+		Files:   files,
+		Bytes:   bytes,
+	}, nil
+}
+
+func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord) (int64, int64, error) {
 	ctx := r.Context()
 	tr := tar.NewReader(r.Body)
-	upload := UploadRecord{Site: site, SiteSHA: siteSHA, Version: version}
 
 	var files, bytes int64
 	for {
 		header, err := tr.Next()
 		switch {
 		case errors.Is(err, io.EOF):
-			if err := h.db.SaveUpload(ctx, upload); err != nil {
-				return 0, 0, fmt.Errorf("save upload metadata: %w", err)
-			}
 			return files, bytes, nil
 		case err != nil:
 			return 0, 0, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
 		}
 
-		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, siteSHA, version, files)
+		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files)
 		if err != nil {
 			return 0, 0, err
 		}

@@ -164,11 +164,20 @@ func (fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
 
 type fakeDatabase struct{}
 
-func (fakeDatabase) AllocateVersion(ctx context.Context, site string, siteSHA string) (int64, error) {
-	return 1, nil
+func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string) (UploadRecord, error) {
+	return UploadRecord{
+		Site:    site,
+		SiteSHA: siteSHA,
+		Version: 1,
+		State:   UploadStateUploading,
+	}, nil
 }
 
-func (fakeDatabase) SaveUpload(ctx context.Context, upload UploadRecord) error {
+func (fakeDatabase) FinishUpload(ctx context.Context, upload UploadRecord) error {
+	return nil
+}
+
+func (fakeDatabase) FailUpload(ctx context.Context, upload UploadRecord, reason string) error {
 	return nil
 }
 

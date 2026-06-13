@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 
@@ -12,7 +13,12 @@ import (
 )
 
 type Database struct {
-	db *sql.DB
+	// SQLite permits many concurrent readers but only one writer. Keep those paths
+	// separate so serving can use the read pool while all writes go through one
+	// connection guarded by writeMu.
+	readDB  *sql.DB
+	writeDB *sql.DB
+	writeMu sync.Mutex
 }
 
 func Open(ctx context.Context, path string) (*Database, error) {
@@ -20,27 +26,61 @@ func Open(ctx context.Context, path string) (*Database, error) {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	db, err := sql.Open("sqlite", path)
+	writeDB, err := openSQLite(path, 1)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+	readDB, err := openSQLite(path, 8)
+	if err != nil {
+		_ = writeDB.Close()
+		return nil, fmt.Errorf("open sqlite read database: %w", err)
+	}
 
-	out := &Database{db: db}
+	out := &Database{
+		readDB:  readDB,
+		writeDB: writeDB,
+	}
 	if err := out.init(ctx); err != nil {
-		_ = db.Close()
+		_ = writeDB.Close()
+		_ = readDB.Close()
 		return nil, err
 	}
 	return out, nil
 }
 
 func (d *Database) Close() error {
-	return d.db.Close()
+	readErr := d.readDB.Close()
+	writeErr := d.writeDB.Close()
+	if readErr != nil {
+		return readErr
+	}
+	return writeErr
+}
+
+func openSQLite(path string, maxOpenConns int) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(maxOpenConns)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 func (d *Database) init(ctx context.Context) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
 	statements := []string{
 		`PRAGMA foreign_keys = ON`,
+		`PRAGMA journal_mode = WAL`,
 		`CREATE TABLE IF NOT EXISTS sites (
 			site_sha TEXT PRIMARY KEY,
 			site TEXT NOT NULL,
@@ -55,7 +95,10 @@ func (d *Database) init(ctx context.Context) error {
 			version INTEGER NOT NULL,
 			files INTEGER NOT NULL,
 			bytes INTEGER NOT NULL,
+			state TEXT NOT NULL DEFAULT 'finished' CHECK (state IN ('uploading', 'finished', 'error')),
+			error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			finished_at TEXT,
 			UNIQUE(site_sha, version)
 		)`,
 		`CREATE TABLE IF NOT EXISTS upload_files (
@@ -70,29 +113,47 @@ func (d *Database) init(ctx context.Context) error {
 	}
 
 	for _, statement := range statements {
-		if _, err := d.db.ExecContext(ctx, statement); err != nil {
+		if _, err := d.writeDB.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("initialize sqlite database: %w", err)
 		}
 	}
-	if _, err := d.db.ExecContext(ctx, `ALTER TABLE sites ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE sites ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite database: %w", err)
 	}
-	if _, err := d.db.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN state TEXT NOT NULL DEFAULT 'finished' CHECK (state IN ('uploading', 'finished', 'error'))`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite upload state: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN error TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite upload error: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN finished_at TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite upload finished_at: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
 	}
 	return nil
 }
 
-func (d *Database) AllocateVersion(ctx context.Context, site string, siteSHA string) (int64, error) {
+func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string) (server.UploadRecord, error) {
 	if site == "" {
-		return 0, fmt.Errorf("site is required")
+		return server.UploadRecord{}, fmt.Errorf("site is required")
 	}
 	if siteSHA == "" {
-		return 0, fmt.Errorf("site sha is required")
+		return server.UploadRecord{}, fmt.Errorf("site sha is required")
 	}
 
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return server.UploadRecord{}, fmt.Errorf("begin upload transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	var version int64
-	if err := d.db.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO sites (site_sha, site, current_version, next_version, updated_at)
 		VALUES (?, ?, 0, 2, CURRENT_TIMESTAMP)
 		ON CONFLICT(site_sha) DO UPDATE SET
@@ -101,15 +162,34 @@ func (d *Database) AllocateVersion(ctx context.Context, site string, siteSHA str
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING next_version - 1
 	`, siteSHA, site).Scan(&version); err != nil {
-		return 0, fmt.Errorf("allocate upload version: %w", err)
+		return server.UploadRecord{}, fmt.Errorf("allocate upload version: %w", err)
 	}
-	return version, nil
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO uploads (site_sha, site, version, files, bytes, state)
+		VALUES (?, ?, ?, 0, 0, ?)
+	`, siteSHA, site, version, string(server.UploadStateUploading)); err != nil {
+		return server.UploadRecord{}, fmt.Errorf("create uploading record: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return server.UploadRecord{}, fmt.Errorf("commit begin upload: %w", err)
+	}
+
+	return server.UploadRecord{
+		Site:    site,
+		SiteSHA: siteSHA,
+		Version: version,
+		State:   server.UploadStateUploading,
+	}, nil
 }
 
-func (d *Database) SaveUpload(ctx context.Context, upload server.UploadRecord) error {
-	tx, err := d.db.BeginTx(ctx, nil)
+func (d *Database) FinishUpload(ctx context.Context, upload server.UploadRecord) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin upload transaction: %w", err)
+		return fmt.Errorf("begin finish upload transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -121,29 +201,13 @@ func (d *Database) SaveUpload(ctx context.Context, upload server.UploadRecord) e
 	if _, err := tx.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
 		return fmt.Errorf("enable sqlite foreign keys: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO sites (site_sha, site, current_version, next_version, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(site_sha) DO UPDATE SET
-			site = excluded.site,
-			current_version = MAX(current_version, excluded.current_version),
-			next_version = MAX(next_version, excluded.next_version),
-			updated_at = CURRENT_TIMESTAMP
-	`, upload.SiteSHA, upload.Site, upload.Version, upload.Version+1); err != nil {
-		return fmt.Errorf("save site: %w", err)
-	}
 
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO uploads (site_sha, site, version, files, bytes)
-		VALUES (?, ?, ?, ?, ?)
-	`, upload.SiteSHA, upload.Site, upload.Version, len(upload.Files), totalBytes)
+	uploadID, err := uploadID(ctx, tx, upload)
 	if err != nil {
-		return fmt.Errorf("save upload: %w", err)
+		return err
 	}
-
-	uploadID, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("get upload id: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM upload_files WHERE upload_id = ?`, uploadID); err != nil {
+		return fmt.Errorf("clear upload files: %w", err)
 	}
 
 	stmt, err := tx.PrepareContext(ctx, `
@@ -160,26 +224,73 @@ func (d *Database) SaveUpload(ctx context.Context, upload server.UploadRecord) e
 			return fmt.Errorf("save upload file %s: %w", file.RelativePath, err)
 		}
 	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE uploads
+		SET files = ?, bytes = ?, state = ?, error = '', finished_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND state = ?
+	`, len(upload.Files), totalBytes, string(server.UploadStateFinished), uploadID, string(server.UploadStateUploading))
+	if err != nil {
+		return fmt.Errorf("mark upload finished: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("finished upload rows affected: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("upload is not in uploading state: site=%s version=%d", upload.Site, upload.Version)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO sites (site_sha, site, current_version, next_version, updated_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(site_sha) DO UPDATE SET
+			site = excluded.site,
+			current_version = MAX(current_version, excluded.current_version),
+			next_version = MAX(next_version, excluded.next_version),
+			updated_at = CURRENT_TIMESTAMP
+	`, upload.SiteSHA, upload.Site, upload.Version, upload.Version+1); err != nil {
+		return fmt.Errorf("publish site version: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit upload transaction: %w", err)
+		return fmt.Errorf("commit finish upload transaction: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) FailUpload(ctx context.Context, upload server.UploadRecord, reason string) error {
+	if upload.SiteSHA == "" || upload.Version <= 0 {
+		return nil
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	_, err := d.writeDB.ExecContext(ctx, `
+		UPDATE uploads
+		SET state = ?, error = ?
+		WHERE site_sha = ? AND version = ? AND state = ?
+	`, string(server.UploadStateError), reason, upload.SiteSHA, upload.Version, string(server.UploadStateUploading))
+	if err != nil {
+		return fmt.Errorf("mark upload error: %w", err)
 	}
 	return nil
 }
 
 func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePath string) (server.UploadFileRecord, bool, error) {
 	var file server.UploadFileRecord
-	err := d.db.QueryRowContext(ctx, `
+	err := d.readDB.QueryRowContext(ctx, `
 		SELECT uf.relative_path, uf.blob_path, uf.file_sha, uf.bytes
 		FROM sites s
 		JOIN uploads u
 			ON u.site_sha = s.site_sha
 			AND u.version = s.current_version
+			AND u.state = ?
 		JOIN upload_files uf
 			ON uf.upload_id = u.id
 		WHERE LOWER(s.site) = LOWER(?)
 			AND uf.relative_path = ?
-	`, site, relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
+	`, string(server.UploadStateFinished), site, relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
 	if err == nil {
 		return file, true, nil
 	}
@@ -190,7 +301,10 @@ func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePat
 }
 
 func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
-	tx, err := d.db.BeginTx(ctx, nil)
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin delete site transaction: %w", err)
 	}
@@ -243,4 +357,15 @@ func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) 
 		return false, fmt.Errorf("commit delete site transaction: %w", err)
 	}
 	return true, nil
+}
+
+func uploadID(ctx context.Context, tx *sql.Tx, upload server.UploadRecord) (int64, error) {
+	var uploadID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id FROM uploads
+		WHERE site_sha = ? AND version = ?
+	`, upload.SiteSHA, upload.Version).Scan(&uploadID); err != nil {
+		return 0, fmt.Errorf("lookup upload id: %w", err)
+	}
+	return uploadID, nil
 }

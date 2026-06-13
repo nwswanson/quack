@@ -36,8 +36,17 @@ type UploadRecord struct {
 	Site    string
 	SiteSHA string
 	Version int64
+	State   UploadState
 	Files   []UploadFileRecord
 }
+
+type UploadState string
+
+const (
+	UploadStateUploading UploadState = "uploading"
+	UploadStateFinished  UploadState = "finished"
+	UploadStateError     UploadState = "error"
+)
 
 type UploadFileRecord struct {
 	RelativePath string
