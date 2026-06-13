@@ -309,6 +309,12 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if !strings.Contains(rootRec.Body.String(), "Signed in as admin") {
 		t.Fatalf("body = %q, want signed-in state", rootRec.Body.String())
 	}
+	if !strings.Contains(rootRec.Body.String(), "Published Sites") {
+		t.Fatalf("body = %q, want published sites section", rootRec.Body.String())
+	}
+	if !strings.Contains(rootRec.Body.String(), "Server Settings") {
+		t.Fatalf("body = %q, want server settings section", rootRec.Body.String())
+	}
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	logoutReq.Host = "quack.example.com"
@@ -321,6 +327,57 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	}
 	if _, ok := db.sessions[cookie.Value]; ok {
 		t.Fatal("session still exists after logout")
+	}
+}
+
+func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, body)
+	}
+	for _, want := range []string{"alice", "generated-password", "generated-token"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %q, want %q", body, want)
+		}
+	}
+}
+
+func TestAdminSettingsUpdate(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if db.settings.MaxUploadBytes != 1024 || db.settings.MaxUploadFiles != 12 {
+		t.Fatalf("settings = %#v, want updated values", db.settings)
 	}
 }
 
@@ -379,7 +436,11 @@ func TestSiteHostRootStillServesSite(t *testing.T) {
 }
 
 func TestUploadRejectsTooManyFiles(t *testing.T) {
-	srv := New("", "", fakeStorage{}, &fakeDatabase{}, Options{
+	db := &fakeDatabase{settings: ServerSettings{
+		MaxUploadBytes: DefaultMaxUploadBytes,
+		MaxUploadFiles: 1,
+	}}
+	srv := New("", "", fakeStorage{}, db, Options{
 		MaxUploadBytes: 0,
 		MaxUploadFiles: 1,
 	})
@@ -397,7 +458,11 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 }
 
 func TestUploadRejectsTooManyBytes(t *testing.T) {
-	srv := New("", "", fakeStorage{}, &fakeDatabase{}, Options{
+	db := &fakeDatabase{settings: ServerSettings{
+		MaxUploadBytes: 128,
+		MaxUploadFiles: DefaultMaxUploadFiles,
+	}}
+	srv := New("", "", fakeStorage{}, db, Options{
 		MaxUploadBytes: 128,
 		MaxUploadFiles: 0,
 	})
@@ -474,6 +539,8 @@ type fakeDatabase struct {
 	files     map[string]UploadFileRecord
 	adminUser AdminUser
 	sessions  map[string]AdminUser
+	settings  ServerSettings
+	sites     []PublishedSite
 }
 
 func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string) (UploadRecord, error) {
@@ -509,6 +576,13 @@ func (db *fakeDatabase) AuthenticateAdmin(ctx context.Context, username string, 
 	return db.adminUser, true, nil
 }
 
+func (db *fakeDatabase) FindUserByToken(ctx context.Context, token string) (AdminUser, bool, error) {
+	if token == "user-token" && db.adminUser.ID > 0 {
+		return db.adminUser, true, nil
+	}
+	return AdminUser{}, false, nil
+}
+
 func (db *fakeDatabase) CreateAdminSession(ctx context.Context, userID int64) (string, error) {
 	if db.sessions == nil {
 		db.sessions = map[string]AdminUser{}
@@ -525,6 +599,34 @@ func (db *fakeDatabase) FindAdminSession(ctx context.Context, token string) (Adm
 
 func (db *fakeDatabase) DeleteAdminSession(ctx context.Context, token string) error {
 	delete(db.sessions, token)
+	return nil
+}
+
+func (db *fakeDatabase) CreateUser(ctx context.Context, username string, adminPriv string) (CreatedUser, error) {
+	return CreatedUser{
+		User:     AdminUser{ID: 99, Username: username, AdminPriv: adminPriv},
+		Password: "generated-password",
+		Token:    "generated-token",
+	}, nil
+}
+
+func (db *fakeDatabase) ListUserSites(ctx context.Context, userID int64) ([]PublishedSite, error) {
+	return db.sites, nil
+}
+
+func (db *fakeDatabase) LinkUserSite(ctx context.Context, userID int64, siteSHA string) error {
+	return nil
+}
+
+func (db *fakeDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+	if db.settings == (ServerSettings{}) {
+		return ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles}, nil
+	}
+	return db.settings, nil
+}
+
+func (db *fakeDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
+	db.settings = settings
 	return nil
 }
 

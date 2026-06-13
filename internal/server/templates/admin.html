@@ -12,13 +12,13 @@
     body {
       margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
+      padding: 32px 0;
       background: Canvas;
       color: CanvasText;
     }
     main {
-      width: min(100% - 32px, 380px);
+      width: min(100% - 32px, 960px);
+      margin: 0 auto;
     }
     h1 {
       margin: 0 0 8px;
@@ -32,6 +32,23 @@
     form {
       display: grid;
       gap: 14px;
+    }
+    section {
+      padding: 20px 0;
+      border-top: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      text-align: left;
+    }
+    code {
+      word-break: break-all;
     }
     label {
       display: grid;
@@ -64,6 +81,11 @@
       color: #b42318;
       font-weight: 600;
     }
+    .message {
+      margin: 0 0 14px;
+      color: #067647;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -74,6 +96,78 @@
       <form method="post" action="/logout">
         <button type="submit">Log out</button>
       </form>
+      {{if .Message}}<p class="message">{{.Message}}</p>{{end}}
+      {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+      <section>
+        <h2>Published Sites</h2>
+        {{if .Sites}}
+          <table>
+            <thead>
+              <tr>
+                <th>Site</th>
+                <th>Current</th>
+                <th>Versions</th>
+                <th>Files</th>
+                <th>Bytes</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Sites}}
+                <tr>
+                  <td>{{.Site}}</td>
+                  <td>{{.CurrentVersion}}</td>
+                  <td>{{.VersionCount}}</td>
+                  <td>{{.FileCount}}</td>
+                  <td>{{.ByteCount}}</td>
+                  <td>{{.UpdatedAt}}</td>
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{else}}
+          <p>No published sites yet.</p>
+        {{end}}
+      </section>
+
+      {{if .IsAdmin}}
+        <section>
+          <h2>Create User</h2>
+          {{if .HasCreatedUser}}
+            <p class="message">Created {{.CreatedUser.User.Username}}. Save these credentials now.</p>
+            <p>Username: <code>{{.CreatedUser.User.Username}}</code></p>
+            <p>Password: <code>{{.CreatedUser.Password}}</code></p>
+            <p>Token: <code>{{.CreatedUser.Token}}</code></p>
+          {{end}}
+          <form method="post" action="/users">
+            <label>
+              Username
+              <input name="username" autocomplete="off" required>
+            </label>
+            <label>
+              Permission
+              <input name="admin_priv" value="user" required>
+            </label>
+            <button type="submit">Create user</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Server Settings</h2>
+          <form method="post" action="/settings">
+            <label>
+              Max upload bytes
+              <input name="max_upload_bytes" type="number" min="0" value="{{.Settings.MaxUploadBytes}}" required>
+            </label>
+            <label>
+              Max upload files
+              <input name="max_upload_files" type="number" min="0" value="{{.Settings.MaxUploadFiles}}" required>
+            </label>
+            <button type="submit">Save settings</button>
+          </form>
+        </section>
+      {{end}}
     {{else}}
       <p>Sign in to manage Quack.</p>
       {{if .Error}}<p class="error">{{.Error}}</p>{{end}}

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,8 @@ func (h *handler) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleAdminLoginPage)
 	mux.HandleFunc("/login", h.handleAdminLogin)
 	mux.HandleFunc("/logout", h.handleAdminLogout)
+	mux.HandleFunc("/users", h.handleAdminCreateUser)
+	mux.HandleFunc("/settings", h.handleAdminSettings)
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
@@ -59,13 +62,22 @@ func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, _, err := h.currentAdminUser(r)
+	user, loggedIn, err := h.currentAdminUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	h.renderAdminPage(w, r, adminPageData{User: user})
+	data := adminPageData{User: user}
+	if loggedIn {
+		data, err = h.adminPageData(r, user)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+	}
+	h.renderAdminPage(w, r, data)
 }
 
 func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
@@ -120,13 +132,123 @@ func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.renderAdminPageWithMessage(w, r, user, "Unable to read user form.", "")
+		return
+	}
+	created, err := h.db.CreateUser(r.Context(), r.Form.Get("username"), r.Form.Get("admin_priv"))
+	if err != nil {
+		slog.WarnContext(r.Context(), "create admin user failed", "username", r.Form.Get("username"), "error", err)
+		h.renderAdminPageWithMessage(w, r, user, err.Error(), "")
+		return
+	}
+	slog.WarnContext(r.Context(), "admin user created", "created_username", created.User.Username, "created_by", user.Username)
+	data, err := h.adminPageData(r, user)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.CreatedUser = created
+	data.Message = "User created."
+	h.renderAdminPage(w, r, data)
+}
+
+func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.renderAdminPageWithMessage(w, r, user, "Unable to read settings form.", "")
+		return
+	}
+	settings, err := parseServerSettingsForm(r)
+	if err != nil {
+		h.renderAdminPageWithMessage(w, r, user, err.Error(), "")
+		return
+	}
+	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
+		slog.ErrorContext(r.Context(), "save server settings failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles)
+	h.renderAdminPageWithMessage(w, r, user, "", "Settings saved.")
+}
+
 type adminPageData struct {
-	User  AdminUser
-	Error string
+	User        AdminUser
+	Error       string
+	Message     string
+	Sites       []PublishedSite
+	Settings    ServerSettings
+	CreatedUser CreatedUser
 }
 
 func (d adminPageData) LoggedIn() bool {
 	return d.User.ID > 0
+}
+
+func (d adminPageData) IsAdmin() bool {
+	return d.User.IsAdmin()
+}
+
+func (d adminPageData) HasCreatedUser() bool {
+	return d.CreatedUser.User.ID > 0
+}
+
+func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData, error) {
+	sites, err := h.db.ListUserSites(r.Context(), user.ID)
+	if err != nil {
+		return adminPageData{}, err
+	}
+	settings, err := h.db.GetServerSettings(r.Context())
+	if err != nil {
+		return adminPageData{}, err
+	}
+	return adminPageData{
+		User:     user,
+		Sites:    sites,
+		Settings: settings,
+	}, nil
+}
+
+func (h *handler) renderAdminPageWithMessage(w http.ResponseWriter, r *http.Request, user AdminUser, errorMessage string, message string) {
+	data, err := h.adminPageData(r, user)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Error = errorMessage
+	data.Message = message
+	h.renderAdminPage(w, r, data)
 }
 
 func (h *handler) renderAdminPage(w http.ResponseWriter, r *http.Request, data adminPageData) {
@@ -295,12 +417,12 @@ func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string,
 }
 
 func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
-	site, ok := h.validUploadRequest(w, r)
+	site, user, settings, ok := h.validUploadRequest(w, r)
 	if !ok {
 		return
 	}
 
-	resp, err := h.uploadArchive(r, site)
+	resp, err := h.uploadArchive(r, site, user, settings)
 	if err != nil {
 		h.writeUploadError(w, err)
 		return
@@ -309,23 +431,42 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, AdminUser, ServerSettings, bool) {
+	var user AdminUser
+	settings := ServerSettings{MaxUploadBytes: h.maxUploadBytes, MaxUploadFiles: h.maxUploadFiles}
 	switch {
 	case r.Method != http.MethodPost:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-	case !authorized(r, h.token):
+		return "", user, settings, false
+	}
+	var ok bool
+	var err error
+	user, ok, err = h.authorizedUploadUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "upload authorization lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return "", user, settings, false
+	}
+	switch {
+	case !ok:
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	case r.Header.Get("Content-Type") != protocol.ContentTypeTar:
 		writeError(w, http.StatusBadRequest, "content type must be application/x-tar")
 	case strings.TrimSpace(r.Header.Get(protocol.HeaderSite)) == "":
 		writeError(w, http.StatusBadRequest, "site is required")
 	default:
-		if h.maxUploadBytes > 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+		settings, err = h.db.GetServerSettings(r.Context())
+		if err != nil {
+			slog.ErrorContext(r.Context(), "load upload settings failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return "", user, settings, false
 		}
-		return strings.TrimSpace(r.Header.Get(protocol.HeaderSite)), true
+		if settings.MaxUploadBytes > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, settings.MaxUploadBytes)
+		}
+		return strings.TrimSpace(r.Header.Get(protocol.HeaderSite)), user, settings, true
 	}
-	return "", false
+	return "", user, settings, false
 }
 
 func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
@@ -345,7 +486,53 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadArchiveResponse, error) {
+func (h *handler) authorizedUploadUser(r *http.Request) (AdminUser, bool, error) {
+	if authorized(r, h.token) {
+		return AdminUser{}, true, nil
+	}
+	const prefix = "Bearer "
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, prefix) {
+		return AdminUser{}, false, nil
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+	if token == "" {
+		return AdminUser{}, false, nil
+	}
+	return h.db.FindUserByToken(r.Context(), token)
+}
+
+func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {
+	maxUploadBytes, err := parseNonNegativeInt64(r.Form.Get("max_upload_bytes"), "max upload bytes")
+	if err != nil {
+		return ServerSettings{}, err
+	}
+	maxUploadFiles, err := parseNonNegativeInt64(r.Form.Get("max_upload_files"), "max upload files")
+	if err != nil {
+		return ServerSettings{}, err
+	}
+	return ServerSettings{
+		MaxUploadBytes: maxUploadBytes,
+		MaxUploadFiles: maxUploadFiles,
+	}, nil
+}
+
+func parseNonNegativeInt64(value string, label string) (int64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", label)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s must be >= 0", label)
+	}
+	return n, nil
+}
+
+func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, settings ServerSettings) (protocol.UploadArchiveResponse, error) {
 	ctx := r.Context()
 	siteSHA := sha256Hex(site)
 
@@ -355,7 +542,7 @@ func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadAr
 	}
 	slog.WarnContext(ctx, "upload started", "site", upload.Site, "version", upload.Version)
 
-	files, bytes, err := h.acceptArchive(r, &upload)
+	files, bytes, err := h.acceptArchive(r, &upload, settings)
 	if err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
 			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
@@ -371,6 +558,12 @@ func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadAr
 		slog.ErrorContext(ctx, "finish upload metadata failed", "site", upload.Site, "version", upload.Version, "error", err)
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("finish upload metadata: %w", err)
 	}
+	if user.ID > 0 {
+		if err := h.db.LinkUserSite(ctx, user.ID, upload.SiteSHA); err != nil {
+			slog.ErrorContext(ctx, "link user site failed", "site", upload.Site, "version", upload.Version, "username", user.Username, "error", err)
+			return protocol.UploadArchiveResponse{}, fmt.Errorf("link user site: %w", err)
+		}
+	}
 
 	slog.WarnContext(ctx, "upload finished", "site", upload.Site, "version", upload.Version, "files", files, "bytes", bytes)
 	return protocol.UploadArchiveResponse{
@@ -382,7 +575,7 @@ func (h *handler) uploadArchive(r *http.Request, site string) (protocol.UploadAr
 	}, nil
 }
 
-func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord) (int64, int64, error) {
+func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, settings ServerSettings) (int64, int64, error) {
 	ctx := r.Context()
 	tr := tar.NewReader(r.Body)
 
@@ -396,7 +589,7 @@ func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord) (int64, i
 			return 0, 0, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
 		}
 
-		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files)
+		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files, settings)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -416,6 +609,7 @@ func (h *handler) acceptArchiveEntry(
 	header *tar.Header,
 	siteSHA string,
 	version, files int64,
+	settings ServerSettings,
 ) (*UploadFileRecord, int64, error) {
 	if err := validateArchivePath(header.Name); err != nil {
 		return nil, 0, err
@@ -425,7 +619,7 @@ func (h *handler) acceptArchiveEntry(
 	case tar.TypeDir:
 		return nil, 0, nil
 	case tar.TypeReg, tar.TypeRegA:
-		return h.acceptRegularFile(ctx, body, header, siteSHA, version, files)
+		return h.acceptRegularFile(ctx, body, header, siteSHA, version, files, settings)
 	default:
 		return nil, 0, badArchiveError{err: fmt.Errorf("unsupported archive entry type for %s", header.Name)}
 	}
@@ -437,9 +631,10 @@ func (h *handler) acceptRegularFile(
 	header *tar.Header,
 	siteSHA string,
 	version, files int64,
+	settings ServerSettings,
 ) (*UploadFileRecord, int64, error) {
-	if h.maxUploadFiles > 0 && files >= h.maxUploadFiles {
-		return nil, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", h.maxUploadFiles)}
+	if settings.MaxUploadFiles > 0 && files >= settings.MaxUploadFiles {
+		return nil, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", settings.MaxUploadFiles)}
 	}
 
 	path, err := sanitizeServingPath(header.Name)

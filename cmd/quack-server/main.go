@@ -76,6 +76,13 @@ func main() {
 	opts.MaxUploadBytes = *maxUploadBytes
 	opts.MaxUploadFiles = *maxUploadFiles
 	opts.AdminHost = *adminHost
+	if err := db.InitializeServerSettings(context.Background(), server.ServerSettings{
+		MaxUploadBytes: opts.MaxUploadBytes,
+		MaxUploadFiles: opts.MaxUploadFiles,
+	}); err != nil {
+		slog.Error("initialize server settings failed", "error", err)
+		os.Exit(1)
+	}
 
 	srv := server.New(addr, os.Getenv("UPLOAD_TOKEN"), store, db, opts)
 	slog.Warn("starting quack server",

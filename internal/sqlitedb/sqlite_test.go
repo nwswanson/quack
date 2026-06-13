@@ -254,6 +254,61 @@ func TestAuthenticateAdminAndSessions(t *testing.T) {
 	}
 }
 
+func TestCreateUserTokenAndSettings(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	created, err := db.CreateUser(ctx, "alice", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Password == "" || created.Token == "" {
+		t.Fatalf("created = %#v, want generated credentials", created)
+	}
+	user, ok, err := db.FindUserByToken(ctx, created.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || user.Username != "alice" {
+		t.Fatalf("token user = (%#v, %v), want alice", user, ok)
+	}
+
+	if err := db.InitializeServerSettings(ctx, server.ServerSettings{MaxUploadBytes: 123, MaxUploadFiles: 4}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := db.GetServerSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
+		t.Fatalf("settings = %#v, want initialized values", settings)
+	}
+	if err := db.InitializeServerSettings(ctx, server.ServerSettings{MaxUploadBytes: 999, MaxUploadFiles: 999}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = db.GetServerSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
+		t.Fatalf("settings = %#v, initialize should not overwrite", settings)
+	}
+	if err := db.SaveServerSettings(ctx, server.ServerSettings{MaxUploadBytes: 2048, MaxUploadFiles: 8}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = db.GetServerSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.MaxUploadBytes != 2048 || settings.MaxUploadFiles != 8 {
+		t.Fatalf("settings = %#v, want saved values", settings)
+	}
+}
+
 func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

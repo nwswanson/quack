@@ -150,6 +150,11 @@ func (d *Database) init(ctx context.Context) error {
 			expires_at TEXT NOT NULL,
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS server_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, statement := range statements {
@@ -171,6 +176,217 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) FindUserByToken(ctx context.Context, token string) (server.AdminUser, bool, error) {
+	if token == "" {
+		return server.AdminUser{}, false, nil
+	}
+	var user server.AdminUser
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT id, username, admin_priv
+		FROM users
+		WHERE token_hash = ?
+	`, hashToken(token)).Scan(&user.ID, &user.Username, &user.AdminPriv)
+	if err == sql.ErrNoRows {
+		return server.AdminUser{}, false, nil
+	}
+	if err != nil {
+		return server.AdminUser{}, false, fmt.Errorf("find user by token: %w", err)
+	}
+	return user, true, nil
+}
+
+func (d *Database) CreateUser(ctx context.Context, username string, adminPriv string) (server.CreatedUser, error) {
+	username = strings.TrimSpace(username)
+	adminPriv = strings.TrimSpace(adminPriv)
+	if username == "" {
+		return server.CreatedUser{}, fmt.Errorf("username is required")
+	}
+	if adminPriv == "" {
+		adminPriv = "user"
+	}
+
+	password, err := randomSecret(24)
+	if err != nil {
+		return server.CreatedUser{}, fmt.Errorf("generate user password: %w", err)
+	}
+	token, err := randomSecret(32)
+	if err != nil {
+		return server.CreatedUser{}, fmt.Errorf("generate user token: %w", err)
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return server.CreatedUser{}, fmt.Errorf("hash user password: %w", err)
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	result, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO users (username, password_hash, admin_priv, token_hash)
+		VALUES (?, ?, ?, ?)
+	`, username, passwordHash, adminPriv, hashToken(token))
+	if err != nil {
+		return server.CreatedUser{}, fmt.Errorf("create user: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return server.CreatedUser{}, fmt.Errorf("created user id: %w", err)
+	}
+	return server.CreatedUser{
+		User: server.AdminUser{
+			ID:        id,
+			Username:  username,
+			AdminPriv: adminPriv,
+		},
+		Password: password,
+		Token:    token,
+	}, nil
+}
+
+func (d *Database) ListUserSites(ctx context.Context, userID int64) ([]server.PublishedSite, error) {
+	if userID <= 0 {
+		return nil, nil
+	}
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT s.site, s.site_sha, s.current_version, COUNT(u.id), COALESCE(SUM(u.files), 0), COALESCE(SUM(u.bytes), 0), s.updated_at
+		FROM user_sites us
+		JOIN sites s ON s.site_sha = us.site_sha
+		LEFT JOIN uploads u ON u.site_sha = s.site_sha AND u.state = ?
+		WHERE us.user_id = ?
+		GROUP BY s.site, s.site_sha, s.current_version, s.updated_at
+		ORDER BY s.updated_at DESC, s.site ASC
+	`, string(server.UploadStateFinished), userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user sites: %w", err)
+	}
+	defer rows.Close()
+
+	var sites []server.PublishedSite
+	for rows.Next() {
+		var site server.PublishedSite
+		if err := rows.Scan(&site.Site, &site.SiteSHA, &site.CurrentVersion, &site.VersionCount, &site.FileCount, &site.ByteCount, &site.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan user site: %w", err)
+		}
+		sites = append(sites, site)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user sites: %w", err)
+	}
+	return sites, nil
+}
+
+func (d *Database) LinkUserSite(ctx context.Context, userID int64, siteSHA string) error {
+	if userID <= 0 || siteSHA == "" {
+		return nil
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	if _, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO user_sites (user_id, site_sha, uploaded_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id, site_sha) DO UPDATE SET uploaded_at = CURRENT_TIMESTAMP
+	`, userID, siteSHA); err != nil {
+		return fmt.Errorf("link user site: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings, error) {
+	settings := server.ServerSettings{
+		MaxUploadBytes: server.DefaultMaxUploadBytes,
+		MaxUploadFiles: server.DefaultMaxUploadFiles,
+	}
+	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value FROM server_settings`)
+	if err != nil {
+		return server.ServerSettings{}, fmt.Errorf("get server settings: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return server.ServerSettings{}, fmt.Errorf("scan server setting: %w", err)
+		}
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+		}
+		switch key {
+		case "max_upload_bytes":
+			settings.MaxUploadBytes = n
+		case "max_upload_files":
+			settings.MaxUploadFiles = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return server.ServerSettings{}, fmt.Errorf("iterate server settings: %w", err)
+	}
+	return settings, nil
+}
+
+func (d *Database) SaveServerSettings(ctx context.Context, settings server.ServerSettings) error {
+	if settings.MaxUploadBytes < 0 {
+		return fmt.Errorf("max upload bytes must be >= 0")
+	}
+	if settings.MaxUploadFiles < 0 {
+		return fmt.Errorf("max upload files must be >= 0")
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin save server settings transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for key, value := range map[string]int64{
+		"max_upload_bytes": settings.MaxUploadBytes,
+		"max_upload_files": settings.MaxUploadFiles,
+	} {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO server_settings (key, value, updated_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+		`, key, strconv.FormatInt(value, 10)); err != nil {
+			return fmt.Errorf("save server setting %s: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit save server settings: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) InitializeServerSettings(ctx context.Context, settings server.ServerSettings) error {
+	if settings.MaxUploadBytes < 0 {
+		return fmt.Errorf("max upload bytes must be >= 0")
+	}
+	if settings.MaxUploadFiles < 0 {
+		return fmt.Errorf("max upload files must be >= 0")
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	for key, value := range map[string]int64{
+		"max_upload_bytes": settings.MaxUploadBytes,
+		"max_upload_files": settings.MaxUploadFiles,
+	} {
+		if _, err := d.writeDB.ExecContext(ctx, `
+			INSERT INTO server_settings (key, value, updated_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(key) DO NOTHING
+		`, key, strconv.FormatInt(value, 10)); err != nil {
+			return fmt.Errorf("initialize server setting %s: %w", key, err)
+		}
 	}
 	return nil
 }
