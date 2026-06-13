@@ -15,13 +15,16 @@ import (
 )
 
 func main() {
-	configureLogger()
-
 	root := flag.String("root", "", "root directory for blob storage")
 	databasePath := flag.String("database", "", "sqlite database file")
 	maxUploadBytes := flag.Int64("max-upload-bytes", server.DefaultMaxUploadBytes, "maximum tar upload request size in bytes; 0 disables")
 	maxUploadFiles := flag.Int64("max-upload-files", server.DefaultMaxUploadFiles, "maximum regular files accepted per upload; 0 disables")
+	logLevel := flag.String("log-level", "warn", "log level: debug, info, warn, or error")
 	flag.Parse()
+	if err := configureLogger(*logLevel); err != nil {
+		fmt.Fprintf(os.Stderr, "-log-level: %v\n", err)
+		os.Exit(1)
+	}
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "-root is required")
 		os.Exit(1)
@@ -67,6 +70,7 @@ func main() {
 		"database", *databasePath,
 		"max_upload_bytes", opts.MaxUploadBytes,
 		"max_upload_files", opts.MaxUploadFiles,
+		"log_level", *logLevel,
 		"auth_enabled", os.Getenv("UPLOAD_TOKEN") != "",
 	)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -75,23 +79,24 @@ func main() {
 	}
 }
 
-func configureLogger() {
+func configureLogger(value string) error {
 	var level slog.Level
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
-	case "", "info":
-		level = slog.LevelInfo
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "debug":
 		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
 	case "warn", "warning":
 		level = slog.LevelWarn
 	case "error":
 		level = slog.LevelError
 	default:
-		level = slog.LevelInfo
+		return fmt.Errorf("unknown level %q; expected debug, info, warn, or error", value)
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: level,
 	}))
 	slog.SetDefault(logger)
+	return nil
 }

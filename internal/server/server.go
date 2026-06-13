@@ -87,7 +87,7 @@ func requestLogger(next http.Handler) http.Handler {
 		switch {
 		case status >= http.StatusInternalServerError:
 			level = slog.LevelError
-		case status >= http.StatusBadRequest:
+		case status >= http.StatusBadRequest && status != http.StatusNotFound:
 			level = slog.LevelWarn
 		}
 
