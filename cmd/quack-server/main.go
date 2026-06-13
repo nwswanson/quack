@@ -20,6 +20,7 @@ func main() {
 	maxUploadBytes := flag.Int64("max-upload-bytes", server.DefaultMaxUploadBytes, "maximum tar upload request size in bytes; 0 disables")
 	maxUploadFiles := flag.Int64("max-upload-files", server.DefaultMaxUploadFiles, "maximum regular files accepted per upload; 0 disables")
 	logLevel := flag.String("log-level", "warn", "log level: debug, info, warn, or error")
+	adminHost := flag.String("admin-host", "", "host allowed to serve /v1 admin API routes; accepts a host or URL")
 	flag.Parse()
 	if err := configureLogger(*logLevel); err != nil {
 		fmt.Fprintf(os.Stderr, "-log-level: %v\n", err)
@@ -62,6 +63,7 @@ func main() {
 	opts := server.DefaultOptions()
 	opts.MaxUploadBytes = *maxUploadBytes
 	opts.MaxUploadFiles = *maxUploadFiles
+	opts.AdminHost = *adminHost
 
 	srv := server.New(addr, os.Getenv("UPLOAD_TOKEN"), store, db, opts)
 	slog.Info("starting quack server",
@@ -71,6 +73,7 @@ func main() {
 		"max_upload_bytes", opts.MaxUploadBytes,
 		"max_upload_files", opts.MaxUploadFiles,
 		"log_level", *logLevel,
+		"admin_host", *adminHost,
 		"auth_enabled", os.Getenv("UPLOAD_TOKEN") != "",
 	)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

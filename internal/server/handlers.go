@@ -29,10 +29,13 @@ type handler struct {
 	maxUploadFiles int64
 }
 
-func (h *handler) routes(mux *http.ServeMux) {
+func (h *handler) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
+}
+
+func (h *handler) siteRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/serve/", h.handleServeExplicitSite)
 	mux.HandleFunc("/", h.handleServeFile)
 }

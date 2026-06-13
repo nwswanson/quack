@@ -2,7 +2,10 @@ package server
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -14,6 +17,7 @@ const (
 type Options struct {
 	MaxUploadBytes int64
 	MaxUploadFiles int64
+	AdminHost      string
 }
 
 func DefaultOptions() Options {
@@ -36,12 +40,59 @@ func New(addr string, token string, store Storage, db Database, opts Options) *h
 		maxUploadBytes: opts.MaxUploadBytes,
 		maxUploadFiles: opts.MaxUploadFiles,
 	}
-	h.routes(mux)
+	h.adminRoutes(mux)
+
+	siteMux := http.NewServeMux()
+	h.siteRoutes(siteMux)
+
+	router := adminHostRouter{
+		adminHost: normalizeAdminHost(opts.AdminHost),
+		admin:     mux,
+		site:      siteMux,
+	}
 
 	return &http.Server{
 		Addr:    addr,
-		Handler: requestLogger(mux),
+		Handler: requestLogger(router),
 	}
+}
+
+type adminHostRouter struct {
+	adminHost string
+	admin     http.Handler
+	site      http.Handler
+}
+
+func (r adminHostRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if isAdminPath(req.URL.Path) {
+		if r.adminHost != "" && normalizeAdminHost(req.Host) != r.adminHost {
+			http.NotFound(w, req)
+			return
+		}
+		r.admin.ServeHTTP(w, req)
+		return
+	}
+	r.site.ServeHTTP(w, req)
+}
+
+func isAdminPath(path string) bool {
+	return path == "/v1" || strings.HasPrefix(path, "/v1/")
+}
+
+func normalizeAdminHost(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	if strings.Contains(value, "://") {
+		if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+			value = parsed.Host
+		}
+	}
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	return strings.Trim(value, ".")
 }
 
 type loggingResponseWriter struct {

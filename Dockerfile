@@ -26,4 +26,4 @@ ENV ADDR=:8080
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/quack-server"]
-CMD ["-root", "/var/lib/quack", "-database", "/var/lib/quack/quack.sqlite"]
+CMD ["-root", "/var/lib/quack", "-database", "/var/lib/quack/quack.sqlite", "-admin-host", "https://quack.k3s.nathanielswanson.com"]
