@@ -131,6 +131,50 @@ func TestDeleteSiteReportsServerError(t *testing.T) {
 	}
 }
 
+func TestCheckLoginSendsLoginCheckRequest(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", req.Method)
+		}
+		if req.URL.Path != protocol.LoginCheckPath {
+			t.Fatalf("path = %s, want %s", req.URL.Path, protocol.LoginCheckPath)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		return response(req, http.StatusOK, `{"ok":true}`), nil
+	}))
+
+	resp, err := CheckLogin(context.Background(), "http://example.test", "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.OK {
+		t.Fatalf("response = %#v, want ok", resp)
+	}
+}
+
+func TestCheckLoginReportsUnauthorized(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return response(req, http.StatusUnauthorized, `{"ok":false,"error":"unauthorized"}`), nil
+	}))
+
+	resp, err := CheckLogin(context.Background(), "http://example.test", "bad")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if resp == nil || resp.Error != "unauthorized" {
+		t.Fatalf("response error = %#v, want unauthorized", resp)
+	}
+	var uploadErr *UploadError
+	if !errors.As(err, &uploadErr) {
+		t.Fatalf("error type = %T, want *UploadError", err)
+	}
+	if uploadErr.Operation != "login check" {
+		t.Fatalf("operation = %q, want login check", uploadErr.Operation)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

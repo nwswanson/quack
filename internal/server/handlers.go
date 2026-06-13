@@ -30,10 +30,24 @@ type handler struct {
 }
 
 func (h *handler) routes(mux *http.ServeMux) {
+	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
 	mux.HandleFunc("/serve/", h.handleServeExplicitSite)
 	mux.HandleFunc("/", h.handleServeFile)
+}
+
+func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLoginCheckError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !authorized(r, h.token) {
+		writeLoginCheckError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, protocol.LoginCheckResponse{OK: true})
 }
 
 func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
@@ -505,6 +519,13 @@ func (e uploadLimitError) Unwrap() error {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, protocol.UploadArchiveResponse{
+		OK:    false,
+		Error: message,
+	})
+}
+
+func writeLoginCheckError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, protocol.LoginCheckResponse{
 		OK:    false,
 		Error: message,
 	})

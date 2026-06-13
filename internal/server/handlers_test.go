@@ -170,6 +170,38 @@ func TestNginxStyleStaticRoutingForExplicitServePath(t *testing.T) {
 	}
 }
 
+func TestLoginCheck(t *testing.T) {
+	srv := New("", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+
+	t.Run("authorized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
+		req.Header.Set("Authorization", "Bearer token")
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if rec.Body.String() != "{\"ok\":true}\n" {
+			t.Fatalf("body = %q, want ok", rec.Body.String())
+		}
+	})
+
+	t.Run("unauthorized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
+		req.Header.Set("Authorization", "Bearer bad")
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+		}
+		if rec.Body.String() != "{\"ok\":false,\"error\":\"unauthorized\"}\n" {
+			t.Fatalf("body = %q, want unauthorized", rec.Body.String())
+		}
+	})
+}
+
 func TestUploadRejectsTooManyFiles(t *testing.T) {
 	srv := New("", "", fakeStorage{}, &fakeDatabase{}, Options{
 		MaxUploadBytes: 0,

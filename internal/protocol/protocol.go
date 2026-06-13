@@ -2,6 +2,7 @@ package protocol
 
 const UploadArchivePath = "/v1/uploads/archive"
 const DeleteSitePathPrefix = "/v1/sites/"
+const LoginCheckPath = "/v1/login/check"
 const ContentTypeTar = "application/x-tar"
 const HeaderSite = "X-Quack-Site"
 
@@ -19,4 +20,9 @@ type DeleteSiteResponse struct {
 	Site    string `json:"site,omitempty"`
 	Deleted bool   `json:"deleted,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+type LoginCheckResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
