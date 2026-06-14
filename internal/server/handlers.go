@@ -211,6 +211,11 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	if err := SetLogLevel(settings.LogLevel); err != nil {
+		slog.ErrorContext(r.Context(), "apply log level failed", "username", user.Username, "log_level", settings.LogLevel, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "log_level", settings.LogLevel)
 	h.renderAdminPageWithMessage(w, r, user, "", "Settings saved.")
 }

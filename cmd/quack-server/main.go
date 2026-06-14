@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 
 	"quack/internal/server"
 	"quack/internal/sqlitedb"
@@ -59,7 +58,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "load server settings failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := configureLogger(settings.LogLevel); err != nil {
+	if err := server.ConfigureLogger(settings.LogLevel, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "log_level: %v\n", err)
 		os.Exit(1)
 	}
@@ -99,26 +98,4 @@ func main() {
 		slog.Error("server stopped unexpectedly", "error", err)
 		os.Exit(1)
 	}
-}
-
-func configureLogger(value string) error {
-	var level slog.Level
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		return fmt.Errorf("unknown level %q; expected debug, info, warn, or error", value)
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
-	}))
-	slog.SetDefault(logger)
-	return nil
 }

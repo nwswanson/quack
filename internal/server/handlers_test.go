@@ -494,6 +494,48 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	}
 }
 
+func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
+	var logs bytes.Buffer
+	if err := ConfigureLogger("warn", &logs); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = ConfigureLogger("warn", io.Discard)
+	})
+
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		settings:  ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	update := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=536870912&max_upload_files=10000&log_level=debug"))
+	update.Host = "quack.example.com"
+	update.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	update.Header.Set("Origin", "https://quack.example.com")
+	update.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, update)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	before404 := logs.Len()
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req.Host = "foo.example.com"
+	rec = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if logs.Len() == before404 || !strings.Contains(logs.String()[before404:], "status=404") {
+		t.Fatalf("logs after 404 = %q, want request log", logs.String()[before404:])
+	}
+}
+
 func TestAdminLoginRejectsInvalidPassword(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
