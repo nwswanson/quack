@@ -1,9 +1,14 @@
 package server
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrSiteOwnership = errors.New("site is owned by another user")
 
 type Database interface {
-	BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64) (UploadRecord, error)
+	BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (UploadRecord, error)
 	FinishUpload(ctx context.Context, upload UploadRecord) error
 	FailUpload(ctx context.Context, upload UploadRecord, reason string) error
 	FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error)

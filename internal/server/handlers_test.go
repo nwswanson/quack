@@ -22,12 +22,43 @@ func TestSiteFromHost(t *testing.T) {
 		"foo.domain.com":     "foo",
 		"foo.example.com:80": "foo",
 		"LOCALHOST:8080":     "localhost",
+		"bad_site.example":   "",
+		"v1.example.com":     "",
 	}
 
 	for input, want := range tests {
 		got := siteFromHost(input)
 		if got != want {
 			t.Fatalf("siteFromHost(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestCanonicalSiteName(t *testing.T) {
+	tests := map[string]struct {
+		input string
+		want  string
+		ok    bool
+	}{
+		"lowercases": {input: " Foo ", want: "foo", ok: true},
+		"hyphen":     {input: "foo-bar", want: "foo-bar", ok: true},
+		"dots":       {input: "foo.example", ok: false},
+		"underscore": {input: "foo_bar", ok: false},
+		"reserved":   {input: "serve", ok: false},
+		"leading":    {input: "-foo", ok: false},
+		"trailing":   {input: "foo-", ok: false},
+	}
+
+	for name, tc := range tests {
+		got, err := canonicalSiteName(tc.input)
+		if tc.ok && err != nil {
+			t.Fatalf("%s: canonicalSiteName returned error: %v", name, err)
+		}
+		if !tc.ok && err == nil {
+			t.Fatalf("%s: canonicalSiteName returned nil error", name)
+		}
+		if got != tc.want {
+			t.Fatalf("%s: canonicalSiteName = %q, want %q", name, got, tc.want)
 		}
 	}
 }
@@ -553,7 +584,7 @@ type fakeDatabase struct {
 	sites     []PublishedSite
 }
 
-func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64) (UploadRecord, error) {
+func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (UploadRecord, error) {
 	return UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,

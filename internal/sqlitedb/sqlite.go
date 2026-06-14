@@ -579,7 +579,7 @@ func (d *Database) BootstrapAdmin(ctx context.Context) (BootstrapAdminResult, er
 	}, nil
 }
 
-func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64) (server.UploadRecord, error) {
+func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (server.UploadRecord, error) {
 	if site == "" {
 		return server.UploadRecord{}, fmt.Errorf("site is required")
 	}
@@ -595,6 +595,28 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 		return server.UploadRecord{}, fmt.Errorf("begin upload transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	if publisherUserID > 0 && !publisherIsAdmin {
+		var siteExists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE site_sha = ?`, siteSHA).Scan(&siteExists); err != nil {
+			return server.UploadRecord{}, fmt.Errorf("check site ownership: %w", err)
+		}
+		if siteExists > 0 {
+			var owned int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM user_sites WHERE site_sha = ? AND user_id = ?
+					UNION
+					SELECT 1 FROM uploads WHERE site_sha = ? AND publisher_user_id = ?
+				)
+			`, siteSHA, publisherUserID, siteSHA, publisherUserID).Scan(&owned); err != nil {
+				return server.UploadRecord{}, fmt.Errorf("check site owner: %w", err)
+			}
+			if owned == 0 {
+				return server.UploadRecord{}, server.ErrSiteOwnership
+			}
+		}
+	}
 
 	var version int64
 	if err := tx.QueryRowContext(ctx, `
@@ -732,7 +754,7 @@ func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePat
 			AND u.state = ?
 		JOIN upload_files uf
 			ON uf.upload_id = u.id
-		WHERE LOWER(s.site) = LOWER(?)
+		WHERE s.site = ?
 			AND uf.relative_path = ?
 	`, string(server.UploadStateFinished), site, relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
 	if err == nil {

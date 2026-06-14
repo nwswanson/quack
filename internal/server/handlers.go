@@ -304,7 +304,7 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 
 	site, ok := siteFromDeletePath(r.URL.Path)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "site is required")
+		writeError(w, http.StatusBadRequest, "site is invalid")
 		return
 	}
 	siteSHA := sha256Hex(site)
@@ -455,6 +455,11 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 	case strings.TrimSpace(r.Header.Get(protocol.HeaderSite)) == "":
 		writeError(w, http.StatusBadRequest, "site is required")
 	default:
+		site, err := canonicalSiteName(r.Header.Get(protocol.HeaderSite))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return "", user, settings, false
+		}
 		settings, err = h.db.GetServerSettings(r.Context())
 		if err != nil {
 			slog.ErrorContext(r.Context(), "load upload settings failed", "error", err)
@@ -464,7 +469,7 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 		if settings.MaxUploadBytes > 0 {
 			r.Body = http.MaxBytesReader(w, r.Body, settings.MaxUploadBytes)
 		}
-		return strings.TrimSpace(r.Header.Get(protocol.HeaderSite)), user, settings, true
+		return site, user, settings, true
 	}
 	return "", user, settings, false
 }
@@ -481,6 +486,8 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, limitErr.Error())
 	case errors.As(err, &badRequest):
 		writeError(w, http.StatusBadRequest, badRequest.Error())
+	case errors.Is(err, ErrSiteOwnership):
+		writeError(w, http.StatusForbidden, "site is owned by another user")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
@@ -536,7 +543,7 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, se
 	ctx := r.Context()
 	siteSHA := sha256Hex(site)
 
-	upload, err := h.db.BeginUpload(ctx, site, siteSHA, user.ID)
+	upload, err := h.db.BeginUpload(ctx, site, siteSHA, user.ID, user.IsAdmin())
 	if err != nil {
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("begin upload: %w", err)
 	}
@@ -693,7 +700,42 @@ func siteFromHost(host string) string {
 	if i := strings.IndexByte(host, '.'); i >= 0 {
 		host = host[:i]
 	}
-	return host
+	site, err := canonicalSiteName(host)
+	if err != nil {
+		return ""
+	}
+	return site
+}
+
+func canonicalSiteName(value string) (string, error) {
+	site := strings.TrimSpace(strings.ToLower(value))
+	site = strings.Trim(site, ".")
+	if site == "" {
+		return "", fmt.Errorf("site is required")
+	}
+	if len(site) > 63 {
+		return "", fmt.Errorf("site must be 63 characters or fewer")
+	}
+	if strings.Contains(site, ".") {
+		return "", fmt.Errorf("site must be a single DNS label")
+	}
+	if strings.HasPrefix(site, "-") || strings.HasSuffix(site, "-") {
+		return "", fmt.Errorf("site cannot start or end with hyphen")
+	}
+	switch site {
+	case "v1", "serve":
+		return "", fmt.Errorf("site name is reserved")
+	}
+	for _, r := range site {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return "", fmt.Errorf("site must contain only lowercase letters, numbers, and hyphens")
+		}
+	}
+	return site, nil
 }
 
 func requestedRelativePath(urlPath string) (string, bool) {
@@ -767,7 +809,11 @@ func siteFromDeletePath(urlPath string) (string, bool) {
 		return "", false
 	}
 	site = strings.TrimSpace(site)
-	return site, site != ""
+	site, err = canonicalSiteName(site)
+	if err != nil {
+		return "", false
+	}
+	return site, true
 }
 
 func sha256Hex(value string) string {

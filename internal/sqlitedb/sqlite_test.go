@@ -3,6 +3,7 @@ package sqlitedb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ func TestFinishUploadPersistsMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0)
+	upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestUserSitesTableJoinsUsersToUploadedSites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0)
+	upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +330,7 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	siteA, err := db.BeginUpload(ctx, "site-a", "site-a-sha", alice.User.ID)
+	siteA, err := db.BeginUpload(ctx, "site-a", "site-a-sha", alice.User.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +339,7 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	siteB, err := db.BeginUpload(ctx, "site-b", "site-b-sha", bob.User.ID)
+	siteB, err := db.BeginUpload(ctx, "site-b", "site-b-sha", bob.User.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,6 +371,51 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 	}
 }
 
+func TestBeginUploadRejectsNonOwnerForExistingSite(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	alice, err := db.CreateUser(ctx, "alice", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := db.CreateUser(ctx, "bob", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := db.CreateUser(ctx, "admin2", adminPermission)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := db.BeginUpload(ctx, "foo", "foo-sha", alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Files = []server.UploadFileRecord{{RelativePath: "index.html", BlobPath: "v1", FileSHA: "v1", Bytes: 1}}
+	if err := db.FinishUpload(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.LinkUserSite(ctx, alice.User.ID, first.SiteSHA); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.BeginUpload(ctx, "foo", "foo-sha", bob.User.ID, false); !errors.Is(err, server.ErrSiteOwnership) {
+		t.Fatalf("bob begin upload error = %v, want ErrSiteOwnership", err)
+	}
+
+	if _, err := db.BeginUpload(ctx, "foo", "foo-sha", alice.User.ID, false); err != nil {
+		t.Fatalf("owner begin upload: %v", err)
+	}
+	if _, err := db.BeginUpload(ctx, "foo", "foo-sha", admin.User.ID, true); err != nil {
+		t.Fatalf("admin begin upload: %v", err)
+	}
+}
+
 func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
@@ -378,7 +424,7 @@ func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 	}
 	defer db.Close()
 
-	upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0)
+	upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +436,7 @@ func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	upload, err = db.BeginUpload(ctx, "example.com", "site-sha", 0)
+	upload, err = db.BeginUpload(ctx, "example.com", "site-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +448,7 @@ func TestBeginUploadIncrementsAndRetainsUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	upload, err = db.BeginUpload(ctx, "example.com", "site-sha", 0)
+	upload, err = db.BeginUpload(ctx, "example.com", "site-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +484,7 @@ func TestConcurrentBeginUploadAllocatesUniqueVersions(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0)
+			upload, err := db.BeginUpload(ctx, "example.com", "site-sha", 0, false)
 			if err != nil {
 				errs <- err
 				return
@@ -473,7 +519,7 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 	}
 	defer db.Close()
 
-	v1, err := db.BeginUpload(ctx, "foo", "foo-sha", 0)
+	v1, err := db.BeginUpload(ctx, "foo", "foo-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +530,7 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v2, err := db.BeginUpload(ctx, "foo", "foo-sha", 0)
+	v2, err := db.BeginUpload(ctx, "foo", "foo-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +556,7 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	file, ok, err = db.FindCurrentFile(ctx, "FOO", "index.html")
+	file, ok, err = db.FindCurrentFile(ctx, "foo", "index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +593,7 @@ func TestConcurrentUploadsForDifferentSitesServeIndependently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			upload, err := db.BeginUpload(ctx, item.site, item.siteSHA, 0)
+			upload, err := db.BeginUpload(ctx, item.site, item.siteSHA, 0, false)
 			if err != nil {
 				errs <- err
 				return
@@ -573,11 +619,11 @@ func TestConcurrentUploadsForDifferentSitesServeIndependently(t *testing.T) {
 	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/1/file:a-v1")
 	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/1/file:b-v1")
 
-	a2, err := db.BeginUpload(ctx, "site-a", "site-a-sha", 0)
+	a2, err := db.BeginUpload(ctx, "site-a", "site-a-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b2, err := db.BeginUpload(ctx, "site-b", "site-b-sha", 0)
+	b2, err := db.BeginUpload(ctx, "site-b", "site-b-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +677,7 @@ func TestFindCurrentFileIgnoresUploadingAndErrorVersions(t *testing.T) {
 	}
 	defer db.Close()
 
-	upload, err := db.BeginUpload(ctx, "foo", "foo-sha", 0)
+	upload, err := db.BeginUpload(ctx, "foo", "foo-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +713,7 @@ func TestDeleteSiteRemovesMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	upload, err := db.BeginUpload(ctx, "foo", "foo-sha", 0)
+	upload, err := db.BeginUpload(ctx, "foo", "foo-sha", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
