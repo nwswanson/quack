@@ -85,6 +85,9 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !h.requireAdminSameOrigin(w, r) {
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		h.renderAdminPage(w, r, adminPageData{Error: "Unable to read login form."})
 		return
@@ -120,6 +123,9 @@ func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !h.requireAdminSameOrigin(w, r) {
+		return
+	}
 	cookie, err := r.Cookie(adminSessionCookieName)
 	if err == nil && cookie.Value != "" {
 		if err := h.db.DeleteAdminSession(r.Context(), cookie.Value); err != nil {
@@ -135,6 +141,9 @@ func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdminSameOrigin(w, r) {
 		return
 	}
 	user, ok, err := h.currentAdminUser(r)
@@ -172,6 +181,9 @@ func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdminSameOrigin(w, r) {
 		return
 	}
 	user, ok, err := h.currentAdminUser(r)
@@ -265,6 +277,35 @@ func (h *handler) currentAdminUser(r *http.Request) (AdminUser, bool, error) {
 		return AdminUser{}, false, nil
 	}
 	return h.db.FindAdminSession(r.Context(), cookie.Value)
+}
+
+func (h *handler) requireAdminSameOrigin(w http.ResponseWriter, r *http.Request) bool {
+	if sameOriginAdminRequest(r) {
+		return true
+	}
+	slog.WarnContext(r.Context(), "admin post rejected by origin check",
+		"host", r.Host,
+		"origin", r.Header.Get("Origin"),
+		"referer", r.Header.Get("Referer"),
+		"path", r.URL.Path,
+	)
+	writeError(w, http.StatusForbidden, "invalid origin")
+	return false
+}
+
+func sameOriginAdminRequest(r *http.Request) bool {
+	source := strings.TrimSpace(r.Header.Get("Origin"))
+	if source == "" {
+		source = strings.TrimSpace(r.Header.Get("Referer"))
+	}
+	if source == "" || strings.EqualFold(source, "null") {
+		return false
+	}
+	parsed, err := url.Parse(source)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return normalizeAdminHost(parsed.Host) == normalizeAdminHost(r.Host)
 }
 
 func adminSessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {

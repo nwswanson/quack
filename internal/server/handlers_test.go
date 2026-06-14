@@ -314,6 +314,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	loginReq := httptest.NewRequest(http.MethodPost, "/login", loginBody)
 	loginReq.Host = "quack.example.com"
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("Origin", "https://quack.example.com")
 	loginReq.Header.Set("X-Forwarded-Proto", "https")
 	loginRec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(loginRec, loginReq)
@@ -359,6 +360,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	logoutReq.Host = "quack.example.com"
+	logoutReq.Header.Set("Origin", "https://quack.example.com")
 	logoutReq.AddCookie(cookie)
 	logoutRec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(logoutRec, logoutReq)
@@ -383,6 +385,7 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://quack.example.com")
 	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
@@ -398,6 +401,52 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 	}
 }
 
+func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://alice.example.com")
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid origin") {
+		t.Fatalf("body = %q, want invalid origin", rec.Body.String())
+	}
+}
+
+func TestAdminPostRejectsMissingOrigin(t *testing.T) {
+	opts := DefaultOptions()
+	opts.AdminHost = "https://quack.example.com"
+	db := &fakeDatabase{
+		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+	}
+	srv := New("", "token", fakeStorage{}, db, opts)
+
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
 func TestAdminSettingsUpdate(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
@@ -410,6 +459,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://quack.example.com")
 	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
@@ -434,6 +484,7 @@ func TestAdminLoginRejectsInvalidPassword(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=bad"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://quack.example.com")
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
