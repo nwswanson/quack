@@ -31,8 +31,7 @@ type handler struct {
 	token                string
 	store                Storage
 	db                   Database
-	maxUploadBytes       int64
-	maxUploadFiles       int64
+	resolver             Resolver
 	allowUnauthenticated bool
 }
 
@@ -42,6 +41,7 @@ func (h *handler) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logout", h.handleAdminLogout)
 	mux.HandleFunc("/users", h.handleAdminCreateUser)
 	mux.HandleFunc("/settings", h.handleAdminSettings)
+	mux.HandleFunc("/policy", h.handleAdminPolicy)
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
@@ -153,7 +153,7 @@ func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if !ok || !user.IsAdmin() {
+	if !ok || !Can(user, "users.create") {
 		http.NotFound(w, r)
 		return
 	}
@@ -193,7 +193,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if !ok || !user.IsAdmin() {
+	if !ok || !Can(user, "server.settings.edit") {
 		http.NotFound(w, r)
 		return
 	}
@@ -211,8 +211,53 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles)
+	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "log_level", settings.LogLevel)
 	h.renderAdminPageWithMessage(w, r, user, "", "Settings saved.")
+}
+
+func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdminSameOrigin(w, r) {
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !Can(user, "policy.edit") {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.renderAdminPageWithMessage(w, r, user, "Unable to read policy form.", "")
+		return
+	}
+	mode := strings.TrimSpace(r.Form.Get("database_policy_mode"))
+	switch mode {
+	case "inherit", "allow", "deny":
+	default:
+		h.renderAdminPageWithMessage(w, r, user, "Database policy must be inherit, allow, or deny.", "")
+		return
+	}
+	if err := h.db.SavePolicy(r.Context(), PolicyRecord{
+		ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: mode,
+		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
+	}); err != nil {
+		slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := h.resolver.ReconcilePolicyViolations(r.Context()); err != nil {
+		slog.ErrorContext(r.Context(), "reconcile policy violations failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	h.renderAdminPageWithMessage(w, r, user, "", "Policy saved.")
 }
 
 type adminPageData struct {
@@ -221,6 +266,7 @@ type adminPageData struct {
 	Message     string
 	Sites       []PublishedSite
 	Settings    ServerSettings
+	Policy      PolicyRecord
 	CreatedUser CreatedUser
 }
 
@@ -245,10 +291,33 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 	if err != nil {
 		return adminPageData{}, err
 	}
+	for i := range sites {
+		decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), sites[i].Site)
+		if err != nil {
+			return adminPageData{}, err
+		}
+		sites[i].RuntimeStatus = decision.Status
+		if sites[i].RuntimeStatus == "" {
+			sites[i].RuntimeStatus = SiteRuntimeActive
+		}
+		sites[i].PolicyReason = decision.Reason
+	}
+	policies, err := h.db.LoadPolicies(r.Context(), []PolicyScope{{Type: ScopeSystem, ID: ""}})
+	if err != nil {
+		return adminPageData{}, err
+	}
+	policy := PolicyRecord{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "inherit"}
+	for _, p := range policies {
+		if p.Key == SettingDatabaseFeature {
+			policy = p
+			break
+		}
+	}
 	return adminPageData{
 		User:     user,
 		Sites:    sites,
 		Settings: settings,
+		Policy:   policy,
 	}, nil
 }
 
@@ -419,6 +488,17 @@ func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
+	decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if decision.Status == SiteRuntimeSuspendedByPolicy {
+		writeError(w, http.StatusForbidden, "site suspended by administrator policy")
+		return
+	}
+
 	relativePath, wantsIndex := requestedRelativePath(urlPath)
 	file, ok, err := h.db.FindCurrentFile(r.Context(), site, relativePath)
 	if err != nil {
@@ -471,12 +551,12 @@ func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string,
 }
 
 func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
-	site, user, settings, ok := h.validUploadRequest(w, r)
+	site, user, policy, ok := h.validUploadRequest(w, r)
 	if !ok {
 		return
 	}
 
-	resp, err := h.uploadArchive(r, site, user, settings)
+	resp, err := h.uploadArchive(r, site, user, policy)
 	if err != nil {
 		h.writeUploadError(w, err)
 		return
@@ -485,13 +565,13 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, AdminUser, ServerSettings, bool) {
+func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, AdminUser, UploadPolicy, bool) {
 	var user AdminUser
-	settings := ServerSettings{MaxUploadBytes: h.maxUploadBytes, MaxUploadFiles: h.maxUploadFiles}
+	var policy UploadPolicy
 	switch {
 	case r.Method != http.MethodPost:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return "", user, settings, false
+		return "", user, policy, false
 	}
 	var ok bool
 	var err error
@@ -499,7 +579,7 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 	if err != nil {
 		slog.ErrorContext(r.Context(), "upload authorization lookup failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
-		return "", user, settings, false
+		return "", user, policy, false
 	}
 	switch {
 	case !ok:
@@ -512,26 +592,27 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 		site, err := canonicalSiteName(r.Header.Get(protocol.HeaderSite))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
-			return "", user, settings, false
+			return "", user, policy, false
 		}
-		settings, err = h.db.GetServerSettings(r.Context())
+		policy, err = h.resolver.ResolveUploadPolicy(r.Context(), user, site)
 		if err != nil {
-			slog.ErrorContext(r.Context(), "load upload settings failed", "error", err)
+			slog.ErrorContext(r.Context(), "resolve upload policy failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal server error")
-			return "", user, settings, false
+			return "", user, policy, false
 		}
-		if settings.MaxUploadBytes > 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, settings.MaxUploadBytes)
+		if policy.MaxUploadBytes.Value > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, policy.MaxUploadBytes.Value)
 		}
-		return site, user, settings, true
+		return site, user, policy, true
 	}
-	return "", user, settings, false
+	return "", user, policy, false
 }
 
 func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 	var maxBytesErr *http.MaxBytesError
 	var limitErr uploadLimitError
 	var badRequest badArchiveError
+	var forbidden forbiddenPolicyError
 
 	switch {
 	case errors.As(err, &maxBytesErr):
@@ -540,6 +621,8 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, limitErr.Error())
 	case errors.As(err, &badRequest):
 		writeError(w, http.StatusBadRequest, badRequest.Error())
+	case errors.As(err, &forbidden):
+		writeError(w, http.StatusForbidden, forbidden.Error())
 	case errors.Is(err, ErrSiteOwnership):
 		writeError(w, http.StatusForbidden, "site is owned by another user")
 	default:
@@ -560,9 +643,17 @@ func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {
 	if err != nil {
 		return ServerSettings{}, err
 	}
+	logLevel := parseLogLevelName(r.Form.Get("log_level"))
+	if strings.TrimSpace(r.Form.Get("log_level")) == "" {
+		logLevel = "warn"
+	}
+	if logLevel == "" {
+		return ServerSettings{}, fmt.Errorf("log level must be debug, info, warn, or error")
+	}
 	return ServerSettings{
 		MaxUploadBytes: maxUploadBytes,
 		MaxUploadFiles: maxUploadFiles,
+		LogLevel:       logLevel,
 	}, nil
 }
 
@@ -581,7 +672,7 @@ func parseNonNegativeInt64(value string, label string) (int64, error) {
 	return n, nil
 }
 
-func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, settings ServerSettings) (protocol.UploadArchiveResponse, error) {
+func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, policy UploadPolicy) (protocol.UploadArchiveResponse, error) {
 	ctx := r.Context()
 	siteSHA := sha256Hex(site)
 
@@ -591,13 +682,27 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, se
 	}
 	slog.WarnContext(ctx, "upload started", "site", upload.Site, "version", upload.Version)
 
-	files, bytes, err := h.acceptArchive(r, &upload, settings)
+	files, bytes, manifest, err := h.acceptArchive(r, &upload, policy)
 	if err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
 			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
 		}
 		slog.WarnContext(ctx, "upload failed", "site", upload.Site, "version", upload.Version, "error", err)
 		return protocol.UploadArchiveResponse{}, err
+	}
+
+	if err := h.resolver.ValidateUploadManifest(ctx, user, site, manifest); err != nil {
+		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
+			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
+		}
+		slog.WarnContext(ctx, "upload rejected by policy", "site", upload.Site, "version", upload.Version, "error", err)
+		return protocol.UploadArchiveResponse{}, err
+	}
+	if err := h.db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, ManifestSettings(manifest)); err != nil {
+		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
+			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
+		}
+		return protocol.UploadArchiveResponse{}, fmt.Errorf("save upload settings: %w", err)
 	}
 
 	if err := h.db.FinishUpload(ctx, upload); err != nil {
@@ -624,23 +729,33 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, se
 	}, nil
 }
 
-func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, settings ServerSettings) (int64, int64, error) {
+func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, policy UploadPolicy) (int64, int64, SiteManifest, error) {
 	ctx := r.Context()
 	tr := tar.NewReader(r.Body)
 
+	manifest := DefaultSiteManifest()
 	var files, bytes int64
 	for {
 		header, err := tr.Next()
 		switch {
 		case errors.Is(err, io.EOF):
-			return files, bytes, nil
+			return files, bytes, manifest, nil
 		case err != nil:
-			return 0, 0, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
+			return 0, 0, manifest, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
 		}
 
-		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files, settings)
+		if path.Clean(header.Name) == "site.yaml" && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA) {
+			parsed, err := ParseSiteManifest(tr, header.Size)
+			if err != nil {
+				return 0, 0, manifest, err
+			}
+			manifest = parsed
+			continue
+		}
+
+		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files, policy)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, manifest, err
 		}
 		if rec == nil {
 			continue
@@ -658,7 +773,7 @@ func (h *handler) acceptArchiveEntry(
 	header *tar.Header,
 	siteSHA string,
 	version, files int64,
-	settings ServerSettings,
+	policy UploadPolicy,
 ) (*UploadFileRecord, int64, error) {
 	if err := validateArchivePath(header.Name); err != nil {
 		return nil, 0, err
@@ -668,7 +783,7 @@ func (h *handler) acceptArchiveEntry(
 	case tar.TypeDir:
 		return nil, 0, nil
 	case tar.TypeReg, tar.TypeRegA:
-		return h.acceptRegularFile(ctx, body, header, siteSHA, version, files, settings)
+		return h.acceptRegularFile(ctx, body, header, siteSHA, version, files, policy)
 	default:
 		return nil, 0, badArchiveError{err: fmt.Errorf("unsupported archive entry type for %s", header.Name)}
 	}
@@ -680,10 +795,10 @@ func (h *handler) acceptRegularFile(
 	header *tar.Header,
 	siteSHA string,
 	version, files int64,
-	settings ServerSettings,
+	policy UploadPolicy,
 ) (*UploadFileRecord, int64, error) {
-	if settings.MaxUploadFiles > 0 && files >= settings.MaxUploadFiles {
-		return nil, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", settings.MaxUploadFiles)}
+	if policy.MaxUploadFiles.Value > 0 && files >= policy.MaxUploadFiles.Value {
+		return nil, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", policy.MaxUploadFiles.Value)}
 	}
 
 	path, err := sanitizeServingPath(header.Name)

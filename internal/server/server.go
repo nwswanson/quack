@@ -15,17 +15,12 @@ const (
 )
 
 type Options struct {
-	MaxUploadBytes       int64
-	MaxUploadFiles       int64
 	AdminHost            string
 	AllowUnauthenticated bool
 }
 
 func DefaultOptions() Options {
-	return Options{
-		MaxUploadBytes: DefaultMaxUploadBytes,
-		MaxUploadFiles: DefaultMaxUploadFiles,
-	}
+	return Options{}
 }
 
 func New(addr string, token string, store Storage, db Database, opts Options) *http.Server {
@@ -38,8 +33,7 @@ func New(addr string, token string, store Storage, db Database, opts Options) *h
 		token:                token,
 		store:                store,
 		db:                   db,
-		maxUploadBytes:       opts.MaxUploadBytes,
-		maxUploadFiles:       opts.MaxUploadFiles,
+		resolver:             NewResolver(db),
 		allowUnauthenticated: opts.AllowUnauthenticated,
 	}
 	h.adminRoutes(mux)

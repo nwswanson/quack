@@ -24,6 +24,14 @@ type Database interface {
 	LinkUserSite(ctx context.Context, userID int64, siteSHA string) error
 	GetServerSettings(ctx context.Context) (ServerSettings, error)
 	SaveServerSettings(ctx context.Context, settings ServerSettings) error
+	LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error)
+	SavePolicy(ctx context.Context, policy PolicyRecord) error
+	LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error)
+	SaveUploadSettings(ctx context.Context, siteSHA string, version int64, settings map[string]string) error
+	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
+	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error)
+	SavePolicyViolation(ctx context.Context, violation PolicyViolation) error
+	ResolvePolicyViolation(ctx context.Context, siteSHA string, version int64, key string) error
 	Close() error
 }
 
@@ -52,9 +60,45 @@ type PublishedSite struct {
 	FileCount      int64
 	ByteCount      int64
 	UpdatedAt      string
+	RuntimeStatus  SiteRuntimeStatus
+	PolicyReason   string
 }
 
 type ServerSettings struct {
 	MaxUploadBytes int64
 	MaxUploadFiles int64
+	LogLevel       string
+	Locked         map[string]bool
+}
+
+type PolicyScope struct {
+	Type ScopeType
+	ID   string
+}
+
+type PolicyRecord struct {
+	ScopeType       ScopeType
+	ScopeID         string
+	Key             string
+	Mode            string
+	Value           string
+	Reason          string
+	UpdatedByUserID int64
+}
+
+type CurrentSiteManifest struct {
+	Site     string
+	SiteSHA  string
+	Version  int64
+	Settings map[string]string
+}
+
+type PolicyViolation struct {
+	SiteSHA        string
+	UploadVersion  int64
+	Key            string
+	RequestedValue string
+	PolicyValue    string
+	Severity       string
+	Reason         string
 }

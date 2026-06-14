@@ -41,12 +41,12 @@ go run ./cmd/quack-server -root ./data -database ./quack.sqlite --allow-unauthen
 
 The server listens on `:8080` by default. Set `ADDR` to override it.
 
-The server applies upload limits by default:
+The server applies DB-backed upload limits by default:
 
-- `-max-upload-bytes`, default `536870912` bytes, or 512 MiB.
-- `-max-upload-files`, default `10000` regular files.
+- `max_upload_bytes`, default `536870912` bytes, or 512 MiB.
+- `max_upload_files`, default `10000` regular files.
 
-Use `0` for either flag to disable that limit. These defaults are intended to fit ordinary static-site uploads, including moderately large sites, while preventing unbounded request bodies and metadata growth.
+Use `0` for either setting to disable that limit. These settings, along with `log_level`, are initialized from code defaults only when missing and can be edited in the admin UI.
 
 ## Run the CLI
 

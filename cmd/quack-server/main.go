@@ -17,16 +17,9 @@ import (
 func main() {
 	root := flag.String("root", "", "root directory for blob storage")
 	databasePath := flag.String("database", "", "sqlite database file")
-	maxUploadBytes := flag.Int64("max-upload-bytes", server.DefaultMaxUploadBytes, "maximum tar upload request size in bytes; 0 disables")
-	maxUploadFiles := flag.Int64("max-upload-files", server.DefaultMaxUploadFiles, "maximum regular files accepted per upload; 0 disables")
-	logLevel := flag.String("log-level", "warn", "log level: debug, info, warn, or error")
 	adminHost := flag.String("admin-host", "", "host allowed to serve /v1 admin API routes; accepts a host or URL")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
 	flag.Parse()
-	if err := configureLogger(*logLevel); err != nil {
-		fmt.Fprintf(os.Stderr, "-log-level: %v\n", err)
-		os.Exit(1)
-	}
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "-root is required")
 		os.Exit(1)
@@ -35,18 +28,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-database is required")
 		os.Exit(1)
 	}
-	if *maxUploadBytes < 0 {
-		fmt.Fprintln(os.Stderr, "-max-upload-bytes must be >= 0")
-		os.Exit(1)
-	}
-	if *maxUploadFiles < 0 {
-		fmt.Fprintln(os.Stderr, "-max-upload-files must be >= 0")
-		os.Exit(1)
-	}
 	uploadToken := os.Getenv("UPLOAD_TOKEN")
-	if *allowUnauthenticated {
-		slog.Warn("unauthenticated api access enabled")
-	}
 
 	addr := os.Getenv("ADDR")
 	if addr == "" {
@@ -55,15 +37,35 @@ func main() {
 
 	store, err := server.NewBlobStorage(*root)
 	if err != nil {
-		slog.Error("create blob storage failed", "root", *root, "error", err)
+		fmt.Fprintf(os.Stderr, "create blob storage failed: %v\n", err)
 		os.Exit(1)
 	}
 	db, err := sqlitedb.Open(context.Background(), *databasePath)
 	if err != nil {
-		slog.Error("open database failed", "database", *databasePath, "error", err)
+		fmt.Fprintf(os.Stderr, "open database failed: %v\n", err)
 		os.Exit(1)
 	}
 	defer db.Close()
+	if err := db.InitializeServerSettings(context.Background(), server.ServerSettings{
+		MaxUploadBytes: server.DefaultMaxUploadBytes,
+		MaxUploadFiles: server.DefaultMaxUploadFiles,
+		LogLevel:       "warn",
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "initialize server settings failed: %v\n", err)
+		os.Exit(1)
+	}
+	settings, err := db.GetServerSettings(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load server settings failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err := configureLogger(settings.LogLevel); err != nil {
+		fmt.Fprintf(os.Stderr, "log_level: %v\n", err)
+		os.Exit(1)
+	}
+	if *allowUnauthenticated {
+		slog.Warn("unauthenticated api access enabled")
+	}
 	admin, err := db.BootstrapAdmin(context.Background())
 	if err != nil {
 		slog.Error("bootstrap admin user failed", "error", err)
@@ -78,26 +80,17 @@ func main() {
 	}
 
 	opts := server.DefaultOptions()
-	opts.MaxUploadBytes = *maxUploadBytes
-	opts.MaxUploadFiles = *maxUploadFiles
 	opts.AdminHost = *adminHost
 	opts.AllowUnauthenticated = *allowUnauthenticated
-	if err := db.InitializeServerSettings(context.Background(), server.ServerSettings{
-		MaxUploadBytes: opts.MaxUploadBytes,
-		MaxUploadFiles: opts.MaxUploadFiles,
-	}); err != nil {
-		slog.Error("initialize server settings failed", "error", err)
-		os.Exit(1)
-	}
 
 	srv := server.New(addr, uploadToken, store, db, opts)
 	slog.Warn("starting quack server",
 		"addr", addr,
 		"root", *root,
 		"database", *databasePath,
-		"max_upload_bytes", opts.MaxUploadBytes,
-		"max_upload_files", opts.MaxUploadFiles,
-		"log_level", *logLevel,
+		"max_upload_bytes", settings.MaxUploadBytes,
+		"max_upload_files", settings.MaxUploadFiles,
+		"log_level", settings.LogLevel,
 		"admin_host", *adminHost,
 		"legacy_upload_token_enabled", uploadToken != "",
 		"allow_unauthenticated", *allowUnauthenticated,

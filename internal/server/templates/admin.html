@@ -111,6 +111,8 @@
                 <th>Versions</th>
                 <th>Files</th>
                 <th>Bytes</th>
+                <th>Runtime status</th>
+                <th>Policy reason</th>
                 <th>Updated</th>
               </tr>
             </thead>
@@ -123,6 +125,8 @@
                   <td>{{.VersionCount}}</td>
                   <td>{{.FileCount}}</td>
                   <td>{{.ByteCount}}</td>
+                  <td>{{.RuntimeStatus}}</td>
+                  <td>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</td>
                   <td>{{.UpdatedAt}}</td>
                 </tr>
               {{end}}
@@ -166,7 +170,30 @@
               Max upload files
               <input name="max_upload_files" type="number" min="0" value="{{.Settings.MaxUploadFiles}}" required>
             </label>
+            <label>
+              Log level
+              <input name="log_level" value="{{.Settings.LogLevel}}" required>
+            </label>
             <button type="submit">Save settings</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Policy</h2>
+          <form method="post" action="/policy">
+            <label>
+              Database feature policy
+              <select name="database_policy_mode">
+                <option value="inherit" {{if eq .Policy.Mode "inherit"}}selected{{end}}>inherit</option>
+                <option value="allow" {{if eq .Policy.Mode "allow"}}selected{{end}}>allow</option>
+                <option value="deny" {{if eq .Policy.Mode "deny"}}selected{{end}}>deny</option>
+              </select>
+            </label>
+            <label>
+              Reason
+              <input name="database_policy_reason" value="{{.Policy.Reason}}">
+            </label>
+            <button type="submit">Save policy</button>
           </form>
         </section>
       {{end}}

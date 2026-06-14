@@ -155,7 +155,51 @@ func (d *Database) init(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS server_settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'code_default',
+			locked INTEGER NOT NULL DEFAULT 0,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			scope_type TEXT NOT NULL CHECK (scope_type IN ('system', 'user', 'site', 'upload')),
+			scope_id TEXT NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			source TEXT NOT NULL CHECK (source IN ('admin_ui', 'user_ui', 'site_yaml', 'code_default')),
+			updated_by_user_id INTEGER,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (scope_type, scope_id, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS policies (
+			scope_type TEXT NOT NULL CHECK (scope_type IN ('system', 'user', 'site')),
+			scope_id TEXT NOT NULL,
+			key TEXT NOT NULL,
+			mode TEXT NOT NULL,
+			value TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			updated_by_user_id INTEGER,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (scope_type, scope_id, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS upload_settings (
+			site_sha TEXT NOT NULL,
+			upload_version INTEGER NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'site_yaml',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (site_sha, upload_version, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS site_policy_violations (
+			site_sha TEXT NOT NULL,
+			upload_version INTEGER NOT NULL,
+			key TEXT NOT NULL,
+			requested_value TEXT NOT NULL,
+			policy_value TEXT NOT NULL,
+			severity TEXT NOT NULL CHECK (severity IN ('degraded', 'suspended')),
+			reason TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			resolved_at TEXT,
+			PRIMARY KEY (site_sha, upload_version, key)
 		)`,
 	}
 
@@ -178,6 +222,12 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN publisher_user_id INTEGER`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite upload publisher: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE server_settings ADD COLUMN source TEXT NOT NULL DEFAULT 'code_default'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite server setting source: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE server_settings ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite server setting locked: %w", err)
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
@@ -344,8 +394,10 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 	settings := server.ServerSettings{
 		MaxUploadBytes: server.DefaultMaxUploadBytes,
 		MaxUploadFiles: server.DefaultMaxUploadFiles,
+		LogLevel:       "warn",
+		Locked:         map[string]bool{},
 	}
-	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value FROM server_settings`)
+	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value, locked FROM server_settings`)
 	if err != nil {
 		return server.ServerSettings{}, fmt.Errorf("get server settings: %w", err)
 	}
@@ -353,18 +405,31 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 
 	for rows.Next() {
 		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
+		var locked int
+		if err := rows.Scan(&key, &value, &locked); err != nil {
 			return server.ServerSettings{}, fmt.Errorf("scan server setting: %w", err)
 		}
-		n, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+		if err := server.ValidateSettingValue(key, value); err != nil {
+			return server.ServerSettings{}, err
+		}
+		if locked != 0 {
+			settings.Locked[key] = true
 		}
 		switch key {
 		case "max_upload_bytes":
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
 			settings.MaxUploadBytes = n
 		case "max_upload_files":
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
 			settings.MaxUploadFiles = n
+		case "log_level":
+			settings.LogLevel = strings.ToLower(strings.TrimSpace(value))
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -380,6 +445,12 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 	if settings.MaxUploadFiles < 0 {
 		return fmt.Errorf("max upload files must be >= 0")
 	}
+	if settings.LogLevel == "" {
+		settings.LogLevel = "warn"
+	}
+	if err := server.ValidateSettingValue("log_level", settings.LogLevel); err != nil {
+		return err
+	}
 
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -390,15 +461,27 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 	}
 	defer tx.Rollback()
 
-	for key, value := range map[string]int64{
-		"max_upload_bytes": settings.MaxUploadBytes,
-		"max_upload_files": settings.MaxUploadFiles,
-	} {
+	values := map[string]string{
+		"max_upload_bytes": strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files": strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"log_level":        settings.LogLevel,
+	}
+	for key, value := range values {
+		var locked int
+		if err := tx.QueryRowContext(ctx, `SELECT locked FROM server_settings WHERE key = ?`, key).Scan(&locked); err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("check locked server setting %s: %w", key, err)
+		}
+		if locked != 0 {
+			return fmt.Errorf("%s is locked and cannot be edited", key)
+		}
+		if err := server.ValidateSettingValue(key, value); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO server_settings (key, value, updated_at)
-			VALUES (?, ?, CURRENT_TIMESTAMP)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-		`, key, strconv.FormatInt(value, 10)); err != nil {
+			INSERT INTO server_settings (key, value, source, updated_at)
+			VALUES (?, ?, 'admin_ui', CURRENT_TIMESTAMP)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value, source = 'admin_ui', updated_at = CURRENT_TIMESTAMP
+		`, key, value); err != nil {
 			return fmt.Errorf("save server setting %s: %w", key, err)
 		}
 	}
@@ -415,21 +498,225 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 	if settings.MaxUploadFiles < 0 {
 		return fmt.Errorf("max upload files must be >= 0")
 	}
+	if settings.LogLevel == "" {
+		settings.LogLevel = "warn"
+	}
+	if err := server.ValidateSettingValue("log_level", settings.LogLevel); err != nil {
+		return err
+	}
 
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
-	for key, value := range map[string]int64{
-		"max_upload_bytes": settings.MaxUploadBytes,
-		"max_upload_files": settings.MaxUploadFiles,
+	for key, value := range map[string]string{
+		"max_upload_bytes": strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files": strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"log_level":        settings.LogLevel,
 	} {
+		if err := server.ValidateSettingValue(key, value); err != nil {
+			return err
+		}
 		if _, err := d.writeDB.ExecContext(ctx, `
-			INSERT INTO server_settings (key, value, updated_at)
-			VALUES (?, ?, CURRENT_TIMESTAMP)
+			INSERT INTO server_settings (key, value, source, updated_at)
+			VALUES (?, ?, 'code_default', CURRENT_TIMESTAMP)
 			ON CONFLICT(key) DO NOTHING
-		`, key, strconv.FormatInt(value, 10)); err != nil {
+		`, key, value); err != nil {
 			return fmt.Errorf("initialize server setting %s: %w", key, err)
 		}
+	}
+	return nil
+}
+
+func (d *Database) LoadPolicies(ctx context.Context, scopes []server.PolicyScope) ([]server.PolicyRecord, error) {
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+	var out []server.PolicyRecord
+	for _, scope := range scopes {
+		rows, err := d.readDB.QueryContext(ctx, `
+			SELECT scope_type, scope_id, key, mode, value, reason, COALESCE(updated_by_user_id, 0)
+			FROM policies
+			WHERE scope_type = ? AND scope_id = ?
+		`, string(scope.Type), scope.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load policies: %w", err)
+		}
+		for rows.Next() {
+			var p server.PolicyRecord
+			var scopeType string
+			if err := rows.Scan(&scopeType, &p.ScopeID, &p.Key, &p.Mode, &p.Value, &p.Reason, &p.UpdatedByUserID); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan policy: %w", err)
+			}
+			p.ScopeType = server.ScopeType(scopeType)
+			out = append(out, p)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("iterate policies: %w", err)
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
+func (d *Database) SavePolicy(ctx context.Context, policy server.PolicyRecord) error {
+	if policy.ScopeType == "" {
+		policy.ScopeType = server.ScopeSystem
+	}
+	if policy.Mode == "" {
+		policy.Mode = "inherit"
+	}
+	if policy.Key == "" {
+		return fmt.Errorf("policy key is required")
+	}
+	switch policy.Mode {
+	case "inherit", "allow", "deny", "force_on", "force_off", "cap", "allow_list", "force_value":
+	default:
+		return fmt.Errorf("unsupported policy mode: %s", policy.Mode)
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	if policy.Mode == "inherit" {
+		if _, err := d.writeDB.ExecContext(ctx, `DELETE FROM policies WHERE scope_type = ? AND scope_id = ? AND key = ?`, string(policy.ScopeType), policy.ScopeID, policy.Key); err != nil {
+			return fmt.Errorf("delete inherited policy: %w", err)
+		}
+		return nil
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO policies (scope_type, scope_id, key, mode, value, reason, updated_by_user_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, 0), CURRENT_TIMESTAMP)
+		ON CONFLICT(scope_type, scope_id, key) DO UPDATE SET
+			mode = excluded.mode,
+			value = excluded.value,
+			reason = excluded.reason,
+			updated_by_user_id = excluded.updated_by_user_id,
+			updated_at = CURRENT_TIMESTAMP
+	`, string(policy.ScopeType), policy.ScopeID, policy.Key, policy.Mode, policy.Value, policy.Reason, policy.UpdatedByUserID); err != nil {
+		return fmt.Errorf("save policy: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
+	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value FROM upload_settings WHERE site_sha = ? AND upload_version = ?`, siteSHA, version)
+	if err != nil {
+		return nil, fmt.Errorf("load upload settings: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, fmt.Errorf("scan upload setting: %w", err)
+		}
+		out[key] = value
+	}
+	return out, rows.Err()
+}
+
+func (d *Database) SaveUploadSettings(ctx context.Context, siteSHA string, version int64, settings map[string]string) error {
+	if siteSHA == "" || version <= 0 {
+		return fmt.Errorf("upload identity is required")
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	for key, value := range settings {
+		if err := server.ValidateSettingValue(key, value); err != nil {
+			return err
+		}
+		if _, err := d.writeDB.ExecContext(ctx, `
+			INSERT INTO upload_settings (site_sha, upload_version, key, value, source)
+			VALUES (?, ?, ?, ?, 'site_yaml')
+			ON CONFLICT(site_sha, upload_version, key) DO UPDATE SET value = excluded.value, source = 'site_yaml'
+		`, siteSHA, version, key, value); err != nil {
+			return fmt.Errorf("save upload setting %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]server.CurrentSiteManifest, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT site, site_sha, current_version
+		FROM sites
+		WHERE current_version > 0
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list current sites: %w", err)
+	}
+	defer rows.Close()
+	var out []server.CurrentSiteManifest
+	for rows.Next() {
+		var m server.CurrentSiteManifest
+		if err := rows.Scan(&m.Site, &m.SiteSHA, &m.Version); err != nil {
+			return nil, fmt.Errorf("scan current site: %w", err)
+		}
+		settings, err := d.LoadUploadSettings(ctx, m.SiteSHA, m.Version)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := settings[server.SettingDatabaseFeature]; !ok {
+			settings[server.SettingDatabaseFeature] = "false"
+		}
+		if _, ok := settings[server.SettingDatabaseFeatureRequired]; !ok {
+			settings[server.SettingDatabaseFeatureRequired] = "false"
+		}
+		m.Settings = settings
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (d *Database) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]server.PolicyViolation, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT site_sha, upload_version, key, requested_value, policy_value, severity, reason
+		FROM site_policy_violations
+		WHERE site_sha = ? AND upload_version = ? AND resolved_at IS NULL
+	`, siteSHA, version)
+	if err != nil {
+		return nil, fmt.Errorf("list policy violations: %w", err)
+	}
+	defer rows.Close()
+	var out []server.PolicyViolation
+	for rows.Next() {
+		var v server.PolicyViolation
+		if err := rows.Scan(&v.SiteSHA, &v.UploadVersion, &v.Key, &v.RequestedValue, &v.PolicyValue, &v.Severity, &v.Reason); err != nil {
+			return nil, fmt.Errorf("scan policy violation: %w", err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (d *Database) SavePolicyViolation(ctx context.Context, violation server.PolicyViolation) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	if _, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO site_policy_violations (site_sha, upload_version, key, requested_value, policy_value, severity, reason, resolved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+		ON CONFLICT(site_sha, upload_version, key) DO UPDATE SET
+			requested_value = excluded.requested_value,
+			policy_value = excluded.policy_value,
+			severity = excluded.severity,
+			reason = excluded.reason,
+			resolved_at = NULL
+	`, violation.SiteSHA, violation.UploadVersion, violation.Key, violation.RequestedValue, violation.PolicyValue, violation.Severity, violation.Reason); err != nil {
+		return fmt.Errorf("save policy violation: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) ResolvePolicyViolation(ctx context.Context, siteSHA string, version int64, key string) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	if _, err := d.writeDB.ExecContext(ctx, `
+		UPDATE site_policy_violations
+		SET resolved_at = CURRENT_TIMESTAMP
+		WHERE site_sha = ? AND upload_version = ? AND key = ? AND resolved_at IS NULL
+	`, siteSHA, version, key); err != nil {
+		return fmt.Errorf("resolve policy violation: %w", err)
 	}
 	return nil
 }

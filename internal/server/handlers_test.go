@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -554,8 +555,6 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 		MaxUploadFiles: 1,
 	}}
 	srv := New("", "", fakeStorage{}, db, Options{
-		MaxUploadBytes:       0,
-		MaxUploadFiles:       1,
 		AllowUnauthenticated: true,
 	})
 
@@ -577,8 +576,6 @@ func TestUploadRejectsTooManyBytes(t *testing.T) {
 		MaxUploadFiles: DefaultMaxUploadFiles,
 	}}
 	srv := New("", "", fakeStorage{}, db, Options{
-		MaxUploadBytes:       128,
-		MaxUploadFiles:       0,
 		AllowUnauthenticated: true,
 	})
 
@@ -702,6 +699,9 @@ type fakeDatabase struct {
 	usersByToken         map[string]AdminUser
 	sessions             map[string]AdminUser
 	settings             ServerSettings
+	policies             []PolicyRecord
+	uploadSettings       map[string]map[string]string
+	violations           map[string][]PolicyViolation
 	sites                []PublishedSite
 	lastPublisherUserID  int64
 	lastPublisherIsAdmin bool
@@ -800,14 +800,102 @@ func (db *fakeDatabase) LinkUserSite(ctx context.Context, userID int64, siteSHA 
 }
 
 func (db *fakeDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
-	if db.settings == (ServerSettings{}) {
-		return ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles}, nil
+	if db.settings.MaxUploadBytes == 0 && db.settings.MaxUploadFiles == 0 && db.settings.LogLevel == "" {
+		return ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"}, nil
+	}
+	if db.settings.LogLevel == "" {
+		db.settings.LogLevel = "warn"
 	}
 	return db.settings, nil
 }
 
 func (db *fakeDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
 	db.settings = settings
+	return nil
+}
+
+func (db *fakeDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
+	var out []PolicyRecord
+	for _, policy := range db.policies {
+		for _, scope := range scopes {
+			if policy.ScopeType == scope.Type && policy.ScopeID == scope.ID {
+				out = append(out, policy)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (db *fakeDatabase) SavePolicy(ctx context.Context, policy PolicyRecord) error {
+	if policy.ScopeType == "" {
+		policy.ScopeType = ScopeSystem
+	}
+	for i := range db.policies {
+		if db.policies[i].ScopeType == policy.ScopeType && db.policies[i].ScopeID == policy.ScopeID && db.policies[i].Key == policy.Key {
+			if policy.Mode == "inherit" {
+				db.policies = append(db.policies[:i], db.policies[i+1:]...)
+				return nil
+			}
+			db.policies[i] = policy
+			return nil
+		}
+	}
+	if policy.Mode != "inherit" {
+		db.policies = append(db.policies, policy)
+	}
+	return nil
+}
+
+func (db *fakeDatabase) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
+	if db.uploadSettings == nil {
+		return map[string]string{}, nil
+	}
+	settings := db.uploadSettings[siteSHA+":"+strconv.FormatInt(version, 10)]
+	out := map[string]string{}
+	for k, v := range settings {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (db *fakeDatabase) SaveUploadSettings(ctx context.Context, siteSHA string, version int64, settings map[string]string) error {
+	if db.uploadSettings == nil {
+		db.uploadSettings = map[string]map[string]string{}
+	}
+	key := siteSHA + ":" + strconv.FormatInt(version, 10)
+	db.uploadSettings[key] = settings
+	return nil
+}
+
+func (db *fakeDatabase) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
+	var out []CurrentSiteManifest
+	for _, site := range db.sites {
+		settings, _ := db.LoadUploadSettings(ctx, site.SiteSHA, site.CurrentVersion)
+		out = append(out, CurrentSiteManifest{Site: site.Site, SiteSHA: site.SiteSHA, Version: site.CurrentVersion, Settings: settings})
+	}
+	return out, nil
+}
+
+func (db *fakeDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+	if db.violations == nil {
+		return nil, nil
+	}
+	return db.violations[siteSHA+":"+strconv.FormatInt(version, 10)], nil
+}
+
+func (db *fakeDatabase) SavePolicyViolation(ctx context.Context, violation PolicyViolation) error {
+	if db.violations == nil {
+		db.violations = map[string][]PolicyViolation{}
+	}
+	key := violation.SiteSHA + ":" + strconv.FormatInt(violation.UploadVersion, 10)
+	db.violations[key] = []PolicyViolation{violation}
+	return nil
+}
+
+func (db *fakeDatabase) ResolvePolicyViolation(ctx context.Context, siteSHA string, version int64, key string) error {
+	if db.violations != nil {
+		delete(db.violations, siteSHA+":"+strconv.FormatInt(version, 10))
+	}
 	return nil
 }
 
