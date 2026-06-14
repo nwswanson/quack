@@ -533,8 +533,9 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 		MaxUploadFiles: 1,
 	}}
 	srv := New("", "", fakeStorage{}, db, Options{
-		MaxUploadBytes: 0,
-		MaxUploadFiles: 1,
+		MaxUploadBytes:       0,
+		MaxUploadFiles:       1,
+		AllowUnauthenticated: true,
 	})
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{
@@ -555,8 +556,9 @@ func TestUploadRejectsTooManyBytes(t *testing.T) {
 		MaxUploadFiles: DefaultMaxUploadFiles,
 	}}
 	srv := New("", "", fakeStorage{}, db, Options{
-		MaxUploadBytes: 128,
-		MaxUploadFiles: 0,
+		MaxUploadBytes:       128,
+		MaxUploadFiles:       0,
+		AllowUnauthenticated: true,
 	})
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{

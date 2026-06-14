@@ -19,19 +19,19 @@ The long-term shape is "Geocities plus Firebase for the AI era": a low-friction 
 
 ## Run the Server
 
-Start the server without upload authentication:
-
-```bash
-go run ./cmd/quack-server -root ./data -database ./quack.sqlite
-```
-
 Start the server with bearer-token authentication:
 
 ```bash
 UPLOAD_TOKEN=dev-token go run ./cmd/quack-server -root ./data -database ./quack.sqlite
 ```
 
-The server listens on `:8080` by default. Set `ADDR` to override it.
+For local throwaway development only, you can explicitly disable upload/delete authentication:
+
+```bash
+go run ./cmd/quack-server -root ./data -database ./quack.sqlite --allow-unauthenticated
+```
+
+The server refuses to start without `UPLOAD_TOKEN` unless `--allow-unauthenticated` is set. It listens on `:8080` by default. Set `ADDR` to override it.
 
 The server applies upload limits by default:
 
@@ -209,4 +209,3 @@ Quack should stay small, but a few pieces are natural next steps:
 - Content-addressed storage and deduplication.
 - File serving and metadata APIs.
 - Configuration files and production deployment options.
-

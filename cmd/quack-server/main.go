@@ -21,6 +21,7 @@ func main() {
 	maxUploadFiles := flag.Int64("max-upload-files", server.DefaultMaxUploadFiles, "maximum regular files accepted per upload; 0 disables")
 	logLevel := flag.String("log-level", "warn", "log level: debug, info, warn, or error")
 	adminHost := flag.String("admin-host", "", "host allowed to serve /v1 admin API routes; accepts a host or URL")
+	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
 	flag.Parse()
 	if err := configureLogger(*logLevel); err != nil {
 		fmt.Fprintf(os.Stderr, "-log-level: %v\n", err)
@@ -41,6 +42,14 @@ func main() {
 	if *maxUploadFiles < 0 {
 		fmt.Fprintln(os.Stderr, "-max-upload-files must be >= 0")
 		os.Exit(1)
+	}
+	uploadToken := os.Getenv("UPLOAD_TOKEN")
+	if uploadToken == "" && !*allowUnauthenticated {
+		fmt.Fprintln(os.Stderr, "UPLOAD_TOKEN is required unless --allow-unauthenticated is set")
+		os.Exit(1)
+	}
+	if *allowUnauthenticated {
+		slog.Warn("unauthenticated api access enabled")
 	}
 
 	addr := os.Getenv("ADDR")
@@ -76,6 +85,7 @@ func main() {
 	opts.MaxUploadBytes = *maxUploadBytes
 	opts.MaxUploadFiles = *maxUploadFiles
 	opts.AdminHost = *adminHost
+	opts.AllowUnauthenticated = *allowUnauthenticated
 	if err := db.InitializeServerSettings(context.Background(), server.ServerSettings{
 		MaxUploadBytes: opts.MaxUploadBytes,
 		MaxUploadFiles: opts.MaxUploadFiles,
@@ -84,7 +94,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := server.New(addr, os.Getenv("UPLOAD_TOKEN"), store, db, opts)
+	srv := server.New(addr, uploadToken, store, db, opts)
 	slog.Warn("starting quack server",
 		"addr", addr,
 		"root", *root,
@@ -93,7 +103,8 @@ func main() {
 		"max_upload_files", opts.MaxUploadFiles,
 		"log_level", *logLevel,
 		"admin_host", *adminHost,
-		"auth_enabled", os.Getenv("UPLOAD_TOKEN") != "",
+		"auth_enabled", uploadToken != "",
+		"allow_unauthenticated", *allowUnauthenticated,
 	)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server stopped unexpectedly", "error", err)

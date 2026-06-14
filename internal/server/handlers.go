@@ -28,11 +28,12 @@ const adminSessionCookieName = "quack_admin_session"
 var adminTemplates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 
 type handler struct {
-	token          string
-	store          Storage
-	db             Database
-	maxUploadBytes int64
-	maxUploadFiles int64
+	token                string
+	store                Storage
+	db                   Database
+	maxUploadBytes       int64
+	maxUploadFiles       int64
+	allowUnauthenticated bool
 }
 
 func (h *handler) adminRoutes(mux *http.ServeMux) {
@@ -325,7 +326,7 @@ func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
 		writeLoginCheckError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !authorized(r, h.token) {
+	if !authorized(r, h.token, h.allowUnauthenticated) {
 		writeLoginCheckError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -338,7 +339,7 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !authorized(r, h.token) {
+	if !authorized(r, h.token, h.allowUnauthenticated) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -535,7 +536,7 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 }
 
 func (h *handler) authorizedUploadUser(r *http.Request) (AdminUser, bool, error) {
-	if authorized(r, h.token) {
+	if authorized(r, h.token, h.allowUnauthenticated) {
 		return AdminUser{}, true, nil
 	}
 	const prefix = "Bearer "

@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-func authorized(r *http.Request, token string) bool {
+func authorized(r *http.Request, token string, allowUnauthenticated bool) bool {
 	if token == "" {
-		return true
+		return allowUnauthenticated
 	}
 	const prefix = "Bearer "
 	auth := r.Header.Get("Authorization")
