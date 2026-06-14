@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"quack/internal/client"
+	"quack/internal/protocol"
 )
 
 var checkLogin = client.CheckLogin
@@ -23,6 +25,7 @@ func main() {
 
 	var resp any
 	var err error
+	textOutput := false
 	switch os.Args[1] {
 	case "login":
 		resp, err = runLogin(os.Args[2:], os.Stdin, os.Stderr)
@@ -32,6 +35,7 @@ func main() {
 		resp, err = runDelete(os.Args[2:])
 	case "revisions":
 		resp, err = runRevisions(os.Args[2:])
+		textOutput = true
 	case "rollback":
 		resp, err = runRollback(os.Args[2:])
 	default:
@@ -42,6 +46,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if textOutput {
+		writeRevisionsText(os.Stdout, resp.(*protocol.ListRevisionsResponse))
+		return
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(resp)
 }
@@ -92,6 +100,38 @@ func runRevisions(args []string) (any, error) {
 	}
 
 	return client.ListRevisions(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
+func writeRevisionsText(w io.Writer, resp *protocol.ListRevisionsResponse) {
+	fmt.Fprintf(w, "Site: %s\n", resp.Site)
+	if resp.Warning != "" {
+		fmt.Fprintf(w, "Warning: %s\n", resp.Warning)
+	}
+	if len(resp.Revisions) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "VERSION\tCURRENT\tFILES\tBYTES\tPUBLISHED BY\tFINISHED")
+	for _, rev := range resp.Revisions {
+		current := ""
+		if rev.Current {
+			current = "yes"
+		}
+		publishedBy := rev.PublishedBy
+		if publishedBy == "" {
+			publishedBy = "-"
+		}
+		finishedAt := rev.FinishedAt
+		if finishedAt == "" {
+			finishedAt = rev.CreatedAt
+		}
+		if finishedAt == "" {
+			finishedAt = "-"
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%d\t%d\t%s\t%s\n", rev.Version, current, rev.Files, rev.Bytes, publishedBy, finishedAt)
+	}
+	_ = tw.Flush()
 }
 
 func runRollback(args []string) (any, error) {

@@ -147,6 +147,33 @@ func TestRunLoginDoesNotSaveInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestWriteRevisionsText(t *testing.T) {
+	var out strings.Builder
+	writeRevisionsText(&out, &protocol.ListRevisionsResponse{
+		OK:      true,
+		Site:    "example",
+		Warning: "no older revisions available",
+		Revisions: []protocol.SiteRevision{
+			{Version: 3, Current: true, Files: 2, Bytes: 128, PublishedBy: "alice", FinishedAt: "2026-06-13T12:00:00Z"},
+			{Version: 2, Files: 1, Bytes: 64, PublishedBy: "alice", FinishedAt: "2026-06-12T12:00:00Z"},
+		},
+	})
+
+	got := out.String()
+	for _, want := range []string{
+		"Site: example\n",
+		"Warning: no older revisions available\n",
+		"VERSION",
+		"3        yes",
+		"alice",
+		"2026-06-13T12:00:00Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output = %q, want substring %q", got, want)
+		}
+	}
+}
+
 type clientUploadErrorForTest struct{}
 
 func (clientUploadErrorForTest) Error() string {
