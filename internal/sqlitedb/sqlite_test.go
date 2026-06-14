@@ -157,6 +157,71 @@ func TestPruneSiteVersionsRemovesOldFinishedVersions(t *testing.T) {
 	}
 }
 
+func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	alice, err := db.CreateUser(ctx, "alice", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := db.CreateUser(ctx, "bob", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := server.AdminUser{ID: 999, Username: "admin", AdminPriv: "admin:*"}
+
+	for i := 0; i < 2; i++ {
+		upload, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upload.Files = []server.UploadFileRecord{{
+			RelativePath: "index.html",
+			BlobPath:     fmt.Sprintf("blobs/site:site-sha/%d/file:file-sha", upload.Version),
+			FileSHA:      fmt.Sprintf("file-sha-%d", upload.Version),
+			Bytes:        upload.Version,
+		}}
+		if err := db.FinishUpload(ctx, upload); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := db.ListSiteRevisions(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+		t.Fatalf("bob list error = %v, want ErrSiteOwnership", err)
+	}
+	if _, err := db.RollbackSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+		t.Fatalf("bob rollback error = %v, want ErrSiteOwnership", err)
+	}
+
+	revisions, err := db.ListSiteRevisions(ctx, alice.User, "example", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) != 2 || !revisions[0].Current || revisions[0].Version != 2 || revisions[1].Version != 1 {
+		t.Fatalf("revisions = %#v, want current v2 then v1", revisions)
+	}
+
+	rollback, err := db.RollbackSite(ctx, admin, "example", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rollback.RolledBack || rollback.PreviousVersion != 2 || rollback.CurrentVersion != 1 {
+		t.Fatalf("rollback = %#v, want v2 to v1", rollback)
+	}
+	again, err := db.RollbackSite(ctx, alice.User, "example", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.RolledBack || again.Warning == "" {
+		t.Fatalf("second rollback = %#v, want warning", again)
+	}
+}
+
 func TestBootstrapAdminCreatesInitialUserOnce(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

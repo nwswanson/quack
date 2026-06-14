@@ -12,6 +12,8 @@ type Database interface {
 	FinishUpload(ctx context.Context, upload UploadRecord) error
 	FailUpload(ctx context.Context, upload UploadRecord, reason string) error
 	FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error)
+	ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error)
+	RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error)
 	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
 	AuthenticateAdmin(ctx context.Context, username string, password string) (AdminUser, bool, error)
 	FindUserByToken(ctx context.Context, token string) (AdminUser, bool, error)
@@ -93,6 +95,23 @@ type CurrentSiteManifest struct {
 	SiteSHA  string
 	Version  int64
 	Settings map[string]string
+}
+
+type RevisionRecord struct {
+	Version     int64
+	Current     bool
+	Files       int64
+	Bytes       int64
+	PublishedBy string
+	CreatedAt   string
+	FinishedAt  string
+}
+
+type RollbackRecord struct {
+	RolledBack      bool
+	PreviousVersion int64
+	CurrentVersion  int64
+	Warning         string
 }
 
 type PolicyViolation struct {

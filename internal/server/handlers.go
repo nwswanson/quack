@@ -415,6 +415,10 @@ func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, protocol.SiteRevisionPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SiteRollbackPathSuffix) {
+		h.handleSiteRevisionRoutes(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -455,6 +459,104 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		OK:      true,
 		Site:    site,
 		Deleted: deleted,
+	})
+}
+
+func (h *handler) handleSiteRevisionRoutes(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.authorizedAPIUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "revision authorization lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	switch {
+	case strings.HasSuffix(r.URL.Path, protocol.SiteRevisionPathSuffix):
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SiteRevisionPathSuffix)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "site is invalid")
+			return
+		}
+		h.handleListRevisions(w, r, user, site)
+	case strings.HasSuffix(r.URL.Path, protocol.SiteRollbackPathSuffix):
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SiteRollbackPathSuffix)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "site is invalid")
+			return
+		}
+		h.handleRollbackSite(w, r, user, site)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (h *handler) handleListRevisions(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
+	revisions, err := h.db.ListSiteRevisions(r.Context(), user, site, sha256Hex(site))
+	if err != nil {
+		if errors.Is(err, ErrSiteOwnership) {
+			writeError(w, http.StatusForbidden, "site is owned by another user")
+			return
+		}
+		slog.ErrorContext(r.Context(), "list revisions failed", "site", site, "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	resp := protocol.ListRevisionsResponse{OK: true, Site: site}
+	var currentVersion int64
+	for _, rev := range revisions {
+		if rev.Current {
+			currentVersion = rev.Version
+			break
+		}
+	}
+	older := 0
+	for _, rev := range revisions {
+		if currentVersion > 0 && rev.Version < currentVersion {
+			older++
+		}
+		resp.Revisions = append(resp.Revisions, protocol.SiteRevision{
+			Version: rev.Version, Current: rev.Current, Files: rev.Files, Bytes: rev.Bytes,
+			PublishedBy: rev.PublishedBy, CreatedAt: rev.CreatedAt, FinishedAt: rev.FinishedAt,
+		})
+	}
+	if older == 0 {
+		resp.Warning = "no older revisions available"
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
+	rollback, err := h.db.RollbackSite(r.Context(), user, site, sha256Hex(site))
+	if err != nil {
+		if errors.Is(err, ErrSiteOwnership) {
+			writeError(w, http.StatusForbidden, "site is owned by another user")
+			return
+		}
+		slog.ErrorContext(r.Context(), "rollback site failed", "site", site, "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if rollback.Warning == "" && !rollback.RolledBack {
+		rollback.Warning = "no older revisions available"
+	}
+	if rollback.RolledBack {
+		slog.WarnContext(r.Context(), "site rolled back", "site", site, "username", user.Username, "previous_version", rollback.PreviousVersion, "current_version", rollback.CurrentVersion)
+	}
+	writeJSON(w, http.StatusOK, protocol.RollbackSiteResponse{
+		OK: true, Site: site, RolledBack: rollback.RolledBack,
+		PreviousVersion: rollback.PreviousVersion, CurrentVersion: rollback.CurrentVersion, Warning: rollback.Warning,
 	})
 }
 
@@ -989,6 +1091,27 @@ func siteAndPathFromServePath(urlPath string) (string, string, bool) {
 func siteFromDeletePath(urlPath string) (string, bool) {
 	site := strings.TrimPrefix(urlPath, protocol.DeleteSitePathPrefix)
 	if site == urlPath || site == "" || strings.Contains(site, "/") {
+		return "", false
+	}
+	site, err := url.PathUnescape(site)
+	if err != nil {
+		return "", false
+	}
+	site = strings.TrimSpace(site)
+	site, err = canonicalSiteName(site)
+	if err != nil {
+		return "", false
+	}
+	return site, true
+}
+
+func siteFromSuffixedSitePath(urlPath string, suffix string) (string, bool) {
+	withoutSuffix, ok := strings.CutSuffix(urlPath, suffix)
+	if !ok {
+		return "", false
+	}
+	site := strings.TrimPrefix(withoutSuffix, protocol.DeleteSitePathPrefix)
+	if site == withoutSuffix || site == "" || strings.Contains(site, "/") {
 		return "", false
 	}
 	site, err := url.PathUnescape(site)

@@ -111,6 +111,92 @@ func DeleteSite(ctx context.Context, serverURL, token, site string) (*protocol.D
 	return &out, nil
 }
 
+func ListRevisions(ctx context.Context, serverURL, token, site string) (*protocol.ListRevisionsResponse, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	if site == "" {
+		return nil, fmt.Errorf("site is required")
+	}
+
+	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SiteRevisionPathSuffix
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create revision list request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list revisions: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := decodeListRevisionsResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.Error
+		if message == "" {
+			message = resp.Status
+		}
+		return &out, &UploadError{
+			Operation:  "list revisions",
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
+		}
+	}
+	return &out, nil
+}
+
+func RollbackSite(ctx context.Context, serverURL, token, site string) (*protocol.RollbackSiteResponse, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	if site == "" {
+		return nil, fmt.Errorf("site is required")
+	}
+
+	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SiteRollbackPathSuffix
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create rollback request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("rollback site: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := decodeRollbackSiteResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.Error
+		if message == "" {
+			message = resp.Status
+		}
+		return &out, &UploadError{
+			Operation:  "rollback",
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
+		}
+	}
+	return &out, nil
+}
+
 func CheckLogin(ctx context.Context, serverURL, token string) (*protocol.LoginCheckResponse, error) {
 	if serverURL == "" {
 		return nil, fmt.Errorf("serverURL is required")
@@ -199,6 +285,40 @@ func decodeDeleteSiteResponse(resp *http.Response) (protocol.DeleteSiteResponse,
 			return out, nil
 		}
 		return protocol.DeleteSiteResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+func decodeListRevisionsResponse(resp *http.Response) (protocol.ListRevisionsResponse, error) {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return protocol.ListRevisionsResponse{}, err
+	}
+
+	var out protocol.ListRevisionsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Error = fallbackResponseMessage(resp, body)
+			return out, nil
+		}
+		return protocol.ListRevisionsResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+func decodeRollbackSiteResponse(resp *http.Response) (protocol.RollbackSiteResponse, error) {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return protocol.RollbackSiteResponse{}, err
+	}
+
+	var out protocol.RollbackSiteResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Error = fallbackResponseMessage(resp, body)
+			return out, nil
+		}
+		return protocol.RollbackSiteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 	return out, nil
 }

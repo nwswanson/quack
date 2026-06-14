@@ -30,6 +30,10 @@ func main() {
 		resp, err = runDeploy(os.Args[2:])
 	case "delete":
 		resp, err = runDelete(os.Args[2:])
+	case "revisions":
+		resp, err = runRevisions(os.Args[2:])
+	case "rollback":
+		resp, err = runRollback(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -72,6 +76,38 @@ func runDelete(args []string) (any, error) {
 	}
 
 	return client.DeleteSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
+func runRevisions(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) != 1 {
+		return nil, fmt.Errorf("usage: quack revisions <site name> [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+
+	return client.ListRevisions(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
+func runRollback(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) != 1 {
+		return nil, fmt.Errorf("usage: quack rollback <site name> [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+
+	return client.RollbackSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
 }
 
 func runLogin(args []string, stdin io.Reader, stderr io.Writer) (any, error) {
@@ -130,6 +166,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  quack login")
 	fmt.Fprintln(os.Stderr, "  quack deploy <directory> <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack revisions <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack delete <site name> [--token <token>] [--serverURL <url>]")
 }
 

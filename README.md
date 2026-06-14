@@ -69,6 +69,22 @@ go run ./cmd/quack delete example \
   --serverURL http://localhost:8080
 ```
 
+List retained revisions for a site:
+
+```bash
+go run ./cmd/quack revisions example \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
+Roll back a site to its previous retained revision:
+
+```bash
+go run ./cmd/quack rollback example \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
 ## Serve Uploaded Files
 
 Quack serves the current version of uploaded files from `/` based on the request host's left-most label.

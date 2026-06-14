@@ -686,6 +686,50 @@ func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
 	}
 }
 
+func TestRevisionListReturnsWarningWithoutOlderRevisions(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		revisions: []RevisionRecord{{Version: 3, Current: true, Files: 1, Bytes: 5}},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRevisionPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"warning":"no older revisions available"`) {
+		t.Fatalf("body = %s, want warning", rec.Body.String())
+	}
+}
+
+func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		rollback: RollbackRecord{CurrentVersion: 3, Warning: "no older revisions available"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRollbackPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"rolled_back":false`) || !strings.Contains(rec.Body.String(), `"warning":"no older revisions available"`) {
+		t.Fatalf("body = %s, want no-op rollback warning", rec.Body.String())
+	}
+}
+
 func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
 		usersByToken: map[string]AdminUser{
@@ -779,6 +823,8 @@ type fakeDatabase struct {
 	uploadSettings       map[string]map[string]string
 	violations           map[string][]PolicyViolation
 	prunedVersions       []int64
+	revisions            []RevisionRecord
+	rollback             RollbackRecord
 	sites                []PublishedSite
 	lastPublisherUserID  int64
 	lastPublisherIsAdmin bool
@@ -808,6 +854,14 @@ func (fakeDatabase) FailUpload(ctx context.Context, upload UploadRecord, reason 
 func (db fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error) {
 	file, ok := db.files[fileKey(site, relativePath)]
 	return file, ok, nil
+}
+
+func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error) {
+	return db.revisions, nil
+}
+
+func (db *fakeDatabase) RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error) {
+	return db.rollback, nil
 }
 
 func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {

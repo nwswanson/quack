@@ -1134,6 +1134,142 @@ func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePat
 	return server.UploadFileRecord{}, false, fmt.Errorf("find current file: %w", err)
 }
 
+func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser, site string, siteSHA string) ([]server.RevisionRecord, error) {
+	if siteSHA == "" {
+		return nil, nil
+	}
+	if !user.IsAdmin() {
+		allowed, err := d.userCanAccessSite(ctx, d.readDB, user.ID, siteSHA)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			exists, err := d.siteExists(ctx, d.readDB, siteSHA)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
+				return nil, server.ErrSiteOwnership
+			}
+			return nil, nil
+		}
+	}
+
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT u.version,
+			u.version = s.current_version AS current,
+			u.files,
+			u.bytes,
+			COALESCE(pub.username, '') AS published_by,
+			u.created_at,
+			COALESCE(u.finished_at, '') AS finished_at
+		FROM uploads u
+		JOIN sites s ON s.site_sha = u.site_sha
+		LEFT JOIN users pub ON pub.id = u.publisher_user_id
+		WHERE u.site_sha = ? AND u.state = ?
+		ORDER BY u.version DESC
+	`, siteSHA, string(server.UploadStateFinished))
+	if err != nil {
+		return nil, fmt.Errorf("list site revisions: %w", err)
+	}
+	defer rows.Close()
+
+	var revisions []server.RevisionRecord
+	for rows.Next() {
+		var rev server.RevisionRecord
+		var current int
+		if err := rows.Scan(&rev.Version, &current, &rev.Files, &rev.Bytes, &rev.PublishedBy, &rev.CreatedAt, &rev.FinishedAt); err != nil {
+			return nil, fmt.Errorf("scan site revision: %w", err)
+		}
+		rev.Current = current != 0
+		revisions = append(revisions, rev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate site revisions: %w", err)
+	}
+	return revisions, nil
+}
+
+func (d *Database) RollbackSite(ctx context.Context, user server.AdminUser, site string, siteSHA string) (server.RollbackRecord, error) {
+	if siteSHA == "" {
+		return server.RollbackRecord{Warning: "no older revisions available"}, nil
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return server.RollbackRecord{}, fmt.Errorf("begin rollback transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if !user.IsAdmin() {
+		allowed, err := d.userCanAccessSite(ctx, tx, user.ID, siteSHA)
+		if err != nil {
+			return server.RollbackRecord{}, err
+		}
+		if !allowed {
+			exists, err := d.siteExists(ctx, tx, siteSHA)
+			if err != nil {
+				return server.RollbackRecord{}, err
+			}
+			if exists {
+				return server.RollbackRecord{}, server.ErrSiteOwnership
+			}
+			return server.RollbackRecord{Warning: "no older revisions available"}, nil
+		}
+	}
+
+	var currentVersion int64
+	err = tx.QueryRowContext(ctx, `SELECT current_version FROM sites WHERE site_sha = ?`, siteSHA).Scan(&currentVersion)
+	if err == sql.ErrNoRows {
+		return server.RollbackRecord{Warning: "no older revisions available"}, nil
+	}
+	if err != nil {
+		return server.RollbackRecord{}, fmt.Errorf("load current site version: %w", err)
+	}
+
+	var previousVersion int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT version
+		FROM uploads
+		WHERE site_sha = ? AND state = ? AND version < ?
+		ORDER BY version DESC
+		LIMIT 1
+	`, siteSHA, string(server.UploadStateFinished), currentVersion).Scan(&previousVersion)
+	if err == sql.ErrNoRows {
+		return server.RollbackRecord{CurrentVersion: currentVersion, Warning: "no older revisions available"}, nil
+	}
+	if err != nil {
+		return server.RollbackRecord{}, fmt.Errorf("find previous site revision: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE sites
+		SET current_version = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE site_sha = ? AND current_version = ?
+	`, previousVersion, siteSHA, currentVersion)
+	if err != nil {
+		return server.RollbackRecord{}, fmt.Errorf("rollback site version: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return server.RollbackRecord{}, fmt.Errorf("rollback rows affected: %w", err)
+	}
+	if affected != 1 {
+		return server.RollbackRecord{}, fmt.Errorf("site version changed during rollback")
+	}
+	if err := tx.Commit(); err != nil {
+		return server.RollbackRecord{}, fmt.Errorf("commit rollback transaction: %w", err)
+	}
+	return server.RollbackRecord{
+		RolledBack:      true,
+		PreviousVersion: currentVersion,
+		CurrentVersion:  previousVersion,
+	}, nil
+}
+
 func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -1256,4 +1392,33 @@ func uploadID(ctx context.Context, tx *sql.Tx, upload server.UploadRecord) (int6
 		return 0, fmt.Errorf("lookup upload id: %w", err)
 	}
 	return uploadID, nil
+}
+
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (d *Database) siteExists(ctx context.Context, q rowQuerier, siteSHA string) (bool, error) {
+	var exists int
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sites WHERE site_sha = ?)`, siteSHA).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check site exists: %w", err)
+	}
+	return exists != 0, nil
+}
+
+func (d *Database) userCanAccessSite(ctx context.Context, q rowQuerier, userID int64, siteSHA string) (bool, error) {
+	if userID <= 0 || siteSHA == "" {
+		return false, nil
+	}
+	var owned int
+	if err := q.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_sites WHERE site_sha = ? AND user_id = ?
+			UNION
+			SELECT 1 FROM uploads WHERE site_sha = ? AND publisher_user_id = ?
+		)
+	`, siteSHA, userID, siteSHA, userID).Scan(&owned); err != nil {
+		return false, fmt.Errorf("check site owner: %w", err)
+	}
+	return owned != 0, nil
 }
