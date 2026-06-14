@@ -14,12 +14,20 @@ The long-term shape is "Geocities plus Firebase for the AI era": a low-friction 
 - Stores uploaded files as SHA-256-addressed blobs.
 - Tracks site versions and metadata in SQLite.
 - Serves the latest version of a site based on the request hostname.
-- Supports a simple bearer token for upload and delete operations.
+- Supports per-user bearer tokens for upload and delete operations.
 - Keeps the core model boring on purpose: files in, URL out.
 
 ## Run the Server
 
-Start the server with bearer-token authentication:
+Start the server:
+
+```bash
+go run ./cmd/quack-server -root ./data -database ./quack.sqlite
+```
+
+On first startup, the server bootstraps an admin user and logs generated credentials. Use the admin UI to create users; each user gets a bearer token for CLI uploads and deletes.
+
+For compatibility with older clients or scripts, `UPLOAD_TOKEN` can still be set as an additional shared bearer token:
 
 ```bash
 UPLOAD_TOKEN=dev-token go run ./cmd/quack-server -root ./data -database ./quack.sqlite
@@ -31,7 +39,7 @@ For local throwaway development only, you can explicitly disable upload/delete a
 go run ./cmd/quack-server -root ./data -database ./quack.sqlite --allow-unauthenticated
 ```
 
-The server refuses to start without `UPLOAD_TOKEN` unless `--allow-unauthenticated` is set. It listens on `:8080` by default. Set `ADDR` to override it.
+The server listens on `:8080` by default. Set `ADDR` to override it.
 
 The server applies upload limits by default:
 
@@ -104,7 +112,6 @@ Run it locally with ephemeral in-container SQLite and blob storage:
 
 ```bash
 docker run --rm -p 8080:8080 \
-  -e UPLOAD_TOKEN=dev-token \
   quack-server:dev
 ```
 
@@ -118,7 +125,6 @@ That directory is writable inside the container, but it is not persistent unless
 
 ```bash
 docker run --rm -p 8080:8080 \
-  -e UPLOAD_TOKEN=dev-token \
   -v quack-data:/var/lib/quack \
   quack-server:dev
 ```

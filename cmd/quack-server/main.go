@@ -44,10 +44,6 @@ func main() {
 		os.Exit(1)
 	}
 	uploadToken := os.Getenv("UPLOAD_TOKEN")
-	if uploadToken == "" && !*allowUnauthenticated {
-		fmt.Fprintln(os.Stderr, "UPLOAD_TOKEN is required unless --allow-unauthenticated is set")
-		os.Exit(1)
-	}
 	if *allowUnauthenticated {
 		slog.Warn("unauthenticated api access enabled")
 	}
@@ -103,7 +99,7 @@ func main() {
 		"max_upload_files", opts.MaxUploadFiles,
 		"log_level", *logLevel,
 		"admin_host", *adminHost,
-		"auth_enabled", uploadToken != "",
+		"legacy_upload_token_enabled", uploadToken != "",
 		"allow_unauthenticated", *allowUnauthenticated,
 	)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

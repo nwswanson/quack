@@ -326,7 +326,13 @@ func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
 		writeLoginCheckError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !authorized(r, h.token, h.allowUnauthenticated) {
+	ok, err := h.authorizedAPI(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "login check authorization lookup failed", "error", err)
+		writeLoginCheckError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
 		writeLoginCheckError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -339,7 +345,13 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !authorized(r, h.token, h.allowUnauthenticated) {
+	ok, err := h.authorizedAPI(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "delete authorization lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -536,19 +548,7 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 }
 
 func (h *handler) authorizedUploadUser(r *http.Request) (AdminUser, bool, error) {
-	if authorized(r, h.token, h.allowUnauthenticated) {
-		return AdminUser{}, true, nil
-	}
-	const prefix = "Bearer "
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, prefix) {
-		return AdminUser{}, false, nil
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
-	if token == "" {
-		return AdminUser{}, false, nil
-	}
-	return h.db.FindUserByToken(r.Context(), token)
+	return h.authorizedAPIUser(r)
 }
 
 func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {

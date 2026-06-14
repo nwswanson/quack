@@ -231,6 +231,27 @@ func TestLoginCheck(t *testing.T) {
 	})
 }
 
+func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "{\"ok\":true}\n" {
+		t.Fatalf("body = %q, want ok", rec.Body.String())
+	}
+}
+
 func TestAdminPathsRequireAdminHost(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
@@ -572,6 +593,52 @@ func TestUploadRejectsTooManyBytes(t *testing.T) {
 	}
 }
 
+func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		settings: ServerSettings{
+			MaxUploadBytes: DefaultMaxUploadBytes,
+			MaxUploadFiles: DefaultMaxUploadFiles,
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if db.lastPublisherUserID != 7 {
+		t.Fatalf("publisher user id = %d, want 7", db.lastPublisherUserID)
+	}
+	if db.linkedUserID != 7 || db.linkedSiteSHA == "" {
+		t.Fatalf("linked site = (%d, %q), want user 7 and site sha", db.linkedUserID, db.linkedSiteSHA)
+	}
+}
+
+func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"foo", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func uploadRequest(t *testing.T, body []byte) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, protocol.UploadArchivePath, bytes.NewReader(body))
@@ -630,14 +697,21 @@ func (fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
 }
 
 type fakeDatabase struct {
-	files     map[string]UploadFileRecord
-	adminUser AdminUser
-	sessions  map[string]AdminUser
-	settings  ServerSettings
-	sites     []PublishedSite
+	files                map[string]UploadFileRecord
+	adminUser            AdminUser
+	usersByToken         map[string]AdminUser
+	sessions             map[string]AdminUser
+	settings             ServerSettings
+	sites                []PublishedSite
+	lastPublisherUserID  int64
+	lastPublisherIsAdmin bool
+	linkedUserID         int64
+	linkedSiteSHA        string
 }
 
-func (fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (UploadRecord, error) {
+func (db *fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (UploadRecord, error) {
+	db.lastPublisherUserID = publisherUserID
+	db.lastPublisherIsAdmin = publisherIsAdmin
 	return UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,
@@ -671,6 +745,10 @@ func (db *fakeDatabase) AuthenticateAdmin(ctx context.Context, username string, 
 }
 
 func (db *fakeDatabase) FindUserByToken(ctx context.Context, token string) (AdminUser, bool, error) {
+	if db.usersByToken != nil {
+		user, ok := db.usersByToken[token]
+		return user, ok, nil
+	}
 	if token == "user-token" && db.adminUser.ID > 0 {
 		return db.adminUser, true, nil
 	}
@@ -716,6 +794,8 @@ func (db *fakeDatabase) ListPublishedSites(ctx context.Context, userID int64, in
 }
 
 func (db *fakeDatabase) LinkUserSite(ctx context.Context, userID int64, siteSHA string) error {
+	db.linkedUserID = userID
+	db.linkedSiteSHA = siteSHA
 	return nil
 }
 
