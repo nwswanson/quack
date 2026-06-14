@@ -45,8 +45,9 @@ The server applies DB-backed upload limits by default:
 
 - `max_upload_bytes`, default `536870912` bytes, or 512 MiB.
 - `max_upload_files`, default `10000` regular files.
+- `max_retained_versions`, default `0`, meaning retain all published versions.
 
-Use `0` for either setting to disable that limit. These settings, along with `log_level`, are initialized from code defaults only when missing and can be edited in the admin UI.
+Use `0` for either upload limit to disable that limit. Set `max_retained_versions` to a positive number to prune older published versions after each successful upload. These settings, along with `log_level`, are initialized from code defaults only when missing and can be edited in the admin UI.
 
 ## Run the CLI
 

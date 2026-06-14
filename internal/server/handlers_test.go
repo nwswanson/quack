@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -660,6 +661,31 @@ func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	}
 }
 
+func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
+	deletedVersions := []int64{}
+	db := &fakeDatabase{
+		prunedVersions: []int64{1, 2},
+		settings: ServerSettings{
+			MaxUploadBytes:      DefaultMaxUploadBytes,
+			MaxUploadFiles:      DefaultMaxUploadFiles,
+			MaxRetainedVersions: 3,
+			LogLevel:            "warn",
+		},
+	}
+	srv := New("", "", fakeStorage{deletedVersions: &deletedVersions}, db, Options{AllowUnauthenticated: true})
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got, want := deletedVersions, []int64{1, 2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("deleted versions = %#v, want %#v", got, want)
+	}
+}
+
 func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
 		usersByToken: map[string]AdminUser{
@@ -709,7 +735,8 @@ func tarArchive(t *testing.T, files map[string]string) []byte {
 }
 
 type fakeStorage struct {
-	root string
+	root            string
+	deletedVersions *[]int64
 }
 
 func (fakeStorage) AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error) {
@@ -735,6 +762,13 @@ func (fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
 	return nil
 }
 
+func (s fakeStorage) DeleteSiteVersion(ctx context.Context, siteSHA string, version int64) error {
+	if s.deletedVersions != nil {
+		*s.deletedVersions = append(*s.deletedVersions, version)
+	}
+	return nil
+}
+
 type fakeDatabase struct {
 	files                map[string]UploadFileRecord
 	adminUser            AdminUser
@@ -744,6 +778,7 @@ type fakeDatabase struct {
 	policies             []PolicyRecord
 	uploadSettings       map[string]map[string]string
 	violations           map[string][]PolicyViolation
+	prunedVersions       []int64
 	sites                []PublishedSite
 	lastPublisherUserID  int64
 	lastPublisherIsAdmin bool
@@ -854,6 +889,10 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (ServerSettings, 
 func (db *fakeDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
 	db.settings = settings
 	return nil
+}
+
+func (db *fakeDatabase) PruneSiteVersions(ctx context.Context, siteSHA string, maxRetainedVersions int64) ([]int64, error) {
+	return db.prunedVersions, nil
 }
 
 func (db *fakeDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {

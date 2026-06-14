@@ -51,6 +51,37 @@ func TestBlobStorageAcceptFileWritesHashedBlob(t *testing.T) {
 	}
 }
 
+func TestBlobStorageDeleteSiteVersionRemovesOnlyThatVersion(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewBlobStorage(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siteSHA := sha256String("example.com")
+	for _, version := range []int64{1, 2} {
+		if _, err := store.AcceptFile(context.Background(), StoredFile{
+			SiteSHA:      siteSHA,
+			Version:      version,
+			RelativePath: "index.html",
+			Size:         int64(len("hello")),
+			Body:         strings.NewReader("hello"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.DeleteSiteVersion(context.Background(), siteSHA, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "blobs", "site:"+siteSHA, "1")); !os.IsNotExist(err) {
+		t.Fatalf("version 1 stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "blobs", "site:"+siteSHA, "2")); err != nil {
+		t.Fatalf("version 2 stat err = %v, want still present", err)
+	}
+}
+
 func TestSanitizeServingPath(t *testing.T) {
 	tests := map[string]string{
 		"index.html":               "index.html",

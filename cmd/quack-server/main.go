@@ -46,9 +46,10 @@ func main() {
 	}
 	defer db.Close()
 	if err := db.InitializeServerSettings(context.Background(), server.ServerSettings{
-		MaxUploadBytes: server.DefaultMaxUploadBytes,
-		MaxUploadFiles: server.DefaultMaxUploadFiles,
-		LogLevel:       "warn",
+		MaxUploadBytes:      server.DefaultMaxUploadBytes,
+		MaxUploadFiles:      server.DefaultMaxUploadFiles,
+		MaxRetainedVersions: 0,
+		LogLevel:            "warn",
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "initialize server settings failed: %v\n", err)
 		os.Exit(1)
@@ -89,6 +90,7 @@ func main() {
 		"database", *databasePath,
 		"max_upload_bytes", settings.MaxUploadBytes,
 		"max_upload_files", settings.MaxUploadFiles,
+		"max_retained_versions", settings.MaxRetainedVersions,
 		"log_level", settings.LogLevel,
 		"admin_host", *adminHost,
 		"legacy_upload_token_enabled", uploadToken != "",

@@ -14,6 +14,7 @@ import (
 type Storage interface {
 	AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error)
 	OpenBlob(ctx context.Context, blobPath string) (*os.File, error)
+	DeleteSiteVersion(ctx context.Context, siteSHA string, version int64) error
 	DeleteSite(ctx context.Context, siteSHA string) error
 }
 
@@ -144,4 +145,17 @@ func (s *BlobStorage) DeleteSite(ctx context.Context, siteSHA string) error {
 		return fmt.Errorf("invalid site sha: %s", siteSHA)
 	}
 	return os.RemoveAll(filepath.Join(s.root, "blobs", "site:"+siteSHA))
+}
+
+func (s *BlobStorage) DeleteSiteVersion(ctx context.Context, siteSHA string, version int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if siteSHA == "" || strings.Contains(siteSHA, string(filepath.Separator)) || strings.Contains(siteSHA, "/") || strings.Contains(siteSHA, "..") {
+		return fmt.Errorf("invalid site sha: %s", siteSHA)
+	}
+	if version <= 0 {
+		return fmt.Errorf("invalid version: %d", version)
+	}
+	return os.RemoveAll(filepath.Join(s.root, "blobs", "site:"+siteSHA, fmt.Sprintf("%d", version)))
 }

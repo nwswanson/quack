@@ -46,6 +46,7 @@ type SettingDefinition struct {
 const (
 	SettingMaxUploadBytes          = "max_upload_bytes"
 	SettingMaxUploadFiles          = "max_upload_files"
+	SettingMaxRetainedVersions     = "max_retained_versions"
 	SettingLogLevel                = "log_level"
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
@@ -58,6 +59,10 @@ var settingRegistry = map[string]SettingDefinition{
 	},
 	SettingMaxUploadFiles: {
 		Key: SettingMaxUploadFiles, Type: SettingTypeInt64, DefaultValue: "10000",
+		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingMaxRetainedVersions: {
+		Key: SettingMaxRetainedVersions, Type: SettingTypeInt64, DefaultValue: "0",
 		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingLogLevel: {

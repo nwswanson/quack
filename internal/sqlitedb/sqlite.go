@@ -392,10 +392,11 @@ func (d *Database) LinkUserSite(ctx context.Context, userID int64, siteSHA strin
 
 func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings, error) {
 	settings := server.ServerSettings{
-		MaxUploadBytes: server.DefaultMaxUploadBytes,
-		MaxUploadFiles: server.DefaultMaxUploadFiles,
-		LogLevel:       "warn",
-		Locked:         map[string]bool{},
+		MaxUploadBytes:      server.DefaultMaxUploadBytes,
+		MaxUploadFiles:      server.DefaultMaxUploadFiles,
+		MaxRetainedVersions: 0,
+		LogLevel:            "warn",
+		Locked:              map[string]bool{},
 	}
 	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value, locked FROM server_settings`)
 	if err != nil {
@@ -428,6 +429,12 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxUploadFiles = n
+		case "max_retained_versions":
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxRetainedVersions = n
 		case "log_level":
 			settings.LogLevel = strings.ToLower(strings.TrimSpace(value))
 		}
@@ -444,6 +451,9 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 	}
 	if settings.MaxUploadFiles < 0 {
 		return fmt.Errorf("max upload files must be >= 0")
+	}
+	if settings.MaxRetainedVersions < 0 {
+		return fmt.Errorf("max retained versions must be >= 0")
 	}
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
@@ -462,9 +472,10 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 	defer tx.Rollback()
 
 	values := map[string]string{
-		"max_upload_bytes": strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files": strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"log_level":        settings.LogLevel,
+		"max_upload_bytes":      strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"log_level":             settings.LogLevel,
 	}
 	for key, value := range values {
 		var locked int
@@ -498,6 +509,9 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 	if settings.MaxUploadFiles < 0 {
 		return fmt.Errorf("max upload files must be >= 0")
 	}
+	if settings.MaxRetainedVersions < 0 {
+		return fmt.Errorf("max retained versions must be >= 0")
+	}
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
@@ -509,9 +523,10 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 	defer d.writeMu.Unlock()
 
 	for key, value := range map[string]string{
-		"max_upload_bytes": strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files": strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"log_level":        settings.LogLevel,
+		"max_upload_bytes":      strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"log_level":             settings.LogLevel,
 	} {
 		if err := server.ValidateSettingValue(key, value); err != nil {
 			return err
@@ -525,6 +540,72 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 		}
 	}
 	return nil
+}
+
+func (d *Database) PruneSiteVersions(ctx context.Context, siteSHA string, maxRetainedVersions int64) ([]int64, error) {
+	if siteSHA == "" || maxRetainedVersions <= 0 {
+		return nil, nil
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin prune site versions transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT version
+		FROM uploads
+		WHERE site_sha = ? AND state = ?
+		ORDER BY version DESC
+		LIMIT -1 OFFSET ?
+	`, siteSHA, string(server.UploadStateFinished), maxRetainedVersions)
+	if err != nil {
+		return nil, fmt.Errorf("list prunable site versions: %w", err)
+	}
+	var versions []int64
+	for rows.Next() {
+		var version int64
+		if err := rows.Scan(&version); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan prunable site version: %w", err)
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate prunable site versions: %w", err)
+	}
+	rows.Close()
+
+	for _, version := range versions {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM upload_settings
+			WHERE site_sha = ? AND upload_version = ?
+		`, siteSHA, version); err != nil {
+			return nil, fmt.Errorf("delete upload settings for pruned version %d: %w", version, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM site_policy_violations
+			WHERE site_sha = ? AND upload_version = ?
+		`, siteSHA, version); err != nil {
+			return nil, fmt.Errorf("delete policy violations for pruned version %d: %w", version, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM uploads
+			WHERE site_sha = ? AND version = ? AND state = ?
+		`, siteSHA, version, string(server.UploadStateFinished)); err != nil {
+			return nil, fmt.Errorf("delete pruned upload version %d: %w", version, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit prune site versions: %w", err)
+	}
+	return versions, nil
 }
 
 func (d *Database) LoadPolicies(ctx context.Context, scopes []server.PolicyScope) ([]server.PolicyRecord, error) {

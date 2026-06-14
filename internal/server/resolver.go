@@ -14,8 +14,9 @@ type EffectiveValue[T any] struct {
 }
 
 type UploadPolicy struct {
-	MaxUploadBytes EffectiveValue[int64]
-	MaxUploadFiles EffectiveValue[int64]
+	MaxUploadBytes      EffectiveValue[int64]
+	MaxUploadFiles      EffectiveValue[int64]
+	MaxRetainedVersions EffectiveValue[int64]
 }
 
 type SiteRuntimeStatus string
@@ -45,8 +46,9 @@ func (r Resolver) ResolveUploadPolicy(ctx context.Context, actor AdminUser, site
 		return UploadPolicy{}, err
 	}
 	return UploadPolicy{
-		MaxUploadBytes: EffectiveValue[int64]{Value: settings.MaxUploadBytes, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
-		MaxUploadFiles: EffectiveValue[int64]{Value: settings.MaxUploadFiles, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
+		MaxUploadBytes:      EffectiveValue[int64]{Value: settings.MaxUploadBytes, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
+		MaxUploadFiles:      EffectiveValue[int64]{Value: settings.MaxUploadFiles, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
+		MaxRetainedVersions: EffectiveValue[int64]{Value: settings.MaxRetainedVersions, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
 	}, nil
 }
 

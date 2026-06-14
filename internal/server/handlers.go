@@ -216,7 +216,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "log_level", settings.LogLevel)
+	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "max_retained_versions", settings.MaxRetainedVersions, "log_level", settings.LogLevel)
 	h.renderAdminPageWithMessage(w, r, user, "", "Settings saved.")
 }
 
@@ -648,6 +648,10 @@ func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {
 	if err != nil {
 		return ServerSettings{}, err
 	}
+	maxRetainedVersions, err := parseNonNegativeInt64(r.Form.Get("max_retained_versions"), "max retained versions")
+	if err != nil {
+		return ServerSettings{}, err
+	}
 	logLevel := parseLogLevelName(r.Form.Get("log_level"))
 	if strings.TrimSpace(r.Form.Get("log_level")) == "" {
 		logLevel = "warn"
@@ -656,9 +660,10 @@ func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {
 		return ServerSettings{}, fmt.Errorf("log level must be debug, info, warn, or error")
 	}
 	return ServerSettings{
-		MaxUploadBytes: maxUploadBytes,
-		MaxUploadFiles: maxUploadFiles,
-		LogLevel:       logLevel,
+		MaxUploadBytes:      maxUploadBytes,
+		MaxUploadFiles:      maxUploadFiles,
+		MaxRetainedVersions: maxRetainedVersions,
+		LogLevel:            logLevel,
 	}, nil
 }
 
@@ -717,6 +722,9 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, po
 		slog.ErrorContext(ctx, "finish upload metadata failed", "site", upload.Site, "version", upload.Version, "error", err)
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("finish upload metadata: %w", err)
 	}
+	if err := h.pruneRetainedVersions(ctx, upload, policy.MaxRetainedVersions.Value); err != nil {
+		return protocol.UploadArchiveResponse{}, err
+	}
 	if user.ID > 0 {
 		if err := h.db.LinkUserSite(ctx, user.ID, upload.SiteSHA); err != nil {
 			slog.ErrorContext(ctx, "link user site failed", "site", upload.Site, "version", upload.Version, "username", user.Username, "error", err)
@@ -732,6 +740,23 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, po
 		Files:   files,
 		Bytes:   bytes,
 	}, nil
+}
+
+func (h *handler) pruneRetainedVersions(ctx context.Context, upload UploadRecord, maxRetainedVersions int64) error {
+	if maxRetainedVersions <= 0 {
+		return nil
+	}
+	versions, err := h.db.PruneSiteVersions(ctx, upload.SiteSHA, maxRetainedVersions)
+	if err != nil {
+		return fmt.Errorf("prune site versions: %w", err)
+	}
+	for _, version := range versions {
+		if err := h.store.DeleteSiteVersion(ctx, upload.SiteSHA, version); err != nil {
+			return fmt.Errorf("delete pruned site version blobs: site=%s version=%d: %w", upload.Site, version, err)
+		}
+		slog.WarnContext(ctx, "site version pruned", "site", upload.Site, "version", version, "max_retained_versions", maxRetainedVersions)
+	}
+	return nil
 }
 
 func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, policy UploadPolicy) (int64, int64, SiteManifest, error) {

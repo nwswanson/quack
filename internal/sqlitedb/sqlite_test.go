@@ -79,6 +79,84 @@ func TestFinishUploadPersistsMetadata(t *testing.T) {
 	}
 }
 
+func TestPruneSiteVersionsRemovesOldFinishedVersions(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "quack.sqlite")
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for i := 0; i < 4; i++ {
+		upload, err := db.BeginUpload(ctx, "example", "site-sha", 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upload.Files = []server.UploadFileRecord{{
+			RelativePath: "index.html",
+			BlobPath:     fmt.Sprintf("blobs/site:site-sha/%d/file:file-sha", upload.Version),
+			FileSHA:      fmt.Sprintf("file-sha-%d", upload.Version),
+			Bytes:        upload.Version,
+		}}
+		if err := db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, map[string]string{
+			server.SettingDatabaseFeature:         "false",
+			server.SettingDatabaseFeatureRequired: "false",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SavePolicyViolation(ctx, server.PolicyViolation{
+			SiteSHA: upload.SiteSHA, UploadVersion: upload.Version, Key: server.SettingDatabaseFeature,
+			RequestedValue: "true", PolicyValue: "deny", Severity: "degraded", Reason: "test",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.FinishUpload(ctx, upload); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pruned, err := db.PruneSiteVersions(ctx, "site-sha", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := fmt.Sprint(pruned), "[2 1]"; got != want {
+		t.Fatalf("pruned versions = %s, want %s", got, want)
+	}
+
+	rows, err := db.readDB.QueryContext(ctx, `SELECT version FROM uploads WHERE site_sha = ? AND state = ? ORDER BY version`, "site-sha", string(server.UploadStateFinished))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var versions []int64
+	for rows.Next() {
+		var version int64
+		if err := rows.Scan(&version); err != nil {
+			t.Fatal(err)
+		}
+		versions = append(versions, version)
+	}
+	if got, want := fmt.Sprint(versions), "[3 4]"; got != want {
+		t.Fatalf("remaining versions = %s, want %s", got, want)
+	}
+
+	var uploadSettings int
+	if err := db.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM upload_settings WHERE site_sha = ? AND upload_version IN (1, 2)`, "site-sha").Scan(&uploadSettings); err != nil {
+		t.Fatal(err)
+	}
+	if uploadSettings != 0 {
+		t.Fatalf("old upload settings count = %d, want 0", uploadSettings)
+	}
+	var violations int
+	if err := db.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_policy_violations WHERE site_sha = ? AND upload_version IN (1, 2)`, "site-sha").Scan(&violations); err != nil {
+		t.Fatal(err)
+	}
+	if violations != 0 {
+		t.Fatalf("old violations count = %d, want 0", violations)
+	}
+}
+
 func TestBootstrapAdminCreatesInitialUserOnce(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

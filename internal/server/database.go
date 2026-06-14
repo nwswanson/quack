@@ -24,6 +24,7 @@ type Database interface {
 	LinkUserSite(ctx context.Context, userID int64, siteSHA string) error
 	GetServerSettings(ctx context.Context) (ServerSettings, error)
 	SaveServerSettings(ctx context.Context, settings ServerSettings) error
+	PruneSiteVersions(ctx context.Context, siteSHA string, maxRetainedVersions int64) ([]int64, error)
 	LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error)
 	SavePolicy(ctx context.Context, policy PolicyRecord) error
 	LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error)
@@ -65,10 +66,11 @@ type PublishedSite struct {
 }
 
 type ServerSettings struct {
-	MaxUploadBytes int64
-	MaxUploadFiles int64
-	LogLevel       string
-	Locked         map[string]bool
+	MaxUploadBytes      int64
+	MaxUploadFiles      int64
+	MaxRetainedVersions int64
+	LogLevel            string
+	Locked              map[string]bool
 }
 
 type PolicyScope struct {
