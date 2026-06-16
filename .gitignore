@@ -6,3 +6,9 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+/site/public/
+.DS_Store
+repomix-output.xml
+*.lock
+*.swp
+*.swo
