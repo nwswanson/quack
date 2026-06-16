@@ -111,6 +111,92 @@ func DeleteSite(ctx context.Context, serverURL, token, site string) (*protocol.D
 	return &out, nil
 }
 
+func UnpublishSite(ctx context.Context, serverURL, token, site string) (*protocol.UnpublishSiteResponse, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	if site == "" {
+		return nil, fmt.Errorf("site is required")
+	}
+
+	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SiteUnpublishPathSuffix
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create unpublish request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("unpublish site: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := decodeUnpublishSiteResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.Error
+		if message == "" {
+			message = resp.Status
+		}
+		return &out, &UploadError{
+			Operation:  "unpublish",
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
+		}
+	}
+	return &out, nil
+}
+
+func PublishSite(ctx context.Context, serverURL, token, site string) (*protocol.PublishSiteResponse, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	if site == "" {
+		return nil, fmt.Errorf("site is required")
+	}
+
+	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SitePublishPathSuffix
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create publish request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("publish site: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := decodePublishSiteResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.Error
+		if message == "" {
+			message = resp.Status
+		}
+		return &out, &UploadError{
+			Operation:  "publish",
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
+		}
+	}
+	return &out, nil
+}
+
 func ListSites(ctx context.Context, serverURL, token, username string, includeAll bool) (*protocol.ListSitesResponse, error) {
 	if serverURL == "" {
 		return nil, fmt.Errorf("serverURL is required")
@@ -337,6 +423,40 @@ func decodeDeleteSiteResponse(resp *http.Response) (protocol.DeleteSiteResponse,
 			return out, nil
 		}
 		return protocol.DeleteSiteResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+func decodeUnpublishSiteResponse(resp *http.Response) (protocol.UnpublishSiteResponse, error) {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return protocol.UnpublishSiteResponse{}, err
+	}
+
+	var out protocol.UnpublishSiteResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Error = fallbackResponseMessage(resp, body)
+			return out, nil
+		}
+		return protocol.UnpublishSiteResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+func decodePublishSiteResponse(resp *http.Response) (protocol.PublishSiteResponse, error) {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return protocol.PublishSiteResponse{}, err
+	}
+
+	var out protocol.PublishSiteResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Error = fallbackResponseMessage(resp, body)
+			return out, nil
+		}
+		return protocol.PublishSiteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 	return out, nil
 }

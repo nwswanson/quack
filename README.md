@@ -95,6 +95,22 @@ go run ./cmd/quack rollback example \
   --serverURL http://localhost:8080
 ```
 
+Unpublish a site without deleting its retained versions or blobs:
+
+```bash
+go run ./cmd/quack unpublish example \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
+Publish an unpublished site again:
+
+```bash
+go run ./cmd/quack publish example \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
 ## Serve Uploaded Files
 
 Quack serves the current version of uploaded files from `/` based on the request host's left-most label.

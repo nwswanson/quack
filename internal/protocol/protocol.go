@@ -5,6 +5,8 @@ const SitesPath = "/v1/sites"
 const DeleteSitePathPrefix = "/v1/sites/"
 const SiteRevisionPathSuffix = "/revisions"
 const SiteRollbackPathSuffix = "/rollback"
+const SiteUnpublishPathSuffix = "/unpublish"
+const SitePublishPathSuffix = "/publish"
 const LoginCheckPath = "/v1/login/check"
 const ContentTypeTar = "application/x-tar"
 const HeaderSite = "X-Quack-Site"
@@ -25,6 +27,22 @@ type DeleteSiteResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+type UnpublishSiteResponse struct {
+	OK          bool   `json:"ok"`
+	Site        string `json:"site,omitempty"`
+	Unpublished bool   `json:"unpublished"`
+	LiveState   string `json:"live_state,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+type PublishSiteResponse struct {
+	OK        bool   `json:"ok"`
+	Site      string `json:"site,omitempty"`
+	Published bool   `json:"published"`
+	LiveState string `json:"live_state,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type SiteSummary struct {
 	Site           string `json:"site"`
 	SiteSHA        string `json:"site_sha,omitempty"`
@@ -34,6 +52,7 @@ type SiteSummary struct {
 	FileCount      int64  `json:"file_count"`
 	ByteCount      int64  `json:"byte_count"`
 	UpdatedAt      string `json:"updated_at,omitempty"`
+	LiveState      string `json:"live_state,omitempty"`
 	RuntimeStatus  string `json:"runtime_status,omitempty"`
 	PolicyReason   string `json:"policy_reason,omitempty"`
 }

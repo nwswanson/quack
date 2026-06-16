@@ -102,6 +102,7 @@ func (d *Database) init(ctx context.Context) error {
 			site TEXT NOT NULL,
 			current_version INTEGER NOT NULL,
 			next_version INTEGER NOT NULL DEFAULT 1,
+			live_state TEXT NOT NULL DEFAULT 'live',
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS uploads (
@@ -210,6 +211,9 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE sites ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite database: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE sites ADD COLUMN live_state TEXT NOT NULL DEFAULT 'live'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite site live state: %w", err)
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE uploads ADD COLUMN state TEXT NOT NULL DEFAULT 'finished' CHECK (state IN ('uploading', 'finished', 'error'))`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite upload state: %w", err)
@@ -339,7 +343,8 @@ func (d *Database) listPublishedSites(ctx context.Context, userID int64, include
 			(SELECT COUNT(*) FROM uploads u2 WHERE u2.site_sha = s.site_sha AND u2.state = ?) AS version_count,
 			COALESCE(cur.files, 0) AS file_count,
 			COALESCE(cur.bytes, 0) AS byte_count,
-			s.updated_at
+			s.updated_at,
+			s.live_state
 		FROM sites s
 		JOIN uploads cur
 			ON cur.site_sha = s.site_sha
@@ -377,7 +382,7 @@ func scanPublishedSites(rows *sql.Rows) ([]server.PublishedSite, error) {
 	var sites []server.PublishedSite
 	for rows.Next() {
 		var site server.PublishedSite
-		if err := rows.Scan(&site.Site, &site.SiteSHA, &site.PublishedBy, &site.CurrentVersion, &site.VersionCount, &site.FileCount, &site.ByteCount, &site.UpdatedAt); err != nil {
+		if err := rows.Scan(&site.Site, &site.SiteSHA, &site.PublishedBy, &site.CurrentVersion, &site.VersionCount, &site.FileCount, &site.ByteCount, &site.UpdatedAt, &site.LiveState); err != nil {
 			return nil, fmt.Errorf("scan published site: %w", err)
 		}
 		sites = append(sites, site)
@@ -1004,8 +1009,8 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 
 	var version int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO sites (site_sha, site, current_version, next_version, updated_at)
-		VALUES (?, ?, 0, 2, CURRENT_TIMESTAMP)
+		INSERT INTO sites (site_sha, site, current_version, next_version, live_state, updated_at)
+		VALUES (?, ?, 0, 2, 'live', CURRENT_TIMESTAMP)
 		ON CONFLICT(site_sha) DO UPDATE SET
 			site = excluded.site,
 			next_version = MAX(next_version, current_version + 1) + 1,
@@ -1091,12 +1096,13 @@ func (d *Database) FinishUpload(ctx context.Context, upload server.UploadRecord)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO sites (site_sha, site, current_version, next_version, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO sites (site_sha, site, current_version, next_version, live_state, updated_at)
+		VALUES (?, ?, ?, ?, 'live', CURRENT_TIMESTAMP)
 		ON CONFLICT(site_sha) DO UPDATE SET
 			site = excluded.site,
 			current_version = MAX(current_version, excluded.current_version),
 			next_version = MAX(next_version, excluded.next_version),
+			live_state = 'live',
 			updated_at = CURRENT_TIMESTAMP
 	`, upload.SiteSHA, upload.Site, upload.Version, upload.Version+1); err != nil {
 		return fmt.Errorf("publish site version: %w", err)
@@ -1139,6 +1145,7 @@ func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePat
 		JOIN upload_files uf
 			ON uf.upload_id = u.id
 		WHERE s.site = ?
+			AND s.live_state = 'live'
 			AND uf.relative_path = ?
 	`, string(server.UploadStateFinished), site, relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
 	if err == nil {
@@ -1284,6 +1291,81 @@ func (d *Database) RollbackSite(ctx context.Context, user server.AdminUser, site
 		PreviousVersion: currentVersion,
 		CurrentVersion:  previousVersion,
 	}, nil
+}
+
+func (d *Database) UnpublishSite(ctx context.Context, user server.AdminUser, site string, siteSHA string) (server.UnpublishRecord, error) {
+	if siteSHA == "" {
+		return server.UnpublishRecord{LiveState: "unpublished"}, nil
+	}
+
+	changed, err := d.setSiteLiveState(ctx, user, site, siteSHA, "unpublished")
+	if err != nil {
+		return server.UnpublishRecord{}, err
+	}
+	return server.UnpublishRecord{
+		Unpublished: changed,
+		LiveState:   "unpublished",
+	}, nil
+}
+
+func (d *Database) PublishSite(ctx context.Context, user server.AdminUser, site string, siteSHA string) (server.PublishRecord, error) {
+	if siteSHA == "" {
+		return server.PublishRecord{LiveState: "live"}, nil
+	}
+
+	changed, err := d.setSiteLiveState(ctx, user, site, siteSHA, "live")
+	if err != nil {
+		return server.PublishRecord{}, err
+	}
+	return server.PublishRecord{
+		Published: changed,
+		LiveState: "live",
+	}, nil
+}
+
+func (d *Database) setSiteLiveState(ctx context.Context, user server.AdminUser, site string, siteSHA string, liveState string) (bool, error) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin site state transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if !user.IsAdmin() {
+		allowed, err := d.userCanAccessSite(ctx, tx, user.ID, siteSHA)
+		if err != nil {
+			return false, err
+		}
+		if !allowed {
+			exists, err := d.siteExists(ctx, tx, siteSHA)
+			if err != nil {
+				return false, err
+			}
+			if exists {
+				return false, server.ErrSiteOwnership
+			}
+			return false, nil
+		}
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE sites
+		SET live_state = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE site_sha = ? AND site = ?
+	`, liveState, siteSHA, site)
+	if err != nil {
+		return false, fmt.Errorf("set site live state: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("site state rows affected: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit site state transaction: %w", err)
+	}
+	return affected > 0, nil
 }
 
 func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {

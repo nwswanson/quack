@@ -222,6 +222,95 @@ func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
 	}
 }
 
+func TestPublishStateControlsServing(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	alice, err := db.CreateUser(ctx, "alice", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := db.CreateUser(ctx, "bob", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upload, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload.Files = []server.UploadFileRecord{{
+		RelativePath: "index.html",
+		BlobPath:     "blobs/site:site-sha/1/file:file-sha",
+		FileSHA:      "file-sha",
+		Bytes:        12,
+	}}
+	if err := db.FinishUpload(ctx, upload); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || !ok {
+		t.Fatalf("FindCurrentFile before unpublish = (_, %v, %v), want file", ok, err)
+	}
+	if _, err := db.UnpublishSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+		t.Fatalf("bob unpublish error = %v, want ErrSiteOwnership", err)
+	}
+	unpublished, err := db.UnpublishSite(ctx, alice.User, "example", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unpublished.Unpublished || unpublished.LiveState != "unpublished" {
+		t.Fatalf("unpublished = %#v, want unpublished state", unpublished)
+	}
+	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || ok {
+		t.Fatalf("FindCurrentFile after unpublish = (_, %v, %v), want no file", ok, err)
+	}
+	sites, err := db.ListPublishedSites(ctx, alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sites) != 1 || sites[0].LiveState != "unpublished" {
+		t.Fatalf("sites = %#v, want unpublished live state", sites)
+	}
+	if _, err := db.PublishSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+		t.Fatalf("bob publish error = %v, want ErrSiteOwnership", err)
+	}
+	published, err := db.PublishSite(ctx, alice.User, "example", "site-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !published.Published || published.LiveState != "live" {
+		t.Fatalf("published = %#v, want live state", published)
+	}
+	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || !ok {
+		t.Fatalf("FindCurrentFile after publish = (_, %v, %v), want file", ok, err)
+	}
+	if _, err := db.UnpublishSite(ctx, alice.User, "example", "site-sha"); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Files = []server.UploadFileRecord{{
+		RelativePath: "index.html",
+		BlobPath:     "blobs/site:site-sha/2/file:file-sha",
+		FileSHA:      "file-sha-2",
+		Bytes:        13,
+	}}
+	if err := db.FinishUpload(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || !ok {
+		t.Fatalf("FindCurrentFile after republish = (_, %v, %v), want file", ok, err)
+	}
+}
+
 func TestBootstrapAdminCreatesInitialUserOnce(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

@@ -131,6 +131,52 @@ func TestDeleteSiteReportsServerError(t *testing.T) {
 	}
 }
 
+func TestUnpublishSiteSendsRequest(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", req.Method)
+		}
+		if req.URL.Path != "/v1/sites/foo/unpublish" {
+			t.Fatalf("path = %s, want /v1/sites/foo/unpublish", req.URL.Path)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		return response(req, http.StatusOK, `{"ok":true,"site":"foo","unpublished":true,"live_state":"unpublished"}`), nil
+	}))
+
+	resp, err := UnpublishSite(context.Background(), "http://example.test", "token", "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.OK || !resp.Unpublished || resp.LiveState != "unpublished" {
+		t.Fatalf("response = %#v, want unpublished foo", resp)
+	}
+}
+
+func TestPublishSiteSendsRequest(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", req.Method)
+		}
+		if req.URL.Path != "/v1/sites/foo/publish" {
+			t.Fatalf("path = %s, want /v1/sites/foo/publish", req.URL.Path)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		return response(req, http.StatusOK, `{"ok":true,"site":"foo","published":true,"live_state":"live"}`), nil
+	}))
+
+	resp, err := PublishSite(context.Background(), "http://example.test", "token", "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.OK || !resp.Published || resp.LiveState != "live" {
+		t.Fatalf("response = %#v, want published foo", resp)
+	}
+}
+
 func TestListSitesSendsQuery(t *testing.T) {
 	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodGet {

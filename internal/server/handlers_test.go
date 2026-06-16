@@ -745,6 +745,50 @@ func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
 	}
 }
 
+func TestUnpublishSite(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		unpublish: UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteUnpublishPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"unpublished":true`) || !strings.Contains(rec.Body.String(), `"live_state":"unpublished"`) {
+		t.Fatalf("body = %s, want unpublished response", rec.Body.String())
+	}
+}
+
+func TestPublishSite(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		publish: PublishRecord{Published: true, LiveState: "live"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SitePublishPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"published":true`) || !strings.Contains(rec.Body.String(), `"live_state":"live"`) {
+		t.Fatalf("body = %s, want publish response", rec.Body.String())
+	}
+}
+
 func TestListSitesReturnsSiteSummaries(t *testing.T) {
 	db := &fakeDatabase{
 		usersByToken: map[string]AdminUser{
@@ -886,6 +930,8 @@ type fakeDatabase struct {
 	prunedVersions       []int64
 	revisions            []RevisionRecord
 	rollback             RollbackRecord
+	unpublish            UnpublishRecord
+	publish              PublishRecord
 	sites                []PublishedSite
 	lastPublisherUserID  int64
 	lastPublisherIsAdmin bool
@@ -923,6 +969,14 @@ func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user AdminUser, s
 
 func (db *fakeDatabase) RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error) {
 	return db.rollback, nil
+}
+
+func (db *fakeDatabase) UnpublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (UnpublishRecord, error) {
+	return db.unpublish, nil
+}
+
+func (db *fakeDatabase) PublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (PublishRecord, error) {
+	return db.publish, nil
 }
 
 func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {

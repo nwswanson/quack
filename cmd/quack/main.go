@@ -41,6 +41,10 @@ func main() {
 		textOutput = true
 	case "rollback":
 		resp, err = runRollback(os.Args[2:])
+	case "unpublish":
+		resp, err = runUnpublish(os.Args[2:])
+	case "publish":
+		resp, err = runPublish(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -94,6 +98,36 @@ func runDelete(args []string) (any, error) {
 	return client.DeleteSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
 }
 
+func runUnpublish(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) != 1 {
+		return nil, fmt.Errorf("usage: quack unpublish <site name> [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	return client.UnpublishSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
+func runPublish(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) != 1 {
+		return nil, fmt.Errorf("usage: quack publish <site name> [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	return client.PublishSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
 func runSites(args []string) (any, error) {
 	values, positionals, err := parseCommandArgs(args)
 	if err != nil {
@@ -122,7 +156,7 @@ func writeSitesText(w io.Writer, resp *protocol.ListSitesResponse) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SITE\tCURRENT\tVERSIONS\tFILES\tBYTES\tPUBLISHED BY\tSTATUS\tUPDATED\tPOLICY REASON")
+	fmt.Fprintln(tw, "SITE\tCURRENT\tVERSIONS\tFILES\tBYTES\tPUBLISHED BY\tLIVE\tSTATUS\tUPDATED\tPOLICY REASON")
 	for _, site := range resp.Sites {
 		publishedBy := site.PublishedBy
 		if publishedBy == "" {
@@ -132,6 +166,10 @@ func writeSitesText(w io.Writer, resp *protocol.ListSitesResponse) {
 		if status == "" {
 			status = "-"
 		}
+		liveState := site.LiveState
+		if liveState == "" {
+			liveState = "-"
+		}
 		updatedAt := site.UpdatedAt
 		if updatedAt == "" {
 			updatedAt = "-"
@@ -140,9 +178,9 @@ func writeSitesText(w io.Writer, resp *protocol.ListSitesResponse) {
 		if reason == "" {
 			reason = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			site.Site, site.CurrentVersion, site.VersionCount, site.FileCount, site.ByteCount,
-			publishedBy, status, updatedAt, reason,
+			publishedBy, liveState, status, updatedAt, reason,
 		)
 	}
 	_ = tw.Flush()
@@ -271,6 +309,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  quack deploy <directory> <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack revisions <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack unpublish <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack publish <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack delete <site name> [--token <token>] [--serverURL <url>]")
 }
 

@@ -482,6 +482,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 			Site: site.Site, SiteSHA: site.SiteSHA, PublishedBy: site.PublishedBy,
 			CurrentVersion: site.CurrentVersion, VersionCount: site.VersionCount,
 			FileCount: site.FileCount, ByteCount: site.ByteCount, UpdatedAt: site.UpdatedAt,
+			LiveState:     site.LiveState,
 			RuntimeStatus: string(status), PolicyReason: decision.Reason,
 		})
 	}
@@ -489,7 +490,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
-	if strings.HasSuffix(r.URL.Path, protocol.SiteRevisionPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SiteRollbackPathSuffix) {
+	if strings.HasSuffix(r.URL.Path, protocol.SiteRevisionPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SiteRollbackPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SiteUnpublishPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SitePublishPathSuffix) {
 		h.handleSiteRevisionRoutes(w, r)
 		return
 	}
@@ -571,6 +572,28 @@ func (h *handler) handleSiteRevisionRoutes(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		h.handleRollbackSite(w, r, user, site)
+	case strings.HasSuffix(r.URL.Path, protocol.SiteUnpublishPathSuffix):
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SiteUnpublishPathSuffix)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "site is invalid")
+			return
+		}
+		h.handleUnpublishSite(w, r, user, site)
+	case strings.HasSuffix(r.URL.Path, protocol.SitePublishPathSuffix):
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SitePublishPathSuffix)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "site is invalid")
+			return
+		}
+		h.handlePublishSite(w, r, user, site)
 	default:
 		http.NotFound(w, r)
 	}
@@ -631,6 +654,44 @@ func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, use
 	writeJSON(w, http.StatusOK, protocol.RollbackSiteResponse{
 		OK: true, Site: site, RolledBack: rollback.RolledBack,
 		PreviousVersion: rollback.PreviousVersion, CurrentVersion: rollback.CurrentVersion, Warning: rollback.Warning,
+	})
+}
+
+func (h *handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
+	out, err := h.db.UnpublishSite(r.Context(), user, site, sha256Hex(site))
+	if err != nil {
+		if errors.Is(err, ErrSiteOwnership) {
+			writeError(w, http.StatusForbidden, "site is owned by another user")
+			return
+		}
+		slog.ErrorContext(r.Context(), "unpublish site failed", "site", site, "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if out.Unpublished {
+		slog.WarnContext(r.Context(), "site unpublished", "site", site, "username", user.Username)
+	}
+	writeJSON(w, http.StatusOK, protocol.UnpublishSiteResponse{
+		OK: true, Site: site, Unpublished: out.Unpublished, LiveState: out.LiveState,
+	})
+}
+
+func (h *handler) handlePublishSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
+	out, err := h.db.PublishSite(r.Context(), user, site, sha256Hex(site))
+	if err != nil {
+		if errors.Is(err, ErrSiteOwnership) {
+			writeError(w, http.StatusForbidden, "site is owned by another user")
+			return
+		}
+		slog.ErrorContext(r.Context(), "publish site failed", "site", site, "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if out.Published {
+		slog.WarnContext(r.Context(), "site published", "site", site, "username", user.Username)
+	}
+	writeJSON(w, http.StatusOK, protocol.PublishSiteResponse{
+		OK: true, Site: site, Published: out.Published, LiveState: out.LiveState,
 	})
 }
 
