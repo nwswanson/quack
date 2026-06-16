@@ -78,6 +78,8 @@ func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
 	h.renderAdminPage(w, r, data)
 }
 
@@ -198,12 +200,12 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.renderAdminPageWithMessage(w, r, user, "Unable to read settings form.", "")
+		redirectAdminMessage(w, r, "error", "Unable to read settings form.")
 		return
 	}
 	settings, err := parseServerSettingsForm(r)
 	if err != nil {
-		h.renderAdminPageWithMessage(w, r, user, err.Error(), "")
+		redirectAdminMessage(w, r, "error", err.Error())
 		return
 	}
 	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
@@ -217,7 +219,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "max_retained_versions", settings.MaxRetainedVersions, "log_level", settings.LogLevel)
-	h.renderAdminPageWithMessage(w, r, user, "", "Settings saved.")
+	redirectAdminMessage(w, r, "message", "Settings saved.")
 }
 
 func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
@@ -239,14 +241,14 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.renderAdminPageWithMessage(w, r, user, "Unable to read policy form.", "")
+		redirectAdminMessage(w, r, "error", "Unable to read policy form.")
 		return
 	}
 	mode := strings.TrimSpace(r.Form.Get("database_policy_mode"))
 	switch mode {
 	case "inherit", "allow", "deny":
 	default:
-		h.renderAdminPageWithMessage(w, r, user, "Database policy must be inherit, allow, or deny.", "")
+		redirectAdminMessage(w, r, "error", "Database policy must be inherit, allow, or deny.")
 		return
 	}
 	if err := h.db.SavePolicy(r.Context(), PolicyRecord{
@@ -262,7 +264,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	h.renderAdminPageWithMessage(w, r, user, "", "Policy saved.")
+	redirectAdminMessage(w, r, "message", "Policy saved.")
 }
 
 type adminPageData struct {
@@ -344,6 +346,12 @@ func (h *handler) renderAdminPage(w http.ResponseWriter, r *http.Request, data a
 	if err := adminTemplates.ExecuteTemplate(w, "admin.html", data); err != nil {
 		slog.ErrorContext(r.Context(), "render admin page failed", "error", err)
 	}
+}
+
+func redirectAdminMessage(w http.ResponseWriter, r *http.Request, key string, message string) {
+	values := url.Values{}
+	values.Set(key, message)
+	http.Redirect(w, r, "/?"+values.Encode(), http.StatusSeeOther)
 }
 
 func (h *handler) currentAdminUser(r *http.Request) (AdminUser, bool, error) {

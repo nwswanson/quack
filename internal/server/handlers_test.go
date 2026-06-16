@@ -487,11 +487,26 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/?message=Settings+saved." {
+		t.Fatalf("location = %q, want settings message redirect", got)
 	}
 	if db.settings.MaxUploadBytes != 1024 || db.settings.MaxUploadFiles != 12 {
 		t.Fatalf("settings = %#v, want updated values", db.settings)
+	}
+
+	get := httptest.NewRequest(http.MethodGet, rec.Header().Get("Location"), nil)
+	get.Host = "quack.example.com"
+	get.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	page := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(page, get)
+	if page.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d; body=%s", page.Code, http.StatusOK, page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), "Settings saved.") {
+		t.Fatalf("body = %q, want settings message", page.Body.String())
 	}
 }
 
@@ -520,8 +535,8 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 	update.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, update)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
 
 	before404 := logs.Len()
