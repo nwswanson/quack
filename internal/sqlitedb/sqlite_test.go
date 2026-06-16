@@ -512,6 +512,14 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 	if aliceSites[0].Site != "site-a" || aliceSites[0].PublishedBy != "alice" {
 		t.Fatalf("aliceSites[0] = %#v, want site-a by alice", aliceSites[0])
 	}
+
+	bobByName, err := db.ListPublishedSitesByUsername(ctx, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bobByName) != 1 || bobByName[0].Site != "site-b" || bobByName[0].PublishedBy != "bob" {
+		t.Fatalf("bobByName = %#v, want site-b by bob", bobByName)
+	}
 }
 
 func TestBeginUploadRejectsNonOwnerForExistingSite(t *testing.T) {

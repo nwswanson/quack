@@ -61,6 +61,16 @@ go run ./cmd/quack deploy ./some-folder example \
 
 The uploader streams a tar archive directly into the HTTP request. It does not write a temporary archive to disk.
 
+List sites available to the authenticated user:
+
+```bash
+go run ./cmd/quack sites \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
+Admins can list one user's sites with `quack sites <username>` or every site with `quack sites --all`.
+
 Delete a site and its stored blobs:
 
 ```bash

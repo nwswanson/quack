@@ -44,6 +44,7 @@ func (h *handler) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/policy", h.handleAdminPolicy)
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
+	mux.HandleFunc(protocol.SitesPath, h.handleListSites)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
 }
 
@@ -420,6 +421,71 @@ func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, protocol.LoginCheckResponse{OK: true})
+}
+
+func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok, err := h.authorizedAPIUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "site list authorization lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	query := r.URL.Query()
+	includeAll := strings.EqualFold(strings.TrimSpace(query.Get("all")), "true")
+	username := strings.TrimSpace(query.Get("user"))
+
+	var sites []PublishedSite
+	switch {
+	case includeAll:
+		if !Can(user, "sites.view_all") {
+			writeError(w, http.StatusForbidden, "not allowed to list all sites")
+			return
+		}
+		sites, err = h.db.ListPublishedSites(r.Context(), user.ID, true)
+	case username != "":
+		if !Can(user, "sites.view_all") {
+			writeError(w, http.StatusForbidden, "not allowed to list another user's sites")
+			return
+		}
+		sites, err = h.db.ListPublishedSitesByUsername(r.Context(), username)
+	default:
+		sites, err = h.db.ListPublishedSites(r.Context(), user.ID, false)
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list sites failed", "username", user.Username, "target_username", username, "all", includeAll, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	out := protocol.ListSitesResponse{OK: true}
+	for _, site := range sites {
+		decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site.Site)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site.Site, "error", err)
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		status := decision.Status
+		if status == "" {
+			status = SiteRuntimeActive
+		}
+		out.Sites = append(out.Sites, protocol.SiteSummary{
+			Site: site.Site, SiteSHA: site.SiteSHA, PublishedBy: site.PublishedBy,
+			CurrentVersion: site.CurrentVersion, VersionCount: site.VersionCount,
+			FileCount: site.FileCount, ByteCount: site.ByteCount, UpdatedAt: site.UpdatedAt,
+			RuntimeStatus: string(status), PolicyReason: decision.Reason,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {

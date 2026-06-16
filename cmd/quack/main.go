@@ -33,6 +33,9 @@ func main() {
 		resp, err = runDeploy(os.Args[2:])
 	case "delete":
 		resp, err = runDelete(os.Args[2:])
+	case "sites":
+		resp, err = runSites(os.Args[2:])
+		textOutput = true
 	case "revisions":
 		resp, err = runRevisions(os.Args[2:])
 		textOutput = true
@@ -48,7 +51,12 @@ func main() {
 		os.Exit(1)
 	}
 	if textOutput {
-		writeRevisionsText(os.Stdout, resp.(*protocol.ListRevisionsResponse))
+		switch out := resp.(type) {
+		case *protocol.ListSitesResponse:
+			writeSitesText(os.Stdout, out)
+		case *protocol.ListRevisionsResponse:
+			writeRevisionsText(os.Stdout, out)
+		}
 		return
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(resp)
@@ -84,6 +92,60 @@ func runDelete(args []string) (any, error) {
 	}
 
 	return client.DeleteSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
+func runSites(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) > 1 {
+		return nil, fmt.Errorf("usage: quack sites [username] [--all] [--token <token>] [--serverURL <url>]")
+	}
+	if values.all && len(positionals) > 0 {
+		return nil, fmt.Errorf("usage: quack sites [username] [--all] [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	username := ""
+	if len(positionals) == 1 {
+		username = positionals[0]
+	}
+	return client.ListSites(context.Background(), resolved.serverURL, resolved.token, username, values.all)
+}
+
+func writeSitesText(w io.Writer, resp *protocol.ListSitesResponse) {
+	if len(resp.Sites) == 0 {
+		fmt.Fprintln(w, "No sites.")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SITE\tCURRENT\tVERSIONS\tFILES\tBYTES\tPUBLISHED BY\tSTATUS\tUPDATED\tPOLICY REASON")
+	for _, site := range resp.Sites {
+		publishedBy := site.PublishedBy
+		if publishedBy == "" {
+			publishedBy = "-"
+		}
+		status := site.RuntimeStatus
+		if status == "" {
+			status = "-"
+		}
+		updatedAt := site.UpdatedAt
+		if updatedAt == "" {
+			updatedAt = "-"
+		}
+		reason := site.PolicyReason
+		if reason == "" {
+			reason = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\n",
+			site.Site, site.CurrentVersion, site.VersionCount, site.FileCount, site.ByteCount,
+			publishedBy, status, updatedAt, reason,
+		)
+	}
+	_ = tw.Flush()
 }
 
 func runRevisions(args []string) (any, error) {
@@ -205,6 +267,7 @@ func runLogin(args []string, stdin io.Reader, stderr io.Writer) (any, error) {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  quack login")
+	fmt.Fprintln(os.Stderr, "  quack sites [username] [--all] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack deploy <directory> <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack revisions <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
@@ -214,6 +277,7 @@ func usage() {
 type commandValues struct {
 	token     string
 	serverURL string
+	all       bool
 }
 
 type configFile struct {
@@ -247,6 +311,11 @@ func parseCommandArgs(args []string) (commandValues, []string, error) {
 				value = args[i]
 			}
 			values.serverURL = value
+		case "--all":
+			if hasValue {
+				return values, nil, fmt.Errorf("--all does not take a value")
+			}
+			values.all = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return values, nil, fmt.Errorf("unknown flag: %s", arg)

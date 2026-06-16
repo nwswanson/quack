@@ -23,6 +23,7 @@ type Database interface {
 	CreateUser(ctx context.Context, username string, adminPriv string) (CreatedUser, error)
 	ListUserSites(ctx context.Context, userID int64) ([]PublishedSite, error)
 	ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]PublishedSite, error)
+	ListPublishedSitesByUsername(ctx context.Context, username string) ([]PublishedSite, error)
 	LinkUserSite(ctx context.Context, userID int64, siteSHA string) error
 	GetServerSettings(ctx context.Context) (ServerSettings, error)
 	SaveServerSettings(ctx context.Context, settings ServerSettings) error

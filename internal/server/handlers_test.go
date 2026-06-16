@@ -745,6 +745,52 @@ func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
 	}
 }
 
+func TestListSitesReturnsSiteSummaries(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		sites: []PublishedSite{{
+			Site: "foo", SiteSHA: "foo-sha", PublishedBy: "alice",
+			CurrentVersion: 2, VersionCount: 3, FileCount: 4, ByteCount: 512, UpdatedAt: "2026-06-16T12:00:00Z",
+		}},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"site":"foo"`, `"current_version":2`, `"runtime_status":"active"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %s, want %s", body, want)
+		}
+	}
+}
+
+func TestListSitesAllRequiresAdmin(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath+"?all=true", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
 func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
 		usersByToken: map[string]AdminUser{
@@ -936,6 +982,10 @@ func (db *fakeDatabase) ListPublishedSites(ctx context.Context, userID int64, in
 	if includeAll {
 		return db.sites, nil
 	}
+	return db.sites, nil
+}
+
+func (db *fakeDatabase) ListPublishedSitesByUsername(ctx context.Context, username string) ([]PublishedSite, error) {
 	return db.sites, nil
 }
 

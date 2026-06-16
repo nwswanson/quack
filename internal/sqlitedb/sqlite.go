@@ -310,6 +310,22 @@ func (d *Database) ListPublishedSites(ctx context.Context, userID int64, include
 	return d.listPublishedSites(ctx, userID, includeAll)
 }
 
+func (d *Database) ListPublishedSitesByUsername(ctx context.Context, username string) ([]server.PublishedSite, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, nil
+	}
+	var userID int64
+	err := d.readDB.QueryRowContext(ctx, `SELECT id FROM users WHERE username = ?`, username).Scan(&userID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find user for site list: %w", err)
+	}
+	return d.listPublishedSites(ctx, userID, false)
+}
+
 func (d *Database) listPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]server.PublishedSite, error) {
 	if !includeAll && userID <= 0 {
 		return nil, nil

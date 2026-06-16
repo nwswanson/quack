@@ -131,6 +131,35 @@ func TestDeleteSiteReportsServerError(t *testing.T) {
 	}
 }
 
+func TestListSitesSendsQuery(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", req.Method)
+		}
+		if req.URL.Path != protocol.SitesPath {
+			t.Fatalf("path = %s, want %s", req.URL.Path, protocol.SitesPath)
+		}
+		if got := req.URL.Query().Get("user"); got != "alice" {
+			t.Fatalf("user query = %q, want alice", got)
+		}
+		if got := req.URL.Query().Get("all"); got != "true" {
+			t.Fatalf("all query = %q, want true", got)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		return response(req, http.StatusOK, `{"ok":true,"sites":[{"site":"foo","current_version":2}]}`), nil
+	}))
+
+	resp, err := ListSites(context.Background(), "http://example.test", "token", "alice", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.OK || len(resp.Sites) != 1 || resp.Sites[0].Site != "foo" {
+		t.Fatalf("response = %#v, want foo site", resp)
+	}
+}
+
 func TestCheckLoginSendsLoginCheckRequest(t *testing.T) {
 	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodPost {

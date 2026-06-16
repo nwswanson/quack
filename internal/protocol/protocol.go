@@ -1,6 +1,7 @@
 package protocol
 
 const UploadArchivePath = "/v1/uploads/archive"
+const SitesPath = "/v1/sites"
 const DeleteSitePathPrefix = "/v1/sites/"
 const SiteRevisionPathSuffix = "/revisions"
 const SiteRollbackPathSuffix = "/rollback"
@@ -22,6 +23,25 @@ type DeleteSiteResponse struct {
 	Site    string `json:"site,omitempty"`
 	Deleted bool   `json:"deleted,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+type SiteSummary struct {
+	Site           string `json:"site"`
+	SiteSHA        string `json:"site_sha,omitempty"`
+	PublishedBy    string `json:"published_by,omitempty"`
+	CurrentVersion int64  `json:"current_version"`
+	VersionCount   int64  `json:"version_count"`
+	FileCount      int64  `json:"file_count"`
+	ByteCount      int64  `json:"byte_count"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+	RuntimeStatus  string `json:"runtime_status,omitempty"`
+	PolicyReason   string `json:"policy_reason,omitempty"`
+}
+
+type ListSitesResponse struct {
+	OK    bool          `json:"ok"`
+	Sites []SiteSummary `json:"sites,omitempty"`
+	Error string        `json:"error,omitempty"`
 }
 
 type SiteRevision struct {

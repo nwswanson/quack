@@ -174,6 +174,31 @@ func TestWriteRevisionsText(t *testing.T) {
 	}
 }
 
+func TestWriteSitesText(t *testing.T) {
+	var out strings.Builder
+	writeSitesText(&out, &protocol.ListSitesResponse{
+		OK: true,
+		Sites: []protocol.SiteSummary{{
+			Site: "foo", CurrentVersion: 2, VersionCount: 3, FileCount: 4, ByteCount: 512,
+			PublishedBy: "alice", RuntimeStatus: "active", UpdatedAt: "2026-06-16T12:00:00Z",
+		}},
+	})
+
+	got := out.String()
+	for _, want := range []string{
+		"SITE",
+		"CURRENT",
+		"foo",
+		"alice",
+		"active",
+		"2026-06-16T12:00:00Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output = %q, want substring %q", got, want)
+		}
+	}
+}
+
 type clientUploadErrorForTest struct{}
 
 func (clientUploadErrorForTest) Error() string {

@@ -111,6 +111,58 @@ func DeleteSite(ctx context.Context, serverURL, token, site string) (*protocol.D
 	return &out, nil
 }
 
+func ListSites(ctx context.Context, serverURL, token, username string, includeAll bool) (*protocol.ListSitesResponse, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+
+	target, err := url.Parse(strings.TrimRight(serverURL, "/") + protocol.SitesPath)
+	if err != nil {
+		return nil, fmt.Errorf("parse server URL: %w", err)
+	}
+	query := target.Query()
+	if includeAll {
+		query.Set("all", "true")
+	}
+	if strings.TrimSpace(username) != "" {
+		query.Set("user", strings.TrimSpace(username))
+	}
+	target.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create site list request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list sites: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := decodeListSitesResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.Error
+		if message == "" {
+			message = resp.Status
+		}
+		return &out, &UploadError{
+			Operation:  "list sites",
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
+		}
+	}
+	return &out, nil
+}
+
 func ListRevisions(ctx context.Context, serverURL, token, site string) (*protocol.ListRevisionsResponse, error) {
 	if serverURL == "" {
 		return nil, fmt.Errorf("serverURL is required")
@@ -285,6 +337,23 @@ func decodeDeleteSiteResponse(resp *http.Response) (protocol.DeleteSiteResponse,
 			return out, nil
 		}
 		return protocol.DeleteSiteResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+func decodeListSitesResponse(resp *http.Response) (protocol.ListSitesResponse, error) {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return protocol.ListSitesResponse{}, err
+	}
+
+	var out protocol.ListSitesResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Error = fallbackResponseMessage(resp, body)
+			return out, nil
+		}
+		return protocol.ListSitesResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 	return out, nil
 }
