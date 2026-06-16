@@ -61,6 +61,16 @@ go run ./cmd/quack deploy ./some-folder example \
 
 The uploader streams a tar archive directly into the HTTP request. It does not write a temporary archive to disk.
 
+If the directory is a simple folder name, Quack can infer the site name:
+
+```bash
+go run ./cmd/quack deploy my-site \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
+Path-like directories such as `.`, `./my-site`, or `../my-site` still require an explicit site name.
+
 List sites available to the authenticated user:
 
 ```bash

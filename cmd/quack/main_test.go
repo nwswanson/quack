@@ -147,6 +147,81 @@ func TestRunLoginDoesNotSaveInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestRunDeployInfersSiteNameFromSimpleDirectory(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "quack.json")
+	t.Setenv("QUACK_CONFIG", configPath)
+	if err := saveConfig(configPath, configFile{ServerURL: "http://example.test", Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotDirectory, gotSite string
+	withUploadDirectory(t, func(ctx context.Context, serverURL, token, site, directory string) (*protocol.UploadArchiveResponse, error) {
+		gotDirectory = directory
+		gotSite = site
+		if serverURL != "http://example.test" || token != "secret" {
+			t.Fatalf("auth = (%q, %q), want config values", serverURL, token)
+		}
+		return &protocol.UploadArchiveResponse{OK: true, Site: site}, nil
+	})
+
+	resp, err := runDeploy([]string{"my-site"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("response is nil")
+	}
+	if gotDirectory != "my-site" || gotSite != "my-site" {
+		t.Fatalf("upload = (directory %q, site %q), want inferred my-site", gotDirectory, gotSite)
+	}
+}
+
+func TestRunDeployRequiresSiteNameForPathLikeDirectory(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "quack.json")
+	t.Setenv("QUACK_CONFIG", configPath)
+	if err := saveConfig(configPath, configFile{ServerURL: "http://example.test", Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	withUploadDirectory(t, func(ctx context.Context, serverURL, token, site, directory string) (*protocol.UploadArchiveResponse, error) {
+		t.Fatalf("upload should not be called for %q", directory)
+		return nil, nil
+	})
+
+	for _, directory := range []string{".", "..", "./my-site", "../my-site", "../../folder", "nested/my-site", "/tmp/my-site"} {
+		t.Run(directory, func(t *testing.T) {
+			_, err := runDeploy([]string{directory})
+			if err == nil {
+				t.Fatal("expected usage error")
+			}
+			if !strings.Contains(err.Error(), "quack deploy <directory> <site name>") {
+				t.Fatalf("error = %q, want explicit site-name usage", err.Error())
+			}
+		})
+	}
+}
+
+func TestRunDeployUsesExplicitSiteForPathLikeDirectory(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "quack.json")
+	t.Setenv("QUACK_CONFIG", configPath)
+	if err := saveConfig(configPath, configFile{ServerURL: "http://example.test", Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotDirectory, gotSite string
+	withUploadDirectory(t, func(ctx context.Context, serverURL, token, site, directory string) (*protocol.UploadArchiveResponse, error) {
+		gotDirectory = directory
+		gotSite = site
+		return &protocol.UploadArchiveResponse{OK: true, Site: site}, nil
+	})
+
+	if _, err := runDeploy([]string{"./my-site", "my-site"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotDirectory != "./my-site" || gotSite != "my-site" {
+		t.Fatalf("upload = (directory %q, site %q), want explicit site", gotDirectory, gotSite)
+	}
+}
+
 func TestWriteRevisionsText(t *testing.T) {
 	var out strings.Builder
 	writeRevisionsText(&out, &protocol.ListRevisionsResponse{
@@ -211,5 +286,14 @@ func withCheckLogin(t *testing.T, fn func(context.Context, string, string) (*pro
 	checkLogin = fn
 	t.Cleanup(func() {
 		checkLogin = previous
+	})
+}
+
+func withUploadDirectory(t *testing.T, fn func(context.Context, string, string, string, string) (*protocol.UploadArchiveResponse, error)) {
+	t.Helper()
+	previous := uploadDirectory
+	uploadDirectory = fn
+	t.Cleanup(func() {
+		uploadDirectory = previous
 	})
 }

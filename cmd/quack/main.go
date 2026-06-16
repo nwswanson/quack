@@ -16,6 +16,7 @@ import (
 )
 
 var checkLogin = client.CheckLogin
+var uploadDirectory = client.UploadDirectory
 
 func main() {
 	if len(os.Args) < 2 {
@@ -73,15 +74,37 @@ func runDeploy(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(positionals) != 2 {
-		return nil, fmt.Errorf("usage: quack deploy <directory> <site name> [--token <token>] [--serverURL <url>]")
+	if len(positionals) < 1 || len(positionals) > 2 {
+		return nil, fmt.Errorf("usage: quack deploy <directory> [site name] [--token <token>] [--serverURL <url>]")
+	}
+	directory := positionals[0]
+	site := ""
+	switch len(positionals) {
+	case 1:
+		if !canInferSiteNameFromDirectory(directory) {
+			return nil, fmt.Errorf("usage: quack deploy <directory> <site name> [--token <token>] [--serverURL <url>]")
+		}
+		site = directory
+	case 2:
+		site = positionals[1]
 	}
 	resolved, err := resolveCommandValues(values)
 	if err != nil {
 		return nil, err
 	}
 
-	return client.UploadDirectory(context.Background(), resolved.serverURL, resolved.token, positionals[1], positionals[0])
+	return uploadDirectory(context.Background(), resolved.serverURL, resolved.token, site, directory)
+}
+
+func canInferSiteNameFromDirectory(directory string) bool {
+	directory = strings.TrimSpace(directory)
+	if directory == "" || directory == "." || directory == ".." {
+		return false
+	}
+	if filepath.IsAbs(directory) {
+		return false
+	}
+	return !strings.ContainsAny(directory, `/\`)
 }
 
 func runDelete(args []string) (any, error) {
@@ -330,7 +353,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  quack login")
 	fmt.Fprintln(os.Stderr, "  quack sites [username] [--all] [--token <token>] [--serverURL <url>]")
-	fmt.Fprintln(os.Stderr, "  quack deploy <directory> <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack deploy <directory> [site name] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack revisions <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack unpublish <site name> [--token <token>] [--serverURL <url>]")
