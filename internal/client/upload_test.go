@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -174,6 +175,36 @@ func TestPublishSiteSendsRequest(t *testing.T) {
 	}
 	if resp == nil || !resp.OK || !resp.Published || resp.LiveState != "live" {
 		t.Fatalf("response = %#v, want published foo", resp)
+	}
+}
+
+func TestSetDefaultSiteSendsRequest(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", req.Method)
+		}
+		if req.URL.Path != protocol.SettingsDefaultSitePath {
+			t.Fatalf("path = %s, want %s", req.URL.Path, protocol.SettingsDefaultSitePath)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["default_site"] != "home" {
+			t.Fatalf("body = %#v, want home default site", body)
+		}
+		return response(req, http.StatusOK, `{"ok":true,"default_site":"home"}`), nil
+	}))
+
+	resp, err := SetDefaultSite(context.Background(), "http://example.test", "token", "home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.OK || resp.DefaultSite != "home" {
+		t.Fatalf("response = %#v, want home default site", resp)
 	}
 }
 

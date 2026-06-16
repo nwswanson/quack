@@ -45,6 +45,8 @@ func main() {
 		resp, err = runUnpublish(os.Args[2:])
 	case "publish":
 		resp, err = runPublish(os.Args[2:])
+	case "default-site":
+		resp, err = runDefaultSite(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -126,6 +128,28 @@ func runPublish(args []string) (any, error) {
 		return nil, err
 	}
 	return client.PublishSite(context.Background(), resolved.serverURL, resolved.token, positionals[0])
+}
+
+func runDefaultSite(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if values.clear && len(positionals) > 0 {
+		return nil, fmt.Errorf("usage: quack default-site <site name> [--clear] [--token <token>] [--serverURL <url>]")
+	}
+	if !values.clear && len(positionals) != 1 {
+		return nil, fmt.Errorf("usage: quack default-site <site name> [--clear] [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	site := ""
+	if !values.clear {
+		site = positionals[0]
+	}
+	return client.SetDefaultSite(context.Background(), resolved.serverURL, resolved.token, site)
 }
 
 func runSites(args []string) (any, error) {
@@ -311,6 +335,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack unpublish <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack publish <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack default-site <site name> [--clear] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack delete <site name> [--token <token>] [--serverURL <url>]")
 }
 
@@ -318,6 +343,7 @@ type commandValues struct {
 	token     string
 	serverURL string
 	all       bool
+	clear     bool
 }
 
 type configFile struct {
@@ -356,6 +382,11 @@ func parseCommandArgs(args []string) (commandValues, []string, error) {
 				return values, nil, fmt.Errorf("--all does not take a value")
 			}
 			values.all = true
+		case "--clear":
+			if hasValue {
+				return values, nil, fmt.Errorf("--clear does not take a value")
+			}
+			values.clear = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return values, nil, fmt.Errorf("unknown flag: %s", arg)

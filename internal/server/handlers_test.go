@@ -178,6 +178,62 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	}
 }
 
+func TestDefaultSiteFallbackForUnknownSite(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "default-index", "default index")
+	db := &fakeDatabase{
+		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
+		files: map[string]UploadFileRecord{
+			fileKey("home", "index.html"): {
+				RelativePath: "index.html",
+				BlobPath:     "default-index",
+			},
+		},
+	}
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "missing.example.com"
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "default index" {
+		t.Fatalf("body = %q, want default index", rec.Body.String())
+	}
+}
+
+func TestDefaultSiteDoesNotHandleMissingPathForExistingSite(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "default-file", "default file")
+	writeTestBlob(t, root, "foo-index", "foo index")
+	db := &fakeDatabase{
+		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
+		files: map[string]UploadFileRecord{
+			fileKey("home", "missing.html"): {
+				RelativePath: "missing.html",
+				BlobPath:     "default-file",
+			},
+			fileKey("foo", "index.html"): {
+				RelativePath: "index.html",
+				BlobPath:     "foo-index",
+			},
+		},
+	}
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, "/missing.html", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
 func TestExplicitServePathIsDisabled(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "blog-index", "blog index")
@@ -835,6 +891,36 @@ func TestListSitesAllRequiresAdmin(t *testing.T) {
 	}
 }
 
+func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"admin-token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
+			"user-token":  {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	userReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
+	userReq.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, userReq)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("user status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+
+	adminReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
+	adminReq.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, adminReq)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if db.settings.DefaultSite != "home" {
+		t.Fatalf("default site = %q, want home", db.settings.DefaultSite)
+	}
+}
+
 func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
 		usersByToken: map[string]AdminUser{
@@ -959,8 +1045,21 @@ func (fakeDatabase) FailUpload(ctx context.Context, upload UploadRecord, reason 
 }
 
 func (db fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error) {
+	file, fileOK, _, err := db.FindCurrentSiteFile(ctx, site, relativePath)
+	return file, fileOK, err
+}
+
+func (db fakeDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
 	file, ok := db.files[fileKey(site, relativePath)]
-	return file, ok, nil
+	if ok {
+		return file, true, true, nil
+	}
+	for key := range db.files {
+		if strings.HasPrefix(key, site+"\x00") {
+			return UploadFileRecord{}, false, true, nil
+		}
+	}
+	return UploadFileRecord{}, false, false, nil
 }
 
 func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error) {

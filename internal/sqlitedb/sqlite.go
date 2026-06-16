@@ -416,6 +416,7 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 		MaxUploadBytes:      server.DefaultMaxUploadBytes,
 		MaxUploadFiles:      server.DefaultMaxUploadFiles,
 		MaxRetainedVersions: 0,
+		DefaultSite:         "",
 		LogLevel:            "warn",
 		Locked:              map[string]bool{},
 	}
@@ -456,6 +457,8 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxRetainedVersions = n
+		case "default_site":
+			settings.DefaultSite = value
 		case "log_level":
 			settings.LogLevel = strings.ToLower(strings.TrimSpace(value))
 		}
@@ -496,6 +499,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 		"max_upload_bytes":      strconv.FormatInt(settings.MaxUploadBytes, 10),
 		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"default_site":          strings.TrimSpace(settings.DefaultSite),
 		"log_level":             settings.LogLevel,
 	}
 	for key, value := range values {
@@ -547,6 +551,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 		"max_upload_bytes":      strconv.FormatInt(settings.MaxUploadBytes, 10),
 		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"default_site":          strings.TrimSpace(settings.DefaultSite),
 		"log_level":             settings.LogLevel,
 	} {
 		if err := server.ValidateSettingValue(key, value); err != nil {
@@ -1134,27 +1139,41 @@ func (d *Database) FailUpload(ctx context.Context, upload server.UploadRecord, r
 }
 
 func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePath string) (server.UploadFileRecord, bool, error) {
-	var file server.UploadFileRecord
+	file, fileOK, _, err := d.FindCurrentSiteFile(ctx, site, relativePath)
+	return file, fileOK, err
+}
+
+func (d *Database) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (server.UploadFileRecord, bool, bool, error) {
+	var currentVersion int64
 	err := d.readDB.QueryRowContext(ctx, `
+		SELECT current_version
+		FROM sites
+		WHERE site = ? AND live_state = 'live' AND current_version > 0
+	`, site).Scan(&currentVersion)
+	if err == sql.ErrNoRows {
+		return server.UploadFileRecord{}, false, false, nil
+	}
+	if err != nil {
+		return server.UploadFileRecord{}, false, false, fmt.Errorf("find current site: %w", err)
+	}
+
+	var file server.UploadFileRecord
+	err = d.readDB.QueryRowContext(ctx, `
 		SELECT uf.relative_path, uf.blob_path, uf.file_sha, uf.bytes
-		FROM sites s
-		JOIN uploads u
-			ON u.site_sha = s.site_sha
-			AND u.version = s.current_version
+		FROM uploads u
+		JOIN upload_files uf ON uf.upload_id = u.id
+		WHERE u.site = ?
+			AND u.version = ?
 			AND u.state = ?
-		JOIN upload_files uf
-			ON uf.upload_id = u.id
-		WHERE s.site = ?
-			AND s.live_state = 'live'
 			AND uf.relative_path = ?
-	`, string(server.UploadStateFinished), site, relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
+	`, site, currentVersion, string(server.UploadStateFinished), relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
 	if err == nil {
-		return file, true, nil
+		return file, true, true, nil
 	}
 	if err == sql.ErrNoRows {
-		return server.UploadFileRecord{}, false, nil
+		return server.UploadFileRecord{}, false, true, nil
 	}
-	return server.UploadFileRecord{}, false, fmt.Errorf("find current file: %w", err)
+	return server.UploadFileRecord{}, false, true, fmt.Errorf("find current file: %w", err)
 }
 
 func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser, site string, siteSHA string) ([]server.RevisionRecord, error) {

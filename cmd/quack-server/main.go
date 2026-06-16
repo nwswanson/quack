@@ -49,6 +49,7 @@ func main() {
 		MaxUploadBytes:      server.DefaultMaxUploadBytes,
 		MaxUploadFiles:      server.DefaultMaxUploadFiles,
 		MaxRetainedVersions: 0,
+		DefaultSite:         "",
 		LogLevel:            "warn",
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "initialize server settings failed: %v\n", err)
@@ -91,6 +92,7 @@ func main() {
 		"max_upload_bytes", settings.MaxUploadBytes,
 		"max_upload_files", settings.MaxUploadFiles,
 		"max_retained_versions", settings.MaxRetainedVersions,
+		"default_site", settings.DefaultSite,
 		"log_level", settings.LogLevel,
 		"admin_host", *adminHost,
 		"legacy_upload_token_enabled", uploadToken != "",

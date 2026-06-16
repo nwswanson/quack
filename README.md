@@ -111,6 +111,16 @@ go run ./cmd/quack publish example \
   --serverURL http://localhost:8080
 ```
 
+Set the default site used when a requested site name does not exist:
+
+```bash
+go run ./cmd/quack default-site home \
+  --token dev-token \
+  --serverURL http://localhost:8080
+```
+
+Clear it with `quack default-site --clear`.
+
 ## Serve Uploaded Files
 
 Quack serves the current version of uploaded files from `/` based on the request host's left-most label.

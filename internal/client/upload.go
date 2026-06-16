@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -189,6 +190,51 @@ func PublishSite(ctx context.Context, serverURL, token, site string) (*protocol.
 		}
 		return &out, &UploadError{
 			Operation:  "publish",
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
+		}
+	}
+	return &out, nil
+}
+
+func SetDefaultSite(ctx context.Context, serverURL, token, site string) (*protocol.SetDefaultSiteResponse, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL is required")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	body, err := json.Marshal(map[string]string{"default_site": site})
+	if err != nil {
+		return nil, fmt.Errorf("encode default site request: %w", err)
+	}
+
+	target := strings.TrimRight(serverURL, "/") + protocol.SettingsDefaultSitePath
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create default site request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("set default site: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := decodeSetDefaultSiteResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.Error
+		if message == "" {
+			message = resp.Status
+		}
+		return &out, &UploadError{
+			Operation:  "set default site",
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Message:    message,
@@ -457,6 +503,23 @@ func decodePublishSiteResponse(resp *http.Response) (protocol.PublishSiteRespons
 			return out, nil
 		}
 		return protocol.PublishSiteResponse{}, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+func decodeSetDefaultSiteResponse(resp *http.Response) (protocol.SetDefaultSiteResponse, error) {
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return protocol.SetDefaultSiteResponse{}, err
+	}
+
+	var out protocol.SetDefaultSiteResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			out.Error = fallbackResponseMessage(resp, body)
+			return out, nil
+		}
+		return protocol.SetDefaultSiteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 	return out, nil
 }

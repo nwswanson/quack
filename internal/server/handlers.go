@@ -45,6 +45,7 @@ func (h *handler) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.SitesPath, h.handleListSites)
+	mux.HandleFunc(protocol.SettingsDefaultSitePath, h.handleSetDefaultSite)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
 }
 
@@ -489,6 +490,50 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (h *handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok, err := h.authorizedAPIUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "default site authorization lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !Can(user, "server.settings.edit") {
+		writeError(w, http.StatusForbidden, "not allowed to edit server settings")
+		return
+	}
+
+	var req struct {
+		DefaultSite string `json:"default_site"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	settings, err := h.db.GetServerSettings(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load server settings failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	settings.DefaultSite = strings.TrimSpace(req.DefaultSite)
+	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
+		slog.ErrorContext(r.Context(), "save default site failed", "username", user.Username, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, protocol.SetDefaultSiteResponse{
+		OK: true, DefaultSite: settings.DefaultSite,
+	})
+}
+
 func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(r.URL.Path, protocol.SiteRevisionPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SiteRollbackPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SiteUnpublishPathSuffix) || strings.HasSuffix(r.URL.Path, protocol.SitePublishPathSuffix) {
 		h.handleSiteRevisionRoutes(w, r)
@@ -730,6 +775,16 @@ func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
+	settings, err := h.db.GetServerSettings(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load server settings failed", "site", site, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	h.serveSiteFileWithFallback(w, r, site, urlPath, redirectPrefix, strings.TrimSpace(settings.DefaultSite), false)
+}
+
+func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string, defaultSite string, usingDefault bool) {
 	decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site, "error", err)
@@ -742,7 +797,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	}
 
 	relativePath, wantsIndex := requestedRelativePath(urlPath)
-	file, ok, err := h.db.FindCurrentFile(r.Context(), site, relativePath)
+	file, ok, siteExists, err := h.db.FindCurrentSiteFile(r.Context(), site, relativePath)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup file failed", "site", site, "path", relativePath, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -752,10 +807,14 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 		h.serveBlob(w, r, site, relativePath, file)
 		return
 	}
+	if !siteExists && !usingDefault && defaultSite != "" && defaultSite != site {
+		h.serveSiteFileWithFallback(w, r, defaultSite, urlPath, redirectPrefix, defaultSite, true)
+		return
+	}
 
 	if shouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
 		indexPath := path.Join(relativePath, "index.html")
-		_, ok, err := h.db.FindCurrentFile(r.Context(), site, indexPath)
+		_, ok, _, err := h.db.FindCurrentSiteFile(r.Context(), site, indexPath)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "lookup directory index failed", "site", site, "path", indexPath, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal server error")
@@ -900,6 +959,7 @@ func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {
 		MaxUploadBytes:      maxUploadBytes,
 		MaxUploadFiles:      maxUploadFiles,
 		MaxRetainedVersions: maxRetainedVersions,
+		DefaultSite:         strings.TrimSpace(r.Form.Get("default_site")),
 		LogLevel:            logLevel,
 	}, nil
 }

@@ -47,6 +47,7 @@ const (
 	SettingMaxUploadBytes          = "max_upload_bytes"
 	SettingMaxUploadFiles          = "max_upload_files"
 	SettingMaxRetainedVersions     = "max_retained_versions"
+	SettingDefaultSite             = "default_site"
 	SettingLogLevel                = "log_level"
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
@@ -64,6 +65,10 @@ var settingRegistry = map[string]SettingDefinition{
 	SettingMaxRetainedVersions: {
 		Key: SettingMaxRetainedVersions, Type: SettingTypeInt64, DefaultValue: "0",
 		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingDefaultSite: {
+		Key: SettingDefaultSite, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true,
 	},
 	SettingLogLevel: {
 		Key: SettingLogLevel, Type: SettingTypeEnum, DefaultValue: "warn",

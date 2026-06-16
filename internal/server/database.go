@@ -12,6 +12,7 @@ type Database interface {
 	FinishUpload(ctx context.Context, upload UploadRecord) error
 	FailUpload(ctx context.Context, upload UploadRecord, reason string) error
 	FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error)
+	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
 	ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error)
 	RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error)
 	UnpublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (UnpublishRecord, error)
@@ -75,6 +76,7 @@ type ServerSettings struct {
 	MaxUploadBytes      int64
 	MaxUploadFiles      int64
 	MaxRetainedVersions int64
+	DefaultSite         string
 	LogLevel            string
 	Locked              map[string]bool
 }

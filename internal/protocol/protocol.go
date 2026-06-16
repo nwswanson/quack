@@ -2,6 +2,7 @@ package protocol
 
 const UploadArchivePath = "/v1/uploads/archive"
 const SitesPath = "/v1/sites"
+const SettingsDefaultSitePath = "/v1/settings/default-site"
 const DeleteSitePathPrefix = "/v1/sites/"
 const SiteRevisionPathSuffix = "/revisions"
 const SiteRollbackPathSuffix = "/rollback"
@@ -61,6 +62,12 @@ type ListSitesResponse struct {
 	OK    bool          `json:"ok"`
 	Sites []SiteSummary `json:"sites,omitempty"`
 	Error string        `json:"error,omitempty"`
+}
+
+type SetDefaultSiteResponse struct {
+	OK          bool   `json:"ok"`
+	DefaultSite string `json:"default_site"`
+	Error       string `json:"error,omitempty"`
 }
 
 type SiteRevision struct {
