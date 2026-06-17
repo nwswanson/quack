@@ -57,7 +57,7 @@ func (h *handler) siteRoutes(mux *http.ServeMux) {
 
 func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if r.URL.Path != "/" {
@@ -68,7 +68,7 @@ func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 	user, loggedIn, err := h.currentAdminUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	data := adminPageData{User: user}
@@ -76,7 +76,7 @@ func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 		data, err = h.adminPageData(r, user)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 	}
@@ -87,7 +87,7 @@ func (h *handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !h.requireAdminSameOrigin(w, r) {
@@ -103,7 +103,7 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	user, ok, err := h.db.AuthenticateAdmin(r.Context(), username, password)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "admin login failed", "username", username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok {
@@ -115,7 +115,7 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	token, err := h.db.CreateAdminSession(r.Context(), user.ID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "create admin session failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	http.SetCookie(w, adminSessionCookie(r, token, 86400))
@@ -125,7 +125,7 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !h.requireAdminSameOrigin(w, r) {
@@ -135,7 +135,7 @@ func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	if err == nil && cookie.Value != "" {
 		if err := h.db.DeleteAdminSession(r.Context(), cookie.Value); err != nil {
 			slog.ErrorContext(r.Context(), "delete admin session failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 	}
@@ -145,7 +145,7 @@ func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !h.requireAdminSameOrigin(w, r) {
@@ -154,7 +154,7 @@ func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 	user, ok, err := h.currentAdminUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok || !Can(user, "users.create") {
@@ -175,7 +175,7 @@ func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 	data, err := h.adminPageData(r, user)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	data.CreatedUser = created
@@ -185,7 +185,7 @@ func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 
 func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !h.requireAdminSameOrigin(w, r) {
@@ -194,7 +194,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	user, ok, err := h.currentAdminUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok || !Can(user, "server.settings.edit") {
@@ -212,12 +212,12 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
 		slog.ErrorContext(r.Context(), "save server settings failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if err := SetLogLevel(settings.LogLevel); err != nil {
 		slog.ErrorContext(r.Context(), "apply log level failed", "username", user.Username, "log_level", settings.LogLevel, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "max_retained_versions", settings.MaxRetainedVersions, "log_level", settings.LogLevel)
@@ -226,7 +226,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !h.requireAdminSameOrigin(w, r) {
@@ -235,7 +235,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 	user, ok, err := h.currentAdminUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok || !Can(user, "policy.edit") {
@@ -258,12 +258,12 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if err := h.resolver.ReconcilePolicyViolations(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "reconcile policy violations failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	redirectAdminMessage(w, r, "message", "Policy saved.")
@@ -334,7 +334,7 @@ func (h *handler) renderAdminPageWithMessage(w http.ResponseWriter, r *http.Requ
 	data, err := h.adminPageData(r, user)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	data.Error = errorMessage
@@ -374,7 +374,7 @@ func (h *handler) requireAdminSameOrigin(w http.ResponseWriter, r *http.Request)
 		"referer", r.Header.Get("Referer"),
 		"path", r.URL.Path,
 	)
-	writeError(w, http.StatusForbidden, "invalid origin")
+	protocol.WriteError(w, http.StatusForbidden, "invalid origin")
 	return false
 }
 
@@ -407,36 +407,36 @@ func adminSessionCookie(r *http.Request, value string, maxAge int) *http.Cookie 
 
 func (h *handler) handleLoginCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeLoginCheckError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteLoginCheckError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	ok, err := h.authorizedAPI(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "login check authorization lookup failed", "error", err)
-		writeLoginCheckError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteLoginCheckError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok {
-		writeLoginCheckError(w, http.StatusUnauthorized, "unauthorized")
+		protocol.WriteLoginCheckError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, protocol.LoginCheckResponse{OK: true})
+	protocol.WriteJSON(w, http.StatusOK, protocol.LoginCheckResponse{OK: true})
 }
 
 func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	user, ok, err := h.authorizedAPIUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "site list authorization lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -448,13 +448,13 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case includeAll:
 		if !Can(user, "sites.view_all") {
-			writeError(w, http.StatusForbidden, "not allowed to list all sites")
+			protocol.WriteError(w, http.StatusForbidden, "not allowed to list all sites")
 			return
 		}
 		sites, err = h.db.ListPublishedSites(r.Context(), user.ID, true)
 	case username != "":
 		if !Can(user, "sites.view_all") {
-			writeError(w, http.StatusForbidden, "not allowed to list another user's sites")
+			protocol.WriteError(w, http.StatusForbidden, "not allowed to list another user's sites")
 			return
 		}
 		sites, err = h.db.ListPublishedSitesByUsername(r.Context(), username)
@@ -463,7 +463,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.ErrorContext(r.Context(), "list sites failed", "username", user.Username, "target_username", username, "all", includeAll, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -472,7 +472,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 		decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site.Site)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site.Site, "error", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		status := decision.Status
@@ -487,26 +487,26 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 			RuntimeStatus: string(status), PolicyReason: decision.Reason,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	protocol.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	user, ok, err := h.authorizedAPIUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "default site authorization lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if !Can(user, "server.settings.edit") {
-		writeError(w, http.StatusForbidden, "not allowed to edit server settings")
+		protocol.WriteError(w, http.StatusForbidden, "not allowed to edit server settings")
 		return
 	}
 
@@ -514,22 +514,22 @@ func (h *handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {
 		DefaultSite string `json:"default_site"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		protocol.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	settings, err := h.db.GetServerSettings(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load server settings failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	settings.DefaultSite = strings.TrimSpace(req.DefaultSite)
 	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
 		slog.ErrorContext(r.Context(), "save default site failed", "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	writeJSON(w, http.StatusOK, protocol.SetDefaultSiteResponse{
+	protocol.WriteJSON(w, http.StatusOK, protocol.SetDefaultSiteResponse{
 		OK: true, DefaultSite: settings.DefaultSite,
 	})
 }
@@ -540,42 +540,42 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	ok, err := h.authorizedAPI(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "delete authorization lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	site, ok := siteFromDeletePath(r.URL.Path)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "site is invalid")
+		protocol.WriteError(w, http.StatusBadRequest, "site is invalid")
 		return
 	}
 	siteSHA := sha256Hex(site)
 	deleted, err := h.db.DeleteSite(r.Context(), site, siteSHA)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if deleted {
 		if err := h.store.DeleteSite(r.Context(), siteSHA); err != nil {
 			slog.ErrorContext(r.Context(), "delete site blobs failed", "site", site, "site_sha", siteSHA, "error", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 	}
 
 	slog.WarnContext(r.Context(), "site delete completed", "site", site, "deleted", deleted)
-	writeJSON(w, http.StatusOK, protocol.DeleteSiteResponse{
+	protocol.WriteJSON(w, http.StatusOK, protocol.DeleteSiteResponse{
 		OK:      true,
 		Site:    site,
 		Deleted: deleted,
@@ -586,56 +586,56 @@ func (h *handler) handleSiteRevisionRoutes(w http.ResponseWriter, r *http.Reques
 	user, ok, err := h.authorizedAPIUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "revision authorization lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	switch {
 	case strings.HasSuffix(r.URL.Path, protocol.SiteRevisionPathSuffix):
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SiteRevisionPathSuffix)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "site is invalid")
+			protocol.WriteError(w, http.StatusBadRequest, "site is invalid")
 			return
 		}
 		h.handleListRevisions(w, r, user, site)
 	case strings.HasSuffix(r.URL.Path, protocol.SiteRollbackPathSuffix):
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SiteRollbackPathSuffix)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "site is invalid")
+			protocol.WriteError(w, http.StatusBadRequest, "site is invalid")
 			return
 		}
 		h.handleRollbackSite(w, r, user, site)
 	case strings.HasSuffix(r.URL.Path, protocol.SiteUnpublishPathSuffix):
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SiteUnpublishPathSuffix)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "site is invalid")
+			protocol.WriteError(w, http.StatusBadRequest, "site is invalid")
 			return
 		}
 		h.handleUnpublishSite(w, r, user, site)
 	case strings.HasSuffix(r.URL.Path, protocol.SitePublishPathSuffix):
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		site, ok := siteFromSuffixedSitePath(r.URL.Path, protocol.SitePublishPathSuffix)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "site is invalid")
+			protocol.WriteError(w, http.StatusBadRequest, "site is invalid")
 			return
 		}
 		h.handlePublishSite(w, r, user, site)
@@ -648,11 +648,11 @@ func (h *handler) handleListRevisions(w http.ResponseWriter, r *http.Request, us
 	revisions, err := h.db.ListSiteRevisions(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
-			writeError(w, http.StatusForbidden, "site is owned by another user")
+			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
 			return
 		}
 		slog.ErrorContext(r.Context(), "list revisions failed", "site", site, "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	resp := protocol.ListRevisionsResponse{OK: true, Site: site}
@@ -676,18 +676,18 @@ func (h *handler) handleListRevisions(w http.ResponseWriter, r *http.Request, us
 	if older == 0 {
 		resp.Warning = "no older revisions available"
 	}
-	writeJSON(w, http.StatusOK, resp)
+	protocol.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
 	rollback, err := h.db.RollbackSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
-			writeError(w, http.StatusForbidden, "site is owned by another user")
+			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
 			return
 		}
 		slog.ErrorContext(r.Context(), "rollback site failed", "site", site, "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if rollback.Warning == "" && !rollback.RolledBack {
@@ -696,7 +696,7 @@ func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, use
 	if rollback.RolledBack {
 		slog.WarnContext(r.Context(), "site rolled back", "site", site, "username", user.Username, "previous_version", rollback.PreviousVersion, "current_version", rollback.CurrentVersion)
 	}
-	writeJSON(w, http.StatusOK, protocol.RollbackSiteResponse{
+	protocol.WriteJSON(w, http.StatusOK, protocol.RollbackSiteResponse{
 		OK: true, Site: site, RolledBack: rollback.RolledBack,
 		PreviousVersion: rollback.PreviousVersion, CurrentVersion: rollback.CurrentVersion, Warning: rollback.Warning,
 	})
@@ -706,17 +706,17 @@ func (h *handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, us
 	out, err := h.db.UnpublishSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
-			writeError(w, http.StatusForbidden, "site is owned by another user")
+			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
 			return
 		}
 		slog.ErrorContext(r.Context(), "unpublish site failed", "site", site, "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if out.Unpublished {
 		slog.WarnContext(r.Context(), "site unpublished", "site", site, "username", user.Username)
 	}
-	writeJSON(w, http.StatusOK, protocol.UnpublishSiteResponse{
+	protocol.WriteJSON(w, http.StatusOK, protocol.UnpublishSiteResponse{
 		OK: true, Site: site, Unpublished: out.Unpublished, LiveState: out.LiveState,
 	})
 }
@@ -725,24 +725,24 @@ func (h *handler) handlePublishSite(w http.ResponseWriter, r *http.Request, user
 	out, err := h.db.PublishSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
-			writeError(w, http.StatusForbidden, "site is owned by another user")
+			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
 			return
 		}
 		slog.ErrorContext(r.Context(), "publish site failed", "site", site, "username", user.Username, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if out.Published {
 		slog.WarnContext(r.Context(), "site published", "site", site, "username", user.Username)
 	}
-	writeJSON(w, http.StatusOK, protocol.PublishSiteResponse{
+	protocol.WriteJSON(w, http.StatusOK, protocol.PublishSiteResponse{
 		OK: true, Site: site, Published: out.Published, LiveState: out.LiveState,
 	})
 }
 
 func (h *handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -757,7 +757,7 @@ func (h *handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleServeExplicitSite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -778,7 +778,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	settings, err := h.db.GetServerSettings(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load server settings failed", "site", site, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	h.serveSiteFileWithFallback(w, r, site, urlPath, redirectPrefix, strings.TrimSpace(settings.DefaultSite), false)
@@ -788,11 +788,11 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 	decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if decision.Status == SiteRuntimeSuspendedByPolicy {
-		writeError(w, http.StatusForbidden, "site suspended by administrator policy")
+		protocol.WriteError(w, http.StatusForbidden, "site suspended by administrator policy")
 		return
 	}
 
@@ -800,7 +800,7 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 	file, ok, siteExists, err := h.db.FindCurrentSiteFile(r.Context(), site, relativePath)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup file failed", "site", site, "path", relativePath, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if ok {
@@ -817,7 +817,7 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 		_, ok, _, err := h.db.FindCurrentSiteFile(r.Context(), site, indexPath)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "lookup directory index failed", "site", site, "path", indexPath, "error", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		if ok {
@@ -843,7 +843,7 @@ func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string,
 			return
 		}
 		slog.ErrorContext(r.Context(), "open blob failed", "site", site, "path", relativePath, "blob_path", file.BlobPath, "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	defer blob.Close()
@@ -863,7 +863,7 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	protocol.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, AdminUser, UploadPolicy, bool) {
@@ -871,7 +871,7 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 	var policy UploadPolicy
 	switch {
 	case r.Method != http.MethodPost:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return "", user, policy, false
 	}
 	var ok bool
@@ -879,26 +879,26 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 	user, ok, err = h.authorizedUploadUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "upload authorization lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return "", user, policy, false
 	}
 	switch {
 	case !ok:
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
 	case r.Header.Get("Content-Type") != protocol.ContentTypeTar:
-		writeError(w, http.StatusBadRequest, "content type must be application/x-tar")
+		protocol.WriteError(w, http.StatusBadRequest, "content type must be application/x-tar")
 	case strings.TrimSpace(r.Header.Get(protocol.HeaderSite)) == "":
-		writeError(w, http.StatusBadRequest, "site is required")
+		protocol.WriteError(w, http.StatusBadRequest, "site is required")
 	default:
 		site, err := canonicalSiteName(r.Header.Get(protocol.HeaderSite))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			protocol.WriteError(w, http.StatusBadRequest, err.Error())
 			return "", user, policy, false
 		}
 		policy, err = h.resolver.ResolveUploadPolicy(r.Context(), user, site)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "resolve upload policy failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "internal server error")
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return "", user, policy, false
 		}
 		if policy.MaxUploadBytes.Value > 0 {
@@ -917,17 +917,17 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 
 	switch {
 	case errors.As(err, &maxBytesErr):
-		writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds maximum size")
+		protocol.WriteError(w, http.StatusRequestEntityTooLarge, "upload exceeds maximum size")
 	case errors.As(err, &limitErr):
-		writeError(w, http.StatusRequestEntityTooLarge, limitErr.Error())
+		protocol.WriteError(w, http.StatusRequestEntityTooLarge, limitErr.Error())
 	case errors.As(err, &badRequest):
-		writeError(w, http.StatusBadRequest, badRequest.Error())
+		protocol.WriteError(w, http.StatusBadRequest, badRequest.Error())
 	case errors.As(err, &forbidden):
-		writeError(w, http.StatusForbidden, forbidden.Error())
+		protocol.WriteError(w, http.StatusForbidden, forbidden.Error())
 	case errors.Is(err, ErrSiteOwnership):
-		writeError(w, http.StatusForbidden, "site is owned by another user")
+		protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
 	default:
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 	}
 }
 
@@ -1060,7 +1060,7 @@ func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, policy Up
 	ctx := r.Context()
 	tr := tar.NewReader(r.Body)
 
-	manifest := DefaultSiteManifest()
+	manifest := protocol.DefaultSiteManifest()
 	var files, bytes int64
 	for {
 		header, err := tr.Next()
@@ -1071,10 +1071,10 @@ func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, policy Up
 			return 0, 0, manifest, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
 		}
 
-		if path.Clean(header.Name) == "site.yaml" && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA) {
-			parsed, err := ParseSiteManifest(tr, header.Size)
+		if protocol.IsSiteManifestArchiveEntry(header) {
+			parsed, err := protocol.ParseSiteManifest(tr, header.Size)
 			if err != nil {
-				return 0, 0, manifest, err
+				return 0, 0, manifest, badArchiveError{err: err}
 			}
 			manifest = parsed
 			continue
@@ -1102,8 +1102,8 @@ func (h *handler) acceptArchiveEntry(
 	version, files int64,
 	policy UploadPolicy,
 ) (*UploadFileRecord, int64, error) {
-	if err := validateArchivePath(header.Name); err != nil {
-		return nil, 0, err
+	if err := protocol.ValidateArchivePath(header.Name); err != nil {
+		return nil, 0, badArchiveError{err: err}
 	}
 
 	switch header.Typeflag {
@@ -1147,24 +1147,6 @@ func (h *handler) acceptRegularFile(
 		FileSHA:      result.FileSHA,
 		Bytes:        result.Bytes,
 	}, result.Bytes, nil
-}
-
-func validateArchivePath(name string) error {
-	if name == "" {
-		return badArchiveError{err: errors.New("archive path is empty")}
-	}
-	if strings.HasPrefix(name, "/") {
-		return badArchiveError{err: fmt.Errorf("archive path must be relative: %s", name)}
-	}
-	for _, part := range strings.Split(name, "/") {
-		if part == ".." {
-			return badArchiveError{err: fmt.Errorf("archive path cannot contain ..: %s", name)}
-		}
-	}
-	if clean := path.Clean(name); clean == "." {
-		return badArchiveError{err: fmt.Errorf("archive path cannot contain ..: %s", name)}
-	}
-	return nil
 }
 
 func siteFromHost(host string) string {
@@ -1327,40 +1309,11 @@ func sha256Hex(value string) string {
 }
 
 func sanitizeServingPath(name string) (string, error) {
-	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
-	if err := validateArchivePath(clean); err != nil {
-		return "", err
+	out, err := protocol.SanitizeServingPath(name)
+	if err != nil {
+		return "", badArchiveError{err: err}
 	}
-
-	parts := strings.Split(clean, "/")
-	for i, part := range parts {
-		parts[i] = sanitizePathPart(part)
-	}
-	return strings.Join(parts, "/"), nil
-}
-
-func sanitizePathPart(part string) string {
-	var b strings.Builder
-	for _, r := range part {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-
-	out := strings.Trim(b.String(), ".")
-	if out == "" {
-		return "_"
-	}
-	return out
+	return out, nil
 }
 
 type badArchiveError struct {
@@ -1385,24 +1338,4 @@ func (e uploadLimitError) Error() string {
 
 func (e uploadLimitError) Unwrap() error {
 	return e.err
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, protocol.UploadArchiveResponse{
-		OK:    false,
-		Error: message,
-	})
-}
-
-func writeLoginCheckError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, protocol.LoginCheckResponse{
-		OK:    false,
-		Error: message,
-	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }

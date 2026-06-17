@@ -1,14 +1,10 @@
 package client
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 
 	"quack/internal/protocol"
 )
@@ -31,42 +27,19 @@ func UploadDirectory(ctx context.Context, serverURL, token, site, directory stri
 
 	pr, pw := io.Pipe()
 	go func() {
-		err := WriteTar(ctx, directory, pw)
+		err := protocol.WriteTar(ctx, directory, pw)
 		_ = pw.CloseWithError(err)
 	}()
 
-	url := strings.TrimRight(serverURL, "/") + protocol.UploadArchivePath
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
+	req, err := protocol.NewRequest(ctx, http.MethodPost, protocol.UploadArchiveURL(serverURL), token, pr)
 	if err != nil {
 		_ = pr.Close()
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", protocol.ContentTypeTar)
 	req.Header.Set(protocol.HeaderSite, site)
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("upload archive: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeUploadResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if out.Error == "" {
-			out.Error = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "upload",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    out.Error,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.UploadArchiveResponse](req, "upload", "upload archive")
 }
 
 func DeleteSite(ctx context.Context, serverURL, token, site string) (*protocol.DeleteSiteResponse, error) {
@@ -80,36 +53,11 @@ func DeleteSite(ctx context.Context, serverURL, token, site string) (*protocol.D
 		return nil, fmt.Errorf("site is required")
 	}
 
-	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	req, err := protocol.NewRequest(ctx, http.MethodDelete, protocol.SiteURL(serverURL, site), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create delete request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("delete site: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeDeleteSiteResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "delete",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.DeleteSiteResponse](req, "delete", "delete site")
 }
 
 func UnpublishSite(ctx context.Context, serverURL, token, site string) (*protocol.UnpublishSiteResponse, error) {
@@ -123,36 +71,11 @@ func UnpublishSite(ctx context.Context, serverURL, token, site string) (*protoco
 		return nil, fmt.Errorf("site is required")
 	}
 
-	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SiteUnpublishPathSuffix
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	req, err := protocol.NewRequest(ctx, http.MethodPost, protocol.SiteUnpublishURL(serverURL, site), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create unpublish request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("unpublish site: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeUnpublishSiteResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "unpublish",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.UnpublishSiteResponse](req, "unpublish", "unpublish site")
 }
 
 func PublishSite(ctx context.Context, serverURL, token, site string) (*protocol.PublishSiteResponse, error) {
@@ -166,36 +89,11 @@ func PublishSite(ctx context.Context, serverURL, token, site string) (*protocol.
 		return nil, fmt.Errorf("site is required")
 	}
 
-	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SitePublishPathSuffix
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	req, err := protocol.NewRequest(ctx, http.MethodPost, protocol.SitePublishURL(serverURL, site), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create publish request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("publish site: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodePublishSiteResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "publish",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.PublishSiteResponse](req, "publish", "publish site")
 }
 
 func SetDefaultSite(ctx context.Context, serverURL, token, site string) (*protocol.SetDefaultSiteResponse, error) {
@@ -205,42 +103,11 @@ func SetDefaultSite(ctx context.Context, serverURL, token, site string) (*protoc
 	if token == "" {
 		return nil, fmt.Errorf("token is required")
 	}
-	body, err := json.Marshal(map[string]string{"default_site": site})
-	if err != nil {
-		return nil, fmt.Errorf("encode default site request: %w", err)
-	}
-
-	target := strings.TrimRight(serverURL, "/") + protocol.SettingsDefaultSitePath
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	req, err := protocol.NewJSONRequest(ctx, http.MethodPost, protocol.SettingsDefaultSiteURL(serverURL), token, protocol.SetDefaultSiteRequest{DefaultSite: site})
 	if err != nil {
 		return nil, fmt.Errorf("create default site request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("set default site: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeSetDefaultSiteResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "set default site",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.SetDefaultSiteResponse](req, "set default site", "set default site")
 }
 
 func ListSites(ctx context.Context, serverURL, token, username string, includeAll bool) (*protocol.ListSitesResponse, error) {
@@ -251,48 +118,15 @@ func ListSites(ctx context.Context, serverURL, token, username string, includeAl
 		return nil, fmt.Errorf("token is required")
 	}
 
-	target, err := url.Parse(strings.TrimRight(serverURL, "/") + protocol.SitesPath)
+	target, err := protocol.SitesURL(serverURL, protocol.ListSitesRequest{Username: username, IncludeAll: includeAll})
 	if err != nil {
 		return nil, fmt.Errorf("parse server URL: %w", err)
 	}
-	query := target.Query()
-	if includeAll {
-		query.Set("all", "true")
-	}
-	if strings.TrimSpace(username) != "" {
-		query.Set("user", strings.TrimSpace(username))
-	}
-	target.RawQuery = query.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	req, err := protocol.NewRequest(ctx, http.MethodGet, target, token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create site list request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("list sites: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeListSitesResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "list sites",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.ListSitesResponse](req, "list sites", "list sites")
 }
 
 func ListRevisions(ctx context.Context, serverURL, token, site string) (*protocol.ListRevisionsResponse, error) {
@@ -306,36 +140,11 @@ func ListRevisions(ctx context.Context, serverURL, token, site string) (*protoco
 		return nil, fmt.Errorf("site is required")
 	}
 
-	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SiteRevisionPathSuffix
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	req, err := protocol.NewRequest(ctx, http.MethodGet, protocol.SiteRevisionsURL(serverURL, site), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create revision list request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("list revisions: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeListRevisionsResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "list revisions",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.ListRevisionsResponse](req, "list revisions", "list revisions")
 }
 
 func RollbackSite(ctx context.Context, serverURL, token, site string) (*protocol.RollbackSiteResponse, error) {
@@ -349,36 +158,11 @@ func RollbackSite(ctx context.Context, serverURL, token, site string) (*protocol
 		return nil, fmt.Errorf("site is required")
 	}
 
-	target := strings.TrimRight(serverURL, "/") + protocol.DeleteSitePathPrefix + url.PathEscape(site) + protocol.SiteRollbackPathSuffix
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	req, err := protocol.NewRequest(ctx, http.MethodPost, protocol.SiteRollbackURL(serverURL, site), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create rollback request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("rollback site: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeRollbackSiteResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "rollback",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.RollbackSiteResponse](req, "rollback", "rollback site")
 }
 
 func CheckLogin(ctx context.Context, serverURL, token string) (*protocol.LoginCheckResponse, error) {
@@ -389,36 +173,11 @@ func CheckLogin(ctx context.Context, serverURL, token string) (*protocol.LoginCh
 		return nil, fmt.Errorf("token is required")
 	}
 
-	target := strings.TrimRight(serverURL, "/") + protocol.LoginCheckPath
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	req, err := protocol.NewRequest(ctx, http.MethodPost, protocol.LoginCheckURL(serverURL), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create login check request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("check login: %w", err)
-	}
-	defer resp.Body.Close()
-
-	out, err := decodeLoginCheckResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := out.Error
-		if message == "" {
-			message = resp.Status
-		}
-		return &out, &UploadError{
-			Operation:  "login check",
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Message:    message,
-		}
-	}
-	return &out, nil
+	return doRequest[protocol.LoginCheckResponse](req, "login check", "check login")
 }
 
 type UploadError struct {
@@ -439,171 +198,28 @@ func (e *UploadError) Error() string {
 	return fmt.Sprintf("%s failed (%s)", operation, e.Status)
 }
 
-func decodeUploadResponse(resp *http.Response) (protocol.UploadArchiveResponse, error) {
-	body, err := readResponseBody(resp)
+func doRequest[T protocol.ErrorGetter](req *http.Request, operation string, transportOperation string) (*T, error) {
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return protocol.UploadArchiveResponse{}, err
+		return nil, fmt.Errorf("%s: %w", transportOperation, err)
 	}
+	defer resp.Body.Close()
 
-	var out protocol.UploadArchiveResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
+	out, err := protocol.DecodeResponse[T](resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := out.ErrorMessage()
+		if message == "" {
+			message = resp.Status
 		}
-		return protocol.UploadArchiveResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodeDeleteSiteResponse(resp *http.Response) (protocol.DeleteSiteResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.DeleteSiteResponse{}, err
-	}
-
-	var out protocol.DeleteSiteResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
+		return &out, &UploadError{
+			Operation:  operation,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    message,
 		}
-		return protocol.DeleteSiteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
-	return out, nil
-}
-
-func decodeUnpublishSiteResponse(resp *http.Response) (protocol.UnpublishSiteResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.UnpublishSiteResponse{}, err
-	}
-
-	var out protocol.UnpublishSiteResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.UnpublishSiteResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodePublishSiteResponse(resp *http.Response) (protocol.PublishSiteResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.PublishSiteResponse{}, err
-	}
-
-	var out protocol.PublishSiteResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.PublishSiteResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodeSetDefaultSiteResponse(resp *http.Response) (protocol.SetDefaultSiteResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.SetDefaultSiteResponse{}, err
-	}
-
-	var out protocol.SetDefaultSiteResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.SetDefaultSiteResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodeListSitesResponse(resp *http.Response) (protocol.ListSitesResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.ListSitesResponse{}, err
-	}
-
-	var out protocol.ListSitesResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.ListSitesResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodeListRevisionsResponse(resp *http.Response) (protocol.ListRevisionsResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.ListRevisionsResponse{}, err
-	}
-
-	var out protocol.ListRevisionsResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.ListRevisionsResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodeRollbackSiteResponse(resp *http.Response) (protocol.RollbackSiteResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.RollbackSiteResponse{}, err
-	}
-
-	var out protocol.RollbackSiteResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.RollbackSiteResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func decodeLoginCheckResponse(resp *http.Response) (protocol.LoginCheckResponse, error) {
-	body, err := readResponseBody(resp)
-	if err != nil {
-		return protocol.LoginCheckResponse{}, err
-	}
-
-	var out protocol.LoginCheckResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			out.Error = fallbackResponseMessage(resp, body)
-			return out, nil
-		}
-		return protocol.LoginCheckResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return out, nil
-}
-
-func readResponseBody(resp *http.Response) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	return body, nil
-}
-
-func fallbackResponseMessage(resp *http.Response, body []byte) string {
-	message := strings.TrimSpace(string(body))
-	if message == "" {
-		message = resp.Status
-	}
-	return message
+	return &out, nil
 }
