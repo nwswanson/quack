@@ -30,7 +30,8 @@ func New(addr string, token string, store Storage, db Database, opts Options) *h
 
 	mux := http.NewServeMux()
 	source := NewPassthroughHotDataReader(db)
-	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{})
+	// hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{})
+	hot := NewOtterHotDataReader(source, OtterHotDataReaderOptions{})
 	read := NewSiteReadService(hot)
 	write := NewSiteWriteService(db, hot, hot)
 	h := &handler{

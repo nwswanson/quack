@@ -3,12 +3,15 @@ module quack
 go 1.25.0
 
 require (
+	github.com/maypok86/otter v1.2.4
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )
 
 require (
+	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/gammazero/deque v0.2.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
