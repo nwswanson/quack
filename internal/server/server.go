@@ -29,11 +29,13 @@ func New(addr string, token string, store Storage, db Database, opts Options) *h
 	}
 
 	mux := http.NewServeMux()
+	cache := NewPassthroughHotDataCache(db)
 	h := &handler{
 		token:                token,
 		store:                store,
 		db:                   db,
-		resolver:             NewResolver(db),
+		cache:                cache,
+		resolver:             NewResolver(db, cache),
 		allowUnauthenticated: opts.AllowUnauthenticated,
 	}
 	h.adminRoutes(mux)

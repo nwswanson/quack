@@ -31,8 +31,16 @@ type handler struct {
 	token                string
 	store                Storage
 	db                   Database
+	cache                HotDataCache
 	resolver             Resolver
 	allowUnauthenticated bool
+}
+
+func (h *handler) hotDataCache() HotDataCache {
+	if h.cache != nil {
+		return h.cache
+	}
+	return NewPassthroughHotDataCache(h.db)
 }
 
 func (h *handler) adminRoutes(mux *http.ServeMux) {
@@ -296,7 +304,7 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 	if err != nil {
 		return adminPageData{}, err
 	}
-	settings, err := h.db.GetServerSettings(r.Context())
+	settings, err := h.hotDataCache().GetServerSettings(r.Context())
 	if err != nil {
 		return adminPageData{}, err
 	}
@@ -797,7 +805,7 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 	}
 
 	relativePath, wantsIndex := requestedRelativePath(urlPath)
-	file, ok, siteExists, err := h.db.FindCurrentSiteFile(r.Context(), site, relativePath)
+	file, ok, siteExists, err := h.hotDataCache().FindCurrentSiteFile(r.Context(), site, relativePath)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup file failed", "site", site, "path", relativePath, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -814,7 +822,7 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 
 	if shouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
 		indexPath := path.Join(relativePath, "index.html")
-		_, ok, _, err := h.db.FindCurrentSiteFile(r.Context(), site, indexPath)
+		_, ok, _, err := h.hotDataCache().FindCurrentSiteFile(r.Context(), site, indexPath)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "lookup directory index failed", "site", site, "path", indexPath, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")

@@ -33,15 +33,30 @@ type SiteRuntimeDecision struct {
 }
 
 type Resolver struct {
-	db Database
+	db    Database
+	cache HotDataCache
 }
 
-func NewResolver(db Database) Resolver {
-	return Resolver{db: db}
+func NewResolver(db Database, caches ...HotDataCache) Resolver {
+	var cache HotDataCache
+	if len(caches) > 0 {
+		cache = caches[0]
+	}
+	if cache == nil {
+		cache = NewPassthroughHotDataCache(db)
+	}
+	return Resolver{db: db, cache: cache}
+}
+
+func (r Resolver) hotDataCache() HotDataCache {
+	if r.cache != nil {
+		return r.cache
+	}
+	return NewPassthroughHotDataCache(r.db)
 }
 
 func (r Resolver) ResolveUploadPolicy(ctx context.Context, actor AdminUser, site string) (UploadPolicy, error) {
-	settings, err := r.db.GetServerSettings(ctx)
+	settings, err := r.hotDataCache().GetServerSettings(ctx)
 	if err != nil {
 		return UploadPolicy{}, err
 	}
@@ -67,7 +82,7 @@ func (r Resolver) ValidateUploadManifest(ctx context.Context, actor AdminUser, s
 }
 
 func (r Resolver) ResolveCurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error) {
-	manifests, err := r.db.ListCurrentSiteManifests(ctx)
+	manifests, err := r.hotDataCache().ListCurrentSiteManifests(ctx)
 	if err != nil {
 		return SiteRuntimeDecision{}, err
 	}
@@ -75,7 +90,7 @@ func (r Resolver) ResolveCurrentSiteRuntime(ctx context.Context, site string) (S
 		if manifest.Site != site {
 			continue
 		}
-		violations, err := r.db.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
+		violations, err := r.hotDataCache().ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
 		if err != nil {
 			return SiteRuntimeDecision{}, err
 		}
@@ -97,7 +112,7 @@ func (r Resolver) ResolveCurrentSiteRuntime(ctx context.Context, site string) (S
 }
 
 func (r Resolver) ReconcilePolicyViolations(ctx context.Context) error {
-	manifests, err := r.db.ListCurrentSiteManifests(ctx)
+	manifests, err := r.hotDataCache().ListCurrentSiteManifests(ctx)
 	if err != nil {
 		return err
 	}
@@ -139,7 +154,7 @@ func (r Resolver) databaseAllowed(ctx context.Context, actor AdminUser, site str
 	if site != "" {
 		scopes = append(scopes, PolicyScope{Type: ScopeSite, ID: site})
 	}
-	policies, err := r.db.LoadPolicies(ctx, scopes)
+	policies, err := r.hotDataCache().LoadPolicies(ctx, scopes)
 	if err != nil {
 		return false, "", err
 	}
