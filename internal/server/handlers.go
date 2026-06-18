@@ -31,16 +31,15 @@ type handler struct {
 	token                string
 	store                Storage
 	db                   Database
-	cache                HotDataCache
-	resolver             Resolver
+	read                 SiteReadService
 	allowUnauthenticated bool
 }
 
-func (h *handler) hotDataCache() HotDataCache {
-	if h.cache != nil {
-		return h.cache
+func (h *handler) siteReadService() SiteReadService {
+	if h.read != nil {
+		return h.read
 	}
-	return NewPassthroughHotDataCache(h.db)
+	return NewSiteReadService(h.db, nil)
 }
 
 func (h *handler) adminRoutes(mux *http.ServeMux) {
@@ -269,7 +268,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if err := h.resolver.ReconcilePolicyViolations(r.Context()); err != nil {
+	if err := h.siteReadService().ReconcilePolicyViolations(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "reconcile policy violations failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -304,12 +303,12 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 	if err != nil {
 		return adminPageData{}, err
 	}
-	settings, err := h.hotDataCache().GetServerSettings(r.Context())
+	settings, err := h.siteReadService().ServerSettings(r.Context())
 	if err != nil {
 		return adminPageData{}, err
 	}
 	for i := range sites {
-		decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), sites[i].Site)
+		decision, err := h.siteReadService().CurrentSiteRuntime(r.Context(), sites[i].Site)
 		if err != nil {
 			return adminPageData{}, err
 		}
@@ -477,7 +476,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 
 	out := protocol.ListSitesResponse{OK: true}
 	for _, site := range sites {
-		decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site.Site)
+		decision, err := h.siteReadService().CurrentSiteRuntime(r.Context(), site.Site)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site.Site, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -525,7 +524,7 @@ func (h *handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	settings, err := h.db.GetServerSettings(r.Context())
+	settings, err := h.siteReadService().ServerSettings(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load server settings failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -783,7 +782,7 @@ func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
-	settings, err := h.db.GetServerSettings(r.Context())
+	settings, err := h.siteReadService().ServerSettings(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load server settings failed", "site", site, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -793,7 +792,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 }
 
 func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string, defaultSite string, usingDefault bool) {
-	decision, err := h.resolver.ResolveCurrentSiteRuntime(r.Context(), site)
+	decision, err := h.siteReadService().CurrentSiteRuntime(r.Context(), site)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -805,7 +804,7 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 	}
 
 	relativePath, wantsIndex := requestedRelativePath(urlPath)
-	file, ok, siteExists, err := h.hotDataCache().FindCurrentSiteFile(r.Context(), site, relativePath)
+	file, ok, siteExists, err := h.siteReadService().CurrentSiteFile(r.Context(), site, relativePath)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "lookup file failed", "site", site, "path", relativePath, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -822,7 +821,7 @@ func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Reque
 
 	if shouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
 		indexPath := path.Join(relativePath, "index.html")
-		_, ok, _, err := h.hotDataCache().FindCurrentSiteFile(r.Context(), site, indexPath)
+		_, ok, _, err := h.siteReadService().CurrentSiteFile(r.Context(), site, indexPath)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "lookup directory index failed", "site", site, "path", indexPath, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -903,7 +902,7 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 			protocol.WriteError(w, http.StatusBadRequest, err.Error())
 			return "", user, policy, false
 		}
-		policy, err = h.resolver.ResolveUploadPolicy(r.Context(), user, site)
+		policy, err = h.siteReadService().UploadPolicy(r.Context(), user, site)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "resolve upload policy failed", "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -1006,7 +1005,7 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, po
 		return protocol.UploadArchiveResponse{}, err
 	}
 
-	if err := h.resolver.ValidateUploadManifest(ctx, user, site, manifest); err != nil {
+	if err := h.siteReadService().ValidateUploadManifest(ctx, user, site, manifest); err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
 			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
 		}

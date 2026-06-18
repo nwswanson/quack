@@ -1,0 +1,167 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+)
+
+type SiteReadService interface {
+	ServerSettings(ctx context.Context) (ServerSettings, error)
+	UploadPolicy(ctx context.Context, actor AdminUser, site string) (UploadPolicy, error)
+	ValidateUploadManifest(ctx context.Context, actor AdminUser, site string, manifest SiteManifest) error
+	CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error)
+	CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
+	ReconcilePolicyViolations(ctx context.Context) error
+}
+
+type siteReadService struct {
+	db    Database
+	cache HotDataCache
+}
+
+func NewSiteReadService(db Database, cache HotDataCache) SiteReadService {
+	if cache == nil {
+		cache = NewPassthroughHotDataCache(db)
+	}
+	return siteReadService{db: db, cache: cache}
+}
+
+func (s siteReadService) ServerSettings(ctx context.Context) (ServerSettings, error) {
+	return s.cache.GetServerSettings(ctx)
+}
+
+func (s siteReadService) UploadPolicy(ctx context.Context, actor AdminUser, site string) (UploadPolicy, error) {
+	settings, err := s.cache.GetServerSettings(ctx)
+	if err != nil {
+		return UploadPolicy{}, err
+	}
+	return UploadPolicy{
+		MaxUploadBytes:      EffectiveValue[int64]{Value: settings.MaxUploadBytes, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
+		MaxUploadFiles:      EffectiveValue[int64]{Value: settings.MaxUploadFiles, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
+		MaxRetainedVersions: EffectiveValue[int64]{Value: settings.MaxRetainedVersions, Source: "server_settings", Editable: Can(actor, "server.settings.edit")},
+	}, nil
+}
+
+func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor AdminUser, site string, manifest SiteManifest) error {
+	allowed, reason, err := s.databaseAllowed(ctx, actor, site)
+	if err != nil {
+		return err
+	}
+	if manifest.Features.Database.Enabled && !allowed {
+		if reason == "" {
+			reason = "database is disabled by administrator policy"
+		}
+		return forbiddenPolicyError{err: fmt.Errorf("%s", reason)}
+	}
+	return nil
+}
+
+func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error) {
+	manifests, err := s.cache.ListCurrentSiteManifests(ctx)
+	if err != nil {
+		return SiteRuntimeDecision{}, err
+	}
+	for _, manifest := range manifests {
+		if manifest.Site != site {
+			continue
+		}
+		violations, err := s.cache.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
+		if err != nil {
+			return SiteRuntimeDecision{}, err
+		}
+		return runtimeDecisionFromViolations(violations), nil
+	}
+	return SiteRuntimeDecision{Status: SiteRuntimeActive}, nil
+}
+
+func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+	return s.cache.FindCurrentSiteFile(ctx, site, relativePath)
+}
+
+func (s siteReadService) ReconcilePolicyViolations(ctx context.Context) error {
+	manifests, err := s.cache.ListCurrentSiteManifests(ctx)
+	if err != nil {
+		return err
+	}
+	for _, manifest := range manifests {
+		enabled := parseBoolSetting(manifest.Settings[SettingDatabaseFeature])
+		required := parseBoolSetting(manifest.Settings[SettingDatabaseFeatureRequired])
+		allowed, reason, err := s.databaseAllowed(ctx, AdminUser{}, manifest.Site)
+		if err != nil {
+			return err
+		}
+		if enabled && !allowed {
+			severity := "degraded"
+			if required {
+				severity = "suspended"
+			}
+			if reason == "" {
+				reason = "database is disabled by administrator policy"
+			}
+			if err := s.db.SavePolicyViolation(ctx, PolicyViolation{
+				SiteSHA: manifest.SiteSHA, UploadVersion: manifest.Version, Key: SettingDatabaseFeature,
+				RequestedValue: "true", PolicyValue: "deny", Severity: severity, Reason: reason,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.db.ResolvePolicyViolation(ctx, manifest.SiteSHA, manifest.Version, SettingDatabaseFeature); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s siteReadService) databaseAllowed(ctx context.Context, actor AdminUser, site string) (bool, string, error) {
+	scopes := []PolicyScope{{Type: ScopeSystem, ID: ""}}
+	if actor.ID > 0 {
+		scopes = append(scopes, PolicyScope{Type: ScopeUser, ID: strconv.FormatInt(actor.ID, 10)})
+	}
+	if site != "" {
+		scopes = append(scopes, PolicyScope{Type: ScopeSite, ID: site})
+	}
+	policies, err := s.cache.LoadPolicies(ctx, scopes)
+	if err != nil {
+		return false, "", err
+	}
+	allowed := parseBoolSetting(settingDefault(SettingDatabaseFeature))
+	reason := ""
+	for _, policy := range policies {
+		if policy.Key != SettingDatabaseFeature {
+			continue
+		}
+		switch policy.Mode {
+		case "deny", "force_off":
+			if policy.Reason != "" {
+				reason = policy.Reason
+			} else {
+				reason = "database is disabled by administrator policy"
+			}
+			return false, reason, nil
+		case "allow", "force_on":
+			allowed = true
+			if policy.Reason != "" {
+				reason = policy.Reason
+			}
+		}
+	}
+	return allowed, reason, nil
+}
+
+func runtimeDecisionFromViolations(violations []PolicyViolation) SiteRuntimeDecision {
+	decision := SiteRuntimeDecision{Status: SiteRuntimeActive}
+	for _, violation := range violations {
+		if violation.Key != SettingDatabaseFeature {
+			continue
+		}
+		if violation.Severity == "suspended" {
+			return SiteRuntimeDecision{Status: SiteRuntimeSuspendedByPolicy, Reason: violation.Reason}
+		}
+		if decision.Status == SiteRuntimeActive {
+			decision = SiteRuntimeDecision{Status: SiteRuntimeDegraded, Reason: violation.Reason}
+		}
+	}
+	return decision
+}
