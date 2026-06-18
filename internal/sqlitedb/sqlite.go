@@ -753,13 +753,26 @@ func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]server.Curre
 	if err != nil {
 		return nil, fmt.Errorf("list current sites: %w", err)
 	}
-	defer rows.Close()
+
 	var out []server.CurrentSiteManifest
 	for rows.Next() {
 		var m server.CurrentSiteManifest
 		if err := rows.Scan(&m.Site, &m.SiteSHA, &m.Version); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan current site: %w", err)
 		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate current sites: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close current sites: %w", err)
+	}
+
+	for i := range out {
+		m := &out[i]
 		settings, err := d.LoadUploadSettings(ctx, m.SiteSHA, m.Version)
 		if err != nil {
 			return nil, err
@@ -771,9 +784,8 @@ func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]server.Curre
 			settings[server.SettingDatabaseFeatureRequired] = "false"
 		}
 		m.Settings = settings
-		out = append(out, m)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (d *Database) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]server.PolicyViolation, error) {

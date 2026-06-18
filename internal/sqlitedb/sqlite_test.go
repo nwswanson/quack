@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -608,6 +609,59 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 	}
 	if len(bobByName) != 1 || bobByName[0].Site != "site-b" || bobByName[0].PublishedBy != "bob" {
 		t.Fatalf("bobByName = %#v, want site-b by bob", bobByName)
+	}
+}
+
+func TestListCurrentSiteManifestsConcurrentDoesNotExhaustReadPool(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for i := 0; i < 12; i++ {
+		site := fmt.Sprintf("site-%d", i)
+		siteSHA := fmt.Sprintf("site-%d-sha", i)
+		upload, err := db.BeginUpload(ctx, site, siteSHA, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upload.Files = []server.UploadFileRecord{{RelativePath: "index.html", BlobPath: site, FileSHA: siteSHA, Bytes: 1}}
+		if err := db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, map[string]string{
+			server.SettingDatabaseFeature:         "false",
+			server.SettingDatabaseFeatureRequired: "false",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.FinishUpload(ctx, upload); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errs := make(chan error, 16)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			manifests, err := db.ListCurrentSiteManifests(ctx)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if len(manifests) != 12 {
+				errs <- fmt.Errorf("manifest count = %d, want 12", len(manifests))
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
 	}
 }
 
