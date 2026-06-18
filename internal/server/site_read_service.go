@@ -12,27 +12,23 @@ type SiteReadService interface {
 	ValidateUploadManifest(ctx context.Context, actor AdminUser, site string, manifest SiteManifest) error
 	CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error)
 	CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
-	ReconcilePolicyViolations(ctx context.Context) error
+	SystemDatabasePolicy(ctx context.Context) (PolicyRecord, error)
 }
 
 type siteReadService struct {
-	db    Database
-	cache HotDataCache
+	hot HotDataReader
 }
 
-func NewSiteReadService(db Database, cache HotDataCache) SiteReadService {
-	if cache == nil {
-		cache = NewPassthroughHotDataCache(db)
-	}
-	return siteReadService{db: db, cache: cache}
+func NewSiteReadService(hot HotDataReader) SiteReadService {
+	return siteReadService{hot: hot}
 }
 
 func (s siteReadService) ServerSettings(ctx context.Context) (ServerSettings, error) {
-	return s.cache.GetServerSettings(ctx)
+	return s.hot.GetServerSettings(ctx)
 }
 
 func (s siteReadService) UploadPolicy(ctx context.Context, actor AdminUser, site string) (UploadPolicy, error) {
-	settings, err := s.cache.GetServerSettings(ctx)
+	settings, err := s.hot.GetServerSettings(ctx)
 	if err != nil {
 		return UploadPolicy{}, err
 	}
@@ -44,7 +40,7 @@ func (s siteReadService) UploadPolicy(ctx context.Context, actor AdminUser, site
 }
 
 func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor AdminUser, site string, manifest SiteManifest) error {
-	allowed, reason, err := s.databaseAllowed(ctx, actor, site)
+	allowed, reason, err := databaseAllowed(ctx, s.hot, actor, site)
 	if err != nil {
 		return err
 	}
@@ -58,7 +54,7 @@ func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor Admin
 }
 
 func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error) {
-	manifests, err := s.cache.ListCurrentSiteManifests(ctx)
+	manifests, err := s.hot.ListCurrentSiteManifests(ctx)
 	if err != nil {
 		return SiteRuntimeDecision{}, err
 	}
@@ -66,7 +62,7 @@ func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (S
 		if manifest.Site != site {
 			continue
 		}
-		violations, err := s.cache.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
+		violations, err := s.hot.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
 		if err != nil {
 			return SiteRuntimeDecision{}, err
 		}
@@ -76,45 +72,25 @@ func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (S
 }
 
 func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
-	return s.cache.FindCurrentSiteFile(ctx, site, relativePath)
+	return s.hot.FindCurrentSiteFile(ctx, site, relativePath)
 }
 
-func (s siteReadService) ReconcilePolicyViolations(ctx context.Context) error {
-	manifests, err := s.cache.ListCurrentSiteManifests(ctx)
+func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (PolicyRecord, error) {
+	policies, err := s.hot.LoadPolicies(ctx, []PolicyScope{{Type: ScopeSystem, ID: ""}})
 	if err != nil {
-		return err
+		return PolicyRecord{}, err
 	}
-	for _, manifest := range manifests {
-		enabled := parseBoolSetting(manifest.Settings[SettingDatabaseFeature])
-		required := parseBoolSetting(manifest.Settings[SettingDatabaseFeatureRequired])
-		allowed, reason, err := s.databaseAllowed(ctx, AdminUser{}, manifest.Site)
-		if err != nil {
-			return err
-		}
-		if enabled && !allowed {
-			severity := "degraded"
-			if required {
-				severity = "suspended"
-			}
-			if reason == "" {
-				reason = "database is disabled by administrator policy"
-			}
-			if err := s.db.SavePolicyViolation(ctx, PolicyViolation{
-				SiteSHA: manifest.SiteSHA, UploadVersion: manifest.Version, Key: SettingDatabaseFeature,
-				RequestedValue: "true", PolicyValue: "deny", Severity: severity, Reason: reason,
-			}); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := s.db.ResolvePolicyViolation(ctx, manifest.SiteSHA, manifest.Version, SettingDatabaseFeature); err != nil {
-			return err
+	policy := PolicyRecord{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "inherit"}
+	for _, p := range policies {
+		if p.Key == SettingDatabaseFeature {
+			policy = p
+			break
 		}
 	}
-	return nil
+	return policy, nil
 }
 
-func (s siteReadService) databaseAllowed(ctx context.Context, actor AdminUser, site string) (bool, string, error) {
+func databaseAllowed(ctx context.Context, hot HotDataReader, actor AdminUser, site string) (bool, string, error) {
 	scopes := []PolicyScope{{Type: ScopeSystem, ID: ""}}
 	if actor.ID > 0 {
 		scopes = append(scopes, PolicyScope{Type: ScopeUser, ID: strconv.FormatInt(actor.ID, 10)})
@@ -122,7 +98,7 @@ func (s siteReadService) databaseAllowed(ctx context.Context, actor AdminUser, s
 	if site != "" {
 		scopes = append(scopes, PolicyScope{Type: ScopeSite, ID: site})
 	}
-	policies, err := s.cache.LoadPolicies(ctx, scopes)
+	policies, err := hot.LoadPolicies(ctx, scopes)
 	if err != nil {
 		return false, "", err
 	}

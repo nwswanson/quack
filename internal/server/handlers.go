@@ -32,6 +32,7 @@ type handler struct {
 	store                Storage
 	db                   Database
 	read                 SiteReadService
+	write                SiteWriteService
 	allowUnauthenticated bool
 }
 
@@ -39,7 +40,15 @@ func (h *handler) siteReadService() SiteReadService {
 	if h.read != nil {
 		return h.read
 	}
-	return NewSiteReadService(h.db, nil)
+	return NewSiteReadService(NewPassthroughHotDataReader(h.db))
+}
+
+func (h *handler) siteWriteService() SiteWriteService {
+	if h.write != nil {
+		return h.write
+	}
+	hot := NewPassthroughHotDataReader(h.db)
+	return NewSiteWriteService(h.db, hot, nil)
 }
 
 func (h *handler) adminRoutes(mux *http.ServeMux) {
@@ -217,7 +226,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "error", err.Error())
 		return
 	}
-	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
+	if err := h.siteWriteService().SaveServerSettings(r.Context(), settings); err != nil {
 		slog.ErrorContext(r.Context(), "save server settings failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -260,7 +269,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "error", "Database policy must be inherit, allow, or deny.")
 		return
 	}
-	if err := h.db.SavePolicy(r.Context(), PolicyRecord{
+	if err := h.siteWriteService().SavePolicy(r.Context(), PolicyRecord{
 		ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: mode,
 		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
 	}); err != nil {
@@ -268,7 +277,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if err := h.siteReadService().ReconcilePolicyViolations(r.Context()); err != nil {
+	if err := h.siteWriteService().ReconcilePolicyViolations(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "reconcile policy violations failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -318,16 +327,9 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 		}
 		sites[i].PolicyReason = decision.Reason
 	}
-	policies, err := h.db.LoadPolicies(r.Context(), []PolicyScope{{Type: ScopeSystem, ID: ""}})
+	policy, err := h.siteReadService().SystemDatabasePolicy(r.Context())
 	if err != nil {
 		return adminPageData{}, err
-	}
-	policy := PolicyRecord{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "inherit"}
-	for _, p := range policies {
-		if p.Key == SettingDatabaseFeature {
-			policy = p
-			break
-		}
 	}
 	return adminPageData{
 		User:     user,
@@ -531,7 +533,7 @@ func (h *handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings.DefaultSite = strings.TrimSpace(req.DefaultSite)
-	if err := h.db.SaveServerSettings(r.Context(), settings); err != nil {
+	if err := h.siteWriteService().SaveServerSettings(r.Context(), settings); err != nil {
 		slog.ErrorContext(r.Context(), "save default site failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -567,7 +569,7 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	siteSHA := sha256Hex(site)
-	deleted, err := h.db.DeleteSite(r.Context(), site, siteSHA)
+	deleted, err := h.siteWriteService().DeleteSite(r.Context(), site, siteSHA)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -687,7 +689,7 @@ func (h *handler) handleListRevisions(w http.ResponseWriter, r *http.Request, us
 }
 
 func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	rollback, err := h.db.RollbackSite(r.Context(), user, site, sha256Hex(site))
+	rollback, err := h.siteWriteService().RollbackSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -710,7 +712,7 @@ func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, use
 }
 
 func (h *handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	out, err := h.db.UnpublishSite(r.Context(), user, site, sha256Hex(site))
+	out, err := h.siteWriteService().UnpublishSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -729,7 +731,7 @@ func (h *handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, us
 }
 
 func (h *handler) handlePublishSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	out, err := h.db.PublishSite(r.Context(), user, site, sha256Hex(site))
+	out, err := h.siteWriteService().PublishSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -1012,14 +1014,14 @@ func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, po
 		slog.WarnContext(ctx, "upload rejected by policy", "site", upload.Site, "version", upload.Version, "error", err)
 		return protocol.UploadArchiveResponse{}, err
 	}
-	if err := h.db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, ManifestSettings(manifest)); err != nil {
+	if err := h.siteWriteService().SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, ManifestSettings(manifest)); err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
 			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
 		}
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("save upload settings: %w", err)
 	}
 
-	if err := h.db.FinishUpload(ctx, upload); err != nil {
+	if err := h.siteWriteService().FinishUpload(ctx, upload); err != nil {
 		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
 			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
 		}

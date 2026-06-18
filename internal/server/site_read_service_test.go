@@ -16,7 +16,7 @@ func TestSiteReadServiceUploadPolicyUsesServerSettings(t *testing.T) {
 			LogLevel:            "warn",
 		},
 	}
-	read := NewSiteReadService(db, nil)
+	read := NewSiteReadService(NewPassthroughHotDataReader(db))
 
 	policy, err := read.UploadPolicy(context.Background(), AdminUser{ID: 1, AdminPriv: "admin:*"}, "example.com")
 	if err != nil {
@@ -84,7 +84,7 @@ func TestSiteReadServiceCurrentSiteRuntime(t *testing.T) {
 				}},
 				violations: map[string][]PolicyViolation{"site-sha:1": tt.violations},
 			}
-			read := NewSiteReadService(db, nil)
+			read := NewSiteReadService(NewPassthroughHotDataReader(db))
 
 			got, err := read.CurrentSiteRuntime(context.Background(), tt.site)
 			if err != nil {
@@ -106,7 +106,7 @@ func TestSiteReadServiceValidateUploadManifestRejectsDeniedDatabaseFeature(t *te
 			Reason:    "database disabled",
 		}},
 	}
-	read := NewSiteReadService(db, nil)
+	read := NewSiteReadService(NewPassthroughHotDataReader(db))
 
 	err := read.ValidateUploadManifest(context.Background(), AdminUser{}, "example.com", SiteManifest{
 		Features: SiteManifestFeatures{Database: SiteManifestDatabase{Enabled: true}},
@@ -120,11 +120,11 @@ func TestSiteReadServiceValidateUploadManifestRejectsDeniedDatabaseFeature(t *te
 	}
 }
 
-func TestSiteReadServiceCurrentSiteFileDelegatesToCache(t *testing.T) {
+func TestSiteReadServiceCurrentSiteFileUsesHotReader(t *testing.T) {
 	db := &siteReadServiceDatabase{
 		file: UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", FileSHA: "sha", Bytes: 42},
 	}
-	read := NewSiteReadService(db, nil)
+	read := NewSiteReadService(NewPassthroughHotDataReader(db))
 
 	file, fileOK, siteOK, err := read.CurrentSiteFile(context.Background(), "example.com", "index.html")
 	if err != nil {
@@ -135,81 +135,35 @@ func TestSiteReadServiceCurrentSiteFileDelegatesToCache(t *testing.T) {
 	}
 }
 
-func TestSiteReadServiceReconcilePolicyViolations(t *testing.T) {
-	tests := []struct {
-		name         string
-		settings     map[string]string
-		policies     []PolicyRecord
-		wantSaved    PolicyViolation
-		wantResolved bool
-	}{
-		{
-			name: "saves degraded violation when optional database feature is denied",
-			settings: map[string]string{
-				SettingDatabaseFeature:         "true",
-				SettingDatabaseFeatureRequired: "false",
-			},
-			policies: []PolicyRecord{{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "deny", Reason: "disabled"}},
-			wantSaved: PolicyViolation{
-				SiteSHA: "site-sha", UploadVersion: 7, Key: SettingDatabaseFeature,
-				RequestedValue: "true", PolicyValue: "deny", Severity: "degraded", Reason: "disabled",
-			},
-		},
-		{
-			name: "saves suspended violation when required database feature is denied",
-			settings: map[string]string{
-				SettingDatabaseFeature:         "true",
-				SettingDatabaseFeatureRequired: "true",
-			},
-			policies: []PolicyRecord{{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "deny", Reason: "disabled"}},
-			wantSaved: PolicyViolation{
-				SiteSHA: "site-sha", UploadVersion: 7, Key: SettingDatabaseFeature,
-				RequestedValue: "true", PolicyValue: "deny", Severity: "suspended", Reason: "disabled",
-			},
-		},
-		{
-			name: "resolves violation when database feature is allowed",
-			settings: map[string]string{
-				SettingDatabaseFeature:         "true",
-				SettingDatabaseFeatureRequired: "true",
-			},
-			policies:     []PolicyRecord{{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "allow"}},
-			wantResolved: true,
-		},
+func TestSiteReadServiceSystemDatabasePolicy(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		policies: []PolicyRecord{{
+			ScopeType: ScopeSystem,
+			Key:       SettingDatabaseFeature,
+			Mode:      "deny",
+			Reason:    "disabled",
+		}},
 	}
+	read := NewSiteReadService(NewPassthroughHotDataReader(db))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db := &siteReadServiceDatabase{
-				manifests: []CurrentSiteManifest{{
-					Site:     "example.com",
-					SiteSHA:  "site-sha",
-					Version:  7,
-					Settings: tt.settings,
-				}},
-				policies: tt.policies,
-			}
-			read := NewSiteReadService(db, nil)
+	policy, err := read.SystemDatabasePolicy(context.Background())
+	if err != nil {
+		t.Fatalf("SystemDatabasePolicy error = %v", err)
+	}
+	if policy.Mode != "deny" || policy.Reason != "disabled" {
+		t.Fatalf("SystemDatabasePolicy = %+v, want database policy", policy)
+	}
+}
 
-			if err := read.ReconcilePolicyViolations(context.Background()); err != nil {
-				t.Fatalf("ReconcilePolicyViolations error = %v", err)
-			}
-			if tt.wantResolved {
-				if len(db.resolvedViolations) != 1 {
-					t.Fatalf("resolved violations = %d, want 1", len(db.resolvedViolations))
-				}
-				if got := db.resolvedViolations[0]; got != "site-sha:7:"+SettingDatabaseFeature {
-					t.Fatalf("resolved violation = %q, want site-sha:7:%s", got, SettingDatabaseFeature)
-				}
-				return
-			}
-			if len(db.savedViolations) != 1 {
-				t.Fatalf("saved violations = %d, want 1", len(db.savedViolations))
-			}
-			if got := db.savedViolations[0]; got != tt.wantSaved {
-				t.Fatalf("saved violation = %+v, want %+v", got, tt.wantSaved)
-			}
-		})
+func TestSiteReadServiceSystemDatabasePolicyDefaultsToInherit(t *testing.T) {
+	read := NewSiteReadService(NewPassthroughHotDataReader(&siteReadServiceDatabase{}))
+
+	policy, err := read.SystemDatabasePolicy(context.Background())
+	if err != nil {
+		t.Fatalf("SystemDatabasePolicy error = %v", err)
+	}
+	if policy.ScopeType != ScopeSystem || policy.Key != SettingDatabaseFeature || policy.Mode != "inherit" {
+		t.Fatalf("SystemDatabasePolicy = %+v, want inherit default", policy)
 	}
 }
 

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
-	db := &cacheBackingDatabase{
+func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
+	db := &readerBackingDatabase{
 		settings: ServerSettings{
 			MaxUploadBytes: DefaultMaxUploadBytes,
 			MaxUploadFiles: DefaultMaxUploadFiles,
@@ -25,10 +25,10 @@ func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
 		}},
 		violations: []PolicyViolation{{SiteSHA: "site-sha", UploadVersion: 3, Key: SettingDatabaseFeature}},
 	}
-	cache := NewPassthroughHotDataCache(db)
+	reader := NewPassthroughHotDataReader(db)
 	ctx := context.Background()
 
-	settings, err := cache.GetServerSettings(ctx)
+	settings, err := reader.GetServerSettings(ctx)
 	if err != nil {
 		t.Fatalf("GetServerSettings error = %v", err)
 	}
@@ -37,7 +37,7 @@ func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
 		t.Fatalf("GetServerSettings leaked Locked map mutation")
 	}
 
-	policies, err := cache.LoadPolicies(ctx, []PolicyScope{{Type: ScopeSystem, ID: ""}})
+	policies, err := reader.LoadPolicies(ctx, []PolicyScope{{Type: ScopeSystem, ID: ""}})
 	if err != nil {
 		t.Fatalf("LoadPolicies error = %v", err)
 	}
@@ -46,7 +46,7 @@ func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
 		t.Fatalf("LoadPolicies leaked slice mutation")
 	}
 
-	uploadSettings, err := cache.LoadUploadSettings(ctx, "site-sha", 3)
+	uploadSettings, err := reader.LoadUploadSettings(ctx, "site-sha", 3)
 	if err != nil {
 		t.Fatalf("LoadUploadSettings error = %v", err)
 	}
@@ -55,7 +55,7 @@ func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
 		t.Fatalf("LoadUploadSettings leaked map mutation")
 	}
 
-	manifests, err := cache.ListCurrentSiteManifests(ctx)
+	manifests, err := reader.ListCurrentSiteManifests(ctx)
 	if err != nil {
 		t.Fatalf("ListCurrentSiteManifests error = %v", err)
 	}
@@ -65,7 +65,7 @@ func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
 		t.Fatalf("ListCurrentSiteManifests leaked mutable result")
 	}
 
-	violations, err := cache.ListPolicyViolations(ctx, "site-sha", 3)
+	violations, err := reader.ListPolicyViolations(ctx, "site-sha", 3)
 	if err != nil {
 		t.Fatalf("ListPolicyViolations error = %v", err)
 	}
@@ -75,13 +75,13 @@ func TestPassthroughHotDataCacheCopiesMutableResults(t *testing.T) {
 	}
 }
 
-func TestPassthroughHotDataCacheFindCurrentSiteFileDelegates(t *testing.T) {
-	db := &cacheBackingDatabase{
+func TestPassthroughHotDataReaderFindCurrentSiteFileDelegates(t *testing.T) {
+	db := &readerBackingDatabase{
 		file: UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", FileSHA: "sha", Bytes: 12},
 	}
-	cache := NewPassthroughHotDataCache(db)
+	reader := NewPassthroughHotDataReader(db)
 
-	file, fileOK, siteOK, err := cache.FindCurrentSiteFile(context.Background(), "example.com", "index.html")
+	file, fileOK, siteOK, err := reader.FindCurrentSiteFile(context.Background(), "example.com", "index.html")
 	if err != nil {
 		t.Fatalf("FindCurrentSiteFile error = %v", err)
 	}
@@ -90,7 +90,7 @@ func TestPassthroughHotDataCacheFindCurrentSiteFileDelegates(t *testing.T) {
 	}
 }
 
-type cacheBackingDatabase struct {
+type readerBackingDatabase struct {
 	Database
 	settings       ServerSettings
 	policies       []PolicyRecord
@@ -100,26 +100,26 @@ type cacheBackingDatabase struct {
 	file           UploadFileRecord
 }
 
-func (db *cacheBackingDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+func (db *readerBackingDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
 	return db.settings, nil
 }
 
-func (db *cacheBackingDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
+func (db *readerBackingDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
 	return db.policies, nil
 }
 
-func (db *cacheBackingDatabase) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
+func (db *readerBackingDatabase) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
 	return db.uploadSettings, nil
 }
 
-func (db *cacheBackingDatabase) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
+func (db *readerBackingDatabase) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
 	return db.manifests, nil
 }
 
-func (db *cacheBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
 	return db.violations, nil
 }
 
-func (db *cacheBackingDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+func (db *readerBackingDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
 	return db.file, true, true, nil
 }
