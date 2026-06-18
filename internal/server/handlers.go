@@ -66,8 +66,8 @@ func (h *handler) adminRoutes(mux *http.ServeMux) {
 }
 
 func (h *handler) siteRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/serve", h.handleServeDisabled)
-	mux.HandleFunc("/serve/", h.handleServeDisabled)
+	//mux.HandleFunc("/serve", h.handleServeDisabled)
+	//mux.HandleFunc("/serve/", h.handleServeDisabled)
 	mux.HandleFunc("/", h.handleServeFile)
 }
 

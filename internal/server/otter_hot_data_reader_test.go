@@ -184,3 +184,107 @@ func TestOtterHotDataReaderInvalidation(t *testing.T) {
 		t.Fatalf("file calls = %d, want 2", source.fileCalls)
 	}
 }
+
+func TestOtterHotDataReaderReloadsCurrentFileAfterSiteUpdate(t *testing.T) {
+	db := &siteUpdateCacheDatabase{
+		file: UploadFileRecord{RelativePath: "index.html", BlobPath: "old-blob", Bytes: 10},
+	}
+	hot := NewOtterHotDataReader(db, OtterHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute})
+	write := NewSiteWriteService(db, hot, hot)
+	ctx := context.Background()
+
+	file, ok, siteExists, err := hot.FindCurrentSiteFile(ctx, "example.com", "index.html")
+	if err != nil {
+		t.Fatalf("FindCurrentSiteFile error = %v", err)
+	}
+	if !ok || !siteExists || file.BlobPath != "old-blob" {
+		t.Fatalf("FindCurrentSiteFile = (%+v, %v, %v), want old cached file", file, ok, siteExists)
+	}
+
+	db.file = UploadFileRecord{RelativePath: "index.html", BlobPath: "new-blob", Bytes: 20}
+	if err := write.FinishUpload(ctx, UploadRecord{Site: "example.com", SiteSHA: "site-sha", Version: 2}); err != nil {
+		t.Fatalf("FinishUpload error = %v", err)
+	}
+
+	file, ok, siteExists, err = hot.FindCurrentSiteFile(ctx, "example.com", "index.html")
+	if err != nil {
+		t.Fatalf("FindCurrentSiteFile after update error = %v", err)
+	}
+	if !ok || !siteExists || file.BlobPath != "new-blob" {
+		t.Fatalf("FindCurrentSiteFile after update = (%+v, %v, %v), want reloaded file", file, ok, siteExists)
+	}
+	if db.fileCalls != 2 {
+		t.Fatalf("file calls = %d, want 2", db.fileCalls)
+	}
+}
+
+type siteUpdateCacheDatabase struct {
+	Database
+	file      UploadFileRecord
+	fileCalls int
+}
+
+func (db *siteUpdateCacheDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+	return ServerSettings{}, nil
+}
+
+func (db *siteUpdateCacheDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
+	return nil, nil
+}
+
+func (db *siteUpdateCacheDatabase) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
+	return nil, nil
+}
+
+func (db *siteUpdateCacheDatabase) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
+	return nil, nil
+}
+
+func (db *siteUpdateCacheDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+	return nil, nil
+}
+
+func (db *siteUpdateCacheDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+	db.fileCalls++
+	return db.file, db.file.RelativePath == relativePath, true, nil
+}
+
+func (db *siteUpdateCacheDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
+	return nil
+}
+
+func (db *siteUpdateCacheDatabase) SavePolicy(ctx context.Context, policy PolicyRecord) error {
+	return nil
+}
+
+func (db *siteUpdateCacheDatabase) SaveUploadSettings(ctx context.Context, siteSHA string, version int64, settings map[string]string) error {
+	return nil
+}
+
+func (db *siteUpdateCacheDatabase) FinishUpload(ctx context.Context, upload UploadRecord) error {
+	return nil
+}
+
+func (db *siteUpdateCacheDatabase) RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error) {
+	return RollbackRecord{}, nil
+}
+
+func (db *siteUpdateCacheDatabase) UnpublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (UnpublishRecord, error) {
+	return UnpublishRecord{}, nil
+}
+
+func (db *siteUpdateCacheDatabase) PublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (PublishRecord, error) {
+	return PublishRecord{}, nil
+}
+
+func (db *siteUpdateCacheDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+	return true, nil
+}
+
+func (db *siteUpdateCacheDatabase) SavePolicyViolation(ctx context.Context, violation PolicyViolation) error {
+	return nil
+}
+
+func (db *siteUpdateCacheDatabase) ResolvePolicyViolation(ctx context.Context, siteSHA string, version int64, key string) error {
+	return nil
+}
