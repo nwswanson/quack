@@ -1062,6 +1062,16 @@ func (db fakeDatabase) FindCurrentSiteFile(ctx context.Context, site string, rel
 	return UploadFileRecord{}, false, false, nil
 }
 
+func (db fakeDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	var out []UploadFileRecord
+	for key, file := range db.files {
+		if strings.HasPrefix(key, site+"\x00") {
+			out = append(out, file)
+		}
+	}
+	return out, len(out) > 0, nil
+}
+
 func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error) {
 	return db.revisions, nil
 }

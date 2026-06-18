@@ -45,6 +45,11 @@ type cachedCurrentSiteFile struct {
 	siteExists bool
 }
 
+type cachedCurrentSiteFiles struct {
+	files      []UploadFileRecord
+	siteExists bool
+}
+
 func NewMemoryHotDataReader(source HotDataReader, opts MemoryHotDataReaderOptions) MutableHotDataReader {
 	if opts.TTL <= 0 {
 		opts.TTL = 5 * time.Second
@@ -137,6 +142,22 @@ func (r *memoryHotDataReader) FindCurrentSiteFile(ctx context.Context, site stri
 	return cached.file, cached.ok, cached.siteExists, nil
 }
 
+func (r *memoryHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	key := "current_site_files:" + site
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		files, siteExists, err := r.source.ListCurrentSiteFiles(ctx, site)
+		if err != nil {
+			return nil, err
+		}
+		return cachedCurrentSiteFiles{files: append([]UploadFileRecord(nil), files...), siteExists: siteExists}, nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	cached := value.(cachedCurrentSiteFiles)
+	return append([]UploadFileRecord(nil), cached.files...), cached.siteExists, nil
+}
+
 func (r *memoryHotDataReader) InvalidateServerSettings(ctx context.Context) error {
 	r.deletePrefix("server_settings")
 	return nil
@@ -144,6 +165,7 @@ func (r *memoryHotDataReader) InvalidateServerSettings(ctx context.Context) erro
 
 func (r *memoryHotDataReader) InvalidateSite(ctx context.Context, site string) error {
 	r.deletePrefix("current_site_file:" + site + ":")
+	r.deletePrefix("current_site_files:" + site)
 	r.deletePrefix("current_site_manifests")
 	return nil
 }
@@ -190,6 +212,9 @@ func (r *memoryHotDataReader) load(ctx context.Context, key string, ttl time.Dur
 	call.err = err
 	if err == nil {
 		if file, ok := value.(cachedCurrentSiteFile); ok && !file.ok {
+			ttl = r.negativeTTL
+		}
+		if files, ok := value.(cachedCurrentSiteFiles); ok && !files.siteExists {
 			ttl = r.negativeTTL
 		}
 		r.entries[key] = memoryEntry{value: value, expiry: now.Add(r.ttlWithJitter(key, ttl))}

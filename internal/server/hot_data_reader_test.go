@@ -123,3 +123,7 @@ func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteS
 func (db *readerBackingDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
 	return db.file, true, true, nil
 }
+
+func (db *readerBackingDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	return []UploadFileRecord{db.file}, true, nil
+}

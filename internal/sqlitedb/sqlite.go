@@ -1188,6 +1188,47 @@ func (d *Database) FindCurrentSiteFile(ctx context.Context, site string, relativ
 	return server.UploadFileRecord{}, false, true, fmt.Errorf("find current file: %w", err)
 }
 
+func (d *Database) ListCurrentSiteFiles(ctx context.Context, site string) ([]server.UploadFileRecord, bool, error) {
+	var currentVersion int64
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT current_version
+		FROM sites
+		WHERE site = ? AND live_state = 'live' AND current_version > 0
+	`, site).Scan(&currentVersion)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("find current site: %w", err)
+	}
+
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT uf.relative_path, uf.blob_path, uf.file_sha, uf.bytes
+		FROM uploads u
+		JOIN upload_files uf ON uf.upload_id = u.id
+		WHERE u.site = ?
+			AND u.version = ?
+			AND u.state = ?
+	`, site, currentVersion, string(server.UploadStateFinished))
+	if err != nil {
+		return nil, true, fmt.Errorf("list current files: %w", err)
+	}
+	defer rows.Close()
+
+	var out []server.UploadFileRecord
+	for rows.Next() {
+		var file server.UploadFileRecord
+		if err := rows.Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes); err != nil {
+			return nil, true, fmt.Errorf("scan current file: %w", err)
+		}
+		out = append(out, file)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, true, fmt.Errorf("iterate current files: %w", err)
+	}
+	return out, true, nil
+}
+
 func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser, site string, siteSHA string) ([]server.RevisionRecord, error) {
 	if siteSHA == "" {
 		return nil, nil

@@ -249,6 +249,11 @@ func (db *siteUpdateCacheDatabase) FindCurrentSiteFile(ctx context.Context, site
 	return db.file, db.file.RelativePath == relativePath, true, nil
 }
 
+func (db *siteUpdateCacheDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	db.fileCalls++
+	return []UploadFileRecord{db.file}, true, nil
+}
+
 func (db *siteUpdateCacheDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
 	return nil
 }

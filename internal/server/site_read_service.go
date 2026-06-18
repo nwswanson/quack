@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"path"
 	"strconv"
+	"strings"
 )
 
 type SiteReadService interface {
@@ -12,7 +14,26 @@ type SiteReadService interface {
 	ValidateUploadManifest(ctx context.Context, actor AdminUser, site string, manifest SiteManifest) error
 	CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error)
 	CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
+	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
 	SystemDatabasePolicy(ctx context.Context) (PolicyRecord, error)
+}
+
+type ServeSiteFileStatus string
+
+const (
+	ServeSiteFileFound             ServeSiteFileStatus = "found"
+	ServeSiteFileDirectoryRedirect ServeSiteFileStatus = "directory_redirect"
+	ServeSiteFileEmptyIndex        ServeSiteFileStatus = "empty_index"
+	ServeSiteFileNotFound          ServeSiteFileStatus = "not_found"
+	ServeSiteFileSuspended         ServeSiteFileStatus = "suspended"
+)
+
+type ServeSiteFileDecision struct {
+	Status       ServeSiteFileStatus
+	Site         string
+	RelativePath string
+	File         UploadFileRecord
+	Runtime      SiteRuntimeDecision
 }
 
 type siteReadService struct {
@@ -73,6 +94,65 @@ func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (S
 
 func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
 	return s.hot.FindCurrentSiteFile(ctx, site, relativePath)
+}
+
+func (s siteReadService) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	settings, err := s.hot.GetServerSettings(ctx)
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	return s.resolveSiteFile(ctx, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
+}
+
+func (s siteReadService) resolveSiteFile(ctx context.Context, site string, urlPath string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
+	decision, err := s.CurrentSiteRuntime(ctx, site)
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	if decision.Status == SiteRuntimeSuspendedByPolicy {
+		return ServeSiteFileDecision{Status: ServeSiteFileSuspended, Site: site, Runtime: decision}, nil
+	}
+
+	files, siteExists, err := s.hot.ListCurrentSiteFiles(ctx, site)
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	if !siteExists && !usingDefault && defaultSite != "" && defaultSite != site {
+		return s.resolveSiteFile(ctx, defaultSite, urlPath, defaultSite, true)
+	}
+
+	fileByPath := make(map[string]UploadFileRecord, len(files))
+	for _, file := range files {
+		fileByPath[file.RelativePath] = file
+	}
+
+	relativePath, wantsIndex := requestedRelativePath(urlPath)
+	if file, ok := fileByPath[relativePath]; ok {
+		return ServeSiteFileDecision{
+			Status:       ServeSiteFileFound,
+			Site:         site,
+			RelativePath: relativePath,
+			File:         file,
+			Runtime:      decision,
+		}, nil
+	}
+
+	if shouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
+		indexPath := path.Join(relativePath, "index.html")
+		if _, ok := fileByPath[indexPath]; ok {
+			return ServeSiteFileDecision{
+				Status:       ServeSiteFileDirectoryRedirect,
+				Site:         site,
+				RelativePath: indexPath,
+				Runtime:      decision,
+			}, nil
+		}
+	}
+
+	if wantsIndex {
+		return ServeSiteFileDecision{Status: ServeSiteFileEmptyIndex, Site: site, RelativePath: relativePath, Runtime: decision}, nil
+	}
+	return ServeSiteFileDecision{Status: ServeSiteFileNotFound, Site: site, RelativePath: relativePath, Runtime: decision}, nil
 }
 
 func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (PolicyRecord, error) {

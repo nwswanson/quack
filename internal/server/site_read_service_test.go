@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestSiteReadServiceUploadPolicyUsesServerSettings(t *testing.T) {
@@ -135,6 +136,40 @@ func TestSiteReadServiceCurrentSiteFileUsesHotReader(t *testing.T) {
 	}
 }
 
+func TestSiteReadServiceServeSiteFileUsesCachedSiteBundle(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
+		files: []UploadFileRecord{{
+			RelativePath: "index.html",
+			BlobPath:     "blobs/site:site-sha/1/file:old",
+			FileSHA:      "old",
+			Bytes:        42,
+		}},
+	}
+	hot := NewMemoryHotDataReader(NewPassthroughHotDataReader(db), MemoryHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute})
+	read := NewSiteReadService(hot)
+
+	first, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile error = %v", err)
+	}
+	if first.Status != ServeSiteFileFound || first.File.BlobPath != "blobs/site:site-sha/1/file:old" {
+		t.Fatalf("ServeSiteFile = %+v, want old blob", first)
+	}
+
+	db.files[0].BlobPath = "blobs/site:site-sha/1/file:new"
+	second, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	if err != nil {
+		t.Fatalf("second ServeSiteFile error = %v", err)
+	}
+	if second.Status != ServeSiteFileFound || second.File.BlobPath != "blobs/site:site-sha/1/file:old" {
+		t.Fatalf("second ServeSiteFile = %+v, want cached old blob", second)
+	}
+	if db.fileListCalls != 1 {
+		t.Fatalf("ListCurrentSiteFiles calls = %d, want 1", db.fileListCalls)
+	}
+}
+
 func TestSiteReadServiceSystemDatabasePolicy(t *testing.T) {
 	db := &siteReadServiceDatabase{
 		policies: []PolicyRecord{{
@@ -174,6 +209,8 @@ type siteReadServiceDatabase struct {
 	manifests          []CurrentSiteManifest
 	violations         map[string][]PolicyViolation
 	file               UploadFileRecord
+	files              []UploadFileRecord
+	fileListCalls      int
 	savedViolations    []PolicyViolation
 	resolvedViolations []string
 }
@@ -211,6 +248,17 @@ func (db *siteReadServiceDatabase) ListPolicyViolations(ctx context.Context, sit
 
 func (db *siteReadServiceDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
 	return db.file, db.file.RelativePath != "", true, nil
+}
+
+func (db *siteReadServiceDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	db.fileListCalls++
+	if db.files != nil {
+		return db.files, true, nil
+	}
+	if db.file.RelativePath == "" {
+		return nil, true, nil
+	}
+	return []UploadFileRecord{db.file}, true, nil
 }
 
 func (db *siteReadServiceDatabase) SavePolicyViolation(ctx context.Context, violation PolicyViolation) error {

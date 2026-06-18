@@ -784,63 +784,28 @@ func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
-	settings, err := h.siteReadService().ServerSettings(r.Context())
+	decision, err := h.siteReadService().ServeSiteFile(r.Context(), site, urlPath)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "load server settings failed", "site", site, "error", err)
+		slog.ErrorContext(r.Context(), "resolve site file failed", "site", site, "path", urlPath, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	h.serveSiteFileWithFallback(w, r, site, urlPath, redirectPrefix, strings.TrimSpace(settings.DefaultSite), false)
-}
-
-func (h *handler) serveSiteFileWithFallback(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string, defaultSite string, usingDefault bool) {
-	decision, err := h.siteReadService().CurrentSiteRuntime(r.Context(), site)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site, "error", err)
-		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	if decision.Status == SiteRuntimeSuspendedByPolicy {
+	switch decision.Status {
+	case ServeSiteFileSuspended:
 		protocol.WriteError(w, http.StatusForbidden, "site suspended by administrator policy")
-		return
-	}
-
-	relativePath, wantsIndex := requestedRelativePath(urlPath)
-	file, ok, siteExists, err := h.siteReadService().CurrentSiteFile(r.Context(), site, relativePath)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "lookup file failed", "site", site, "path", relativePath, "error", err)
-		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	if ok {
-		h.serveBlob(w, r, site, relativePath, file)
-		return
-	}
-	if !siteExists && !usingDefault && defaultSite != "" && defaultSite != site {
-		h.serveSiteFileWithFallback(w, r, defaultSite, urlPath, redirectPrefix, defaultSite, true)
-		return
-	}
-
-	if shouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
-		indexPath := path.Join(relativePath, "index.html")
-		_, ok, _, err := h.siteReadService().CurrentSiteFile(r.Context(), site, indexPath)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "lookup directory index failed", "site", site, "path", indexPath, "error", err)
-			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
-			return
-		}
-		if ok {
-			http.Redirect(w, r, directoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
-			return
-		}
-	}
-
-	if wantsIndex {
+	case ServeSiteFileFound:
+		h.serveBlob(w, r, decision.Site, decision.RelativePath, decision.File)
+	case ServeSiteFileDirectoryRedirect:
+		http.Redirect(w, r, directoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
+	case ServeSiteFileEmptyIndex:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		return
+	case ServeSiteFileNotFound:
+		http.NotFound(w, r)
+	default:
+		slog.ErrorContext(r.Context(), "unknown site file decision", "site", site, "path", urlPath, "status", decision.Status)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 	}
-	http.NotFound(w, r)
 }
 
 func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file UploadFileRecord) {

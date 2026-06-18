@@ -184,6 +184,13 @@ func (r staticHotDataReader) FindCurrentSiteFile(ctx context.Context, site strin
 	return r.file, r.fileOK, r.siteExists, nil
 }
 
+func (r staticHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	if !r.fileOK {
+		return nil, r.siteExists, nil
+	}
+	return []UploadFileRecord{r.file}, r.siteExists, nil
+}
+
 type staticStore struct{}
 
 func (staticStore) AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error) {

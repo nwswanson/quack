@@ -9,6 +9,7 @@ type HotDataReader interface {
 	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
+	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
 }
 
 type hotDataSource interface {
@@ -18,6 +19,7 @@ type hotDataSource interface {
 	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
+	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
 }
 
 type HotDataInvalidator interface {
@@ -105,6 +107,14 @@ func (r passthroughHotDataReader) ListPolicyViolations(ctx context.Context, site
 
 func (r passthroughHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
 	return r.db.FindCurrentSiteFile(ctx, site, relativePath)
+}
+
+func (r passthroughHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	files, siteExists, err := r.db.ListCurrentSiteFiles(ctx, site)
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]UploadFileRecord(nil), files...), siteExists, nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

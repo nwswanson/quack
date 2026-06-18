@@ -182,6 +182,10 @@ func (db *siteWriteServiceDatabase) FindCurrentSiteFile(ctx context.Context, sit
 	return UploadFileRecord{}, false, false, db.err
 }
 
+func (db *siteWriteServiceDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	return nil, false, db.err
+}
+
 func (db *siteWriteServiceDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
 	return db.err
 }

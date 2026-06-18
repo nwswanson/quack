@@ -195,12 +195,14 @@ type countingHotDataReader struct {
 	file       UploadFileRecord
 	fileOK     bool
 	siteExists bool
+	files      []UploadFileRecord
 	err        error
 	block      chan struct{}
 
 	serverSettingsCalls int
 	manifestCalls       int
 	fileCalls           int
+	filesCalls          int
 }
 
 func (r *countingHotDataReader) wait() {
@@ -250,4 +252,20 @@ func (r *countingHotDataReader) FindCurrentSiteFile(ctx context.Context, site st
 		return UploadFileRecord{}, false, false, r.err
 	}
 	return r.file, r.fileOK, r.siteExists, nil
+}
+
+func (r *countingHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	r.mu.Lock()
+	r.filesCalls++
+	r.mu.Unlock()
+	if r.err != nil {
+		return nil, false, r.err
+	}
+	if r.files != nil {
+		return r.files, r.siteExists, nil
+	}
+	if r.file.RelativePath == "" {
+		return nil, r.siteExists, nil
+	}
+	return []UploadFileRecord{r.file}, r.siteExists, nil
 }

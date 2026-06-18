@@ -13,6 +13,7 @@ type Database interface {
 	FailUpload(ctx context.Context, upload UploadRecord, reason string) error
 	FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
+	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
 	ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error)
 	RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error)
 	UnpublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (UnpublishRecord, error)

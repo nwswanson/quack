@@ -151,6 +151,22 @@ func (r *otterHotDataReader) FindCurrentSiteFile(ctx context.Context, site strin
 	return cached.file, cached.ok, cached.siteExists, nil
 }
 
+func (r *otterHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+	key := "current_site_files:" + site
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		files, siteExists, err := r.source.ListCurrentSiteFiles(ctx, site)
+		if err != nil {
+			return nil, err
+		}
+		return cachedCurrentSiteFiles{files: append([]UploadFileRecord(nil), files...), siteExists: siteExists}, nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	cached := value.(cachedCurrentSiteFiles)
+	return append([]UploadFileRecord(nil), cached.files...), cached.siteExists, nil
+}
+
 func (r *otterHotDataReader) InvalidateServerSettings(ctx context.Context) error {
 	r.deletePrefix("server_settings")
 	return nil
@@ -158,6 +174,7 @@ func (r *otterHotDataReader) InvalidateServerSettings(ctx context.Context) error
 
 func (r *otterHotDataReader) InvalidateSite(ctx context.Context, site string) error {
 	r.deletePrefix("current_site_file:" + site + ":")
+	r.deletePrefix("current_site_files:" + site)
 	r.deletePrefix("current_site_manifests")
 	return nil
 }
@@ -202,6 +219,9 @@ func (r *otterHotDataReader) load(ctx context.Context, key string, ttl time.Dura
 	call.err = err
 	if err == nil {
 		if file, ok := value.(cachedCurrentSiteFile); ok && !file.ok {
+			ttl = r.negativeTTL
+		}
+		if files, ok := value.(cachedCurrentSiteFiles); ok && !files.siteExists {
 			ttl = r.negativeTTL
 		}
 		r.cache.Set(key, value, r.ttlWithJitter(key, ttl))
