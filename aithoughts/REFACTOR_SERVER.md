@@ -597,19 +597,19 @@ Purpose: separate public site serving, JSON API, and admin UI once core services
 
 Purpose: make tests reflect the new architecture instead of preserving old coupling.
 
-* [ ] Split `handlers_test.go` into focused test files:
+* [x] Split `handlers_test.go` into focused test files:
 
-  * [ ] site name/path tests
-  * [ ] public site serving tests
-  * [ ] upload route tests
-  * [ ] admin UI tests
-  * [ ] API route tests
-* [ ] Replace giant fake DBs with narrow fakes per package.
-* [ ] Keep SQLite integration tests in `internal/sqlitedb`.
-* [ ] Add service-level tests for uploads.
-* [ ] Add package-level tests for settings validation.
-* [ ] Run full test suite.
-* [ ] Run race tests if feasible.
+  * [x] site name/path tests
+  * [x] public site serving tests
+  * [x] upload route tests
+  * [x] admin UI tests
+  * [x] API route tests
+* [x] Replace giant fake DBs with narrow fakes per package.
+* [x] Keep SQLite integration tests in `internal/sqlitedb`.
+* [x] Add service-level tests for uploads.
+* [x] Add package-level tests for settings validation.
+* [x] Run full test suite.
+* [x] Run race tests if feasible.
 
 ## Phase 13: Final cleanup
 

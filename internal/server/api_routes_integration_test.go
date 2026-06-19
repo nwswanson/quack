@@ -1,0 +1,371 @@
+package server
+
+import (
+	"archive/tar"
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"quack/internal/protocol"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestLoginCheck(t *testing.T) {
+	srv := New("", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+
+	t.Run("authorized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
+		req.Header.Set("Authorization", "Bearer token")
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if rec.Body.String() != "{\"ok\":true}\n" {
+			t.Fatalf("body = %q, want ok", rec.Body.String())
+		}
+	})
+
+	t.Run("unauthorized", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
+		req.Header.Set("Authorization", "Bearer bad")
+		rec := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+		}
+		if rec.Body.String() != "{\"ok\":false,\"error\":\"unauthorized\"}\n" {
+			t.Fatalf("body = %q, want unauthorized", rec.Body.String())
+		}
+	})
+}
+
+func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "{\"ok\":true}\n" {
+		t.Fatalf("body = %q, want ok", rec.Body.String())
+	}
+}
+
+func TestUploadRejectsTooManyFiles(t *testing.T) {
+	db := &fakeDatabase{settings: ServerSettings{
+		MaxUploadBytes: DefaultMaxUploadBytes,
+		MaxUploadFiles: 1,
+	}}
+	srv := New("", "", fakeStorage{}, db, Options{
+		AllowUnauthenticated: true,
+	})
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{
+		"one.txt": "one",
+		"two.txt": "two",
+	}))
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+func TestUploadRejectsTooManyBytes(t *testing.T) {
+	db := &fakeDatabase{settings: ServerSettings{
+		MaxUploadBytes: 128,
+		MaxUploadFiles: DefaultMaxUploadFiles,
+	}}
+	srv := New("", "", fakeStorage{}, db, Options{
+		AllowUnauthenticated: true,
+	})
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{
+		"large.txt": "this content is intentionally long enough to push the tar request over the tiny test limit",
+	}))
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		settings: ServerSettings{
+			MaxUploadBytes: DefaultMaxUploadBytes,
+			MaxUploadFiles: DefaultMaxUploadFiles,
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if db.lastPublisherUserID != 7 {
+		t.Fatalf("publisher user id = %d, want 7", db.lastPublisherUserID)
+	}
+	if db.linkedUserID != 7 || db.linkedSiteSHA == "" {
+		t.Fatalf("linked site = (%d, %q), want user 7 and site sha", db.linkedUserID, db.linkedSiteSHA)
+	}
+}
+
+func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
+	deletedVersions := []int64{}
+	db := &fakeDatabase{
+		prunedVersions: []int64{1, 2},
+		settings: ServerSettings{
+			MaxUploadBytes:      DefaultMaxUploadBytes,
+			MaxUploadFiles:      DefaultMaxUploadFiles,
+			MaxRetainedVersions: 3,
+			LogLevel:            "warn",
+		},
+	}
+	srv := New("", "", fakeStorage{deletedVersions: &deletedVersions}, db, Options{AllowUnauthenticated: true})
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got, want := deletedVersions, []int64{1, 2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("deleted versions = %#v, want %#v", got, want)
+	}
+}
+
+func TestRevisionListReturnsWarningWithoutOlderRevisions(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		revisions: []RevisionRecord{{Version: 3, Current: true, Files: 1, Bytes: 5}},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRevisionPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"warning":"no older revisions available"`) {
+		t.Fatalf("body = %s, want warning", rec.Body.String())
+	}
+}
+
+func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		rollback: RollbackRecord{CurrentVersion: 3, Warning: "no older revisions available"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRollbackPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"rolled_back":false`) || !strings.Contains(rec.Body.String(), `"warning":"no older revisions available"`) {
+		t.Fatalf("body = %s, want no-op rollback warning", rec.Body.String())
+	}
+}
+
+func TestUnpublishSite(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		unpublish: UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteUnpublishPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"unpublished":true`) || !strings.Contains(rec.Body.String(), `"live_state":"unpublished"`) {
+		t.Fatalf("body = %s, want unpublished response", rec.Body.String())
+	}
+}
+
+func TestPublishSite(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		publish: PublishRecord{Published: true, LiveState: "live"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SitePublishPathSuffix, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"published":true`) || !strings.Contains(rec.Body.String(), `"live_state":"live"`) {
+		t.Fatalf("body = %s, want publish response", rec.Body.String())
+	}
+}
+
+func TestListSitesReturnsSiteSummaries(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		sites: []PublishedSite{{
+			Site: "foo", SiteSHA: "foo-sha", PublishedBy: "alice",
+			CurrentVersion: 2, VersionCount: 3, FileCount: 4, ByteCount: 512, UpdatedAt: "2026-06-16T12:00:00Z",
+		}},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"site":"foo"`, `"current_version":2`, `"runtime_status":"active"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %s, want %s", body, want)
+		}
+	}
+}
+
+func TestListSitesAllRequiresAdmin(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath+"?all=true", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"admin-token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
+			"user-token":  {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	userReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
+	userReq.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, userReq)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("user status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+
+	adminReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
+	adminReq.Header.Set("Authorization", "Bearer admin-token")
+	rec = httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, adminReq)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if db.settings.DefaultSite != "home" {
+		t.Fatalf("default site = %q, want home", db.settings.DefaultSite)
+	}
+}
+
+func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"foo", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func uploadRequest(t *testing.T, body []byte) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, protocol.UploadArchivePath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", protocol.ContentTypeTar)
+	req.Header.Set(protocol.HeaderSite, "foo")
+	return req
+}
+
+func tarArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name,
+			Mode: 0o644,
+			Size: int64(len(content)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
