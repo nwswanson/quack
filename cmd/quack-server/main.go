@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"quack/internal/domain"
 	"quack/internal/storage"
 
 	"quack/internal/server"
@@ -46,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
-	if err := db.InitializeServerSettings(context.Background(), server.ServerSettings{
+	if err := db.InitializeServerSettings(context.Background(), domain.ServerSettings{
 		MaxUploadBytes:      server.DefaultMaxUploadBytes,
 		MaxUploadFiles:      server.DefaultMaxUploadFiles,
 		MaxRetainedVersions: 0,

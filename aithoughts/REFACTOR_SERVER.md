@@ -613,19 +613,19 @@ Purpose: make tests reflect the new architecture instead of preserving old coupl
 
 ## Phase 13: Final cleanup
 
-* [ ] Remove obsolete aliases and compatibility shims.
-* [ ] Check for package names like `common`, `utils`, or `models`; avoid them.
-* [ ] Check exported names and reduce anything that does not need to be public.
-* [ ] Confirm package import direction is clean:
+* [x] Remove obsolete aliases and compatibility shims.
+* [x] Check for package names like `common`, `utils`, or `models`; avoid them.
+* [x] Check exported names and reduce anything that does not need to be public.
+* [x] Confirm package import direction is clean:
 
-  * [ ] `sqlitedb` imports `domain`/`settings`, not `server`
-  * [ ] `server` imports services, not the other way around
-  * [ ] `uploads` does not import HTTP handlers
-  * [ ] `sites` does not import HTTP handlers
-  * [ ] `storage` does not import server/services
-* [ ] Run `go test ./...`.
-* [ ] Run formatting.
-* [ ] Commit final cleanup.
+  * [x] `sqlitedb` imports `domain`/`settings`, not `server`
+  * [x] `server` imports services, not the other way around
+  * [x] `uploads` does not import HTTP handlers
+  * [x] `sites` does not import HTTP handlers
+  * [x] `storage` does not import server/services
+* [x] Run `go test ./...`.
+* [x] Run formatting.
+* [x] Commit final cleanup.
 
 ## Desired dependency direction
 

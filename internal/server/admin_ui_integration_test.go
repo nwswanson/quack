@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"quack/internal/adminui"
+	"quack/internal/domain"
 	"strings"
 	"testing"
 )
@@ -36,12 +37,12 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sites: []PublishedSite{
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sites: []domain.PublishedSite{
 			{Site: "alpha", PublishedBy: "alice", CurrentVersion: 2, VersionCount: 2, FileCount: 3, ByteCount: 300, UpdatedAt: "2026-01-01T00:00:00Z"},
 			{Site: "beta", PublishedBy: "bob", CurrentVersion: 1, VersionCount: 1, FileCount: 1, ByteCount: 100, UpdatedAt: "2026-01-02T00:00:00Z"},
 		},
-		sessions: map[string]AdminUser{},
+		sessions: map[string]domain.AdminUser{},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -112,8 +113,8 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -140,8 +141,8 @@ func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -165,8 +166,8 @@ func TestAdminPostRejectsMissingOrigin(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -186,8 +187,8 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -234,9 +235,9 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
-		settings:  ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		settings:  domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 
@@ -268,8 +269,8 @@ func TestAdminLoginRejectsInvalidPassword(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
-		adminUser: AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
-		sessions:  map[string]AdminUser{},
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{},
 	}
 	srv := New("", "token", fakeStorage{}, db, opts)
 

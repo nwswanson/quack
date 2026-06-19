@@ -105,7 +105,7 @@ func TestDefaultSiteFallbackForUnknownSite(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "default-index", "default index")
 	db := &fakeDatabase{
-		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
 		files: map[string]domain.UploadFileRecord{
 			fileKey("home", "index.html"): {
 				RelativePath: "index.html",
@@ -133,7 +133,7 @@ func TestDefaultSiteDoesNotHandleMissingPathForExistingSite(t *testing.T) {
 	writeTestBlob(t, root, "default-file", "default file")
 	writeTestBlob(t, root, "foo-index", "foo index")
 	db := &fakeDatabase{
-		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
 		files: map[string]domain.UploadFileRecord{
 			fileKey("home", "missing.html"): {
 				RelativePath: "missing.html",

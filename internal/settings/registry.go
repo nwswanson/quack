@@ -34,21 +34,12 @@ type SettingDefinition struct {
 	Key           string
 	Type          SettingType
 	DefaultValue  string
-	AllowedScopes []ScopeType
+	AllowedScopes []domain.ScopeType
 	UserEditable  bool
 	SiteEditable  bool
 	AdminEditable bool
 	PolicyKind    PolicyKind
 }
-
-type ScopeType = domain.ScopeType
-
-const (
-	ScopeSystem = domain.ScopeSystem
-	ScopeUser   = domain.ScopeUser
-	ScopeSite   = domain.ScopeSite
-	ScopeUpload = domain.ScopeUpload
-)
 
 const (
 	SettingMaxUploadBytes          = "max_upload_bytes"
@@ -63,31 +54,31 @@ const (
 var registry = map[string]SettingDefinition{
 	SettingMaxUploadBytes: {
 		Key: SettingMaxUploadBytes, Type: SettingTypeInt64, DefaultValue: "536870912",
-		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingMaxUploadFiles: {
 		Key: SettingMaxUploadFiles, Type: SettingTypeInt64, DefaultValue: "10000",
-		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingMaxRetainedVersions: {
 		Key: SettingMaxRetainedVersions, Type: SettingTypeInt64, DefaultValue: "0",
-		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingDefaultSite: {
 		Key: SettingDefaultSite, Type: SettingTypeString, DefaultValue: "",
-		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true,
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true,
 	},
 	SettingLogLevel: {
 		Key: SettingLogLevel, Type: SettingTypeEnum, DefaultValue: "warn",
-		AllowedScopes: []ScopeType{ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindEnum,
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindEnum,
 	},
 	SettingDatabaseFeature: {
 		Key: SettingDatabaseFeature, Type: SettingTypeBool, DefaultValue: "false",
-		AllowedScopes: []ScopeType{ScopeSystem, ScopeUser, ScopeSite, ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
 	SettingDatabaseFeatureRequired: {
 		Key: SettingDatabaseFeatureRequired, Type: SettingTypeBool, DefaultValue: "false",
-		AllowedScopes: []ScopeType{ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
 	},
 }
 

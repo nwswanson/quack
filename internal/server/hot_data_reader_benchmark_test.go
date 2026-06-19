@@ -30,8 +30,8 @@ func BenchmarkServeFileWithBlob(b *testing.B) {
 	}
 
 	source := staticHotDataReader{
-		settings: ServerSettings{DefaultSite: "", MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles},
-		manifests: []CurrentSiteManifest{{
+		settings: domain.ServerSettings{DefaultSite: "", MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles},
+		manifests: []domain.CurrentSiteManifest{{
 			Site:     "example.com",
 			SiteSHA:  "site-sha",
 			Version:  1,
@@ -72,18 +72,18 @@ func benchServeFile(b *testing.B, name string, reader hotdata.HotDataReader) {
 }
 
 type staticHotDataReader struct {
-	settings   ServerSettings
-	manifests  []CurrentSiteManifest
+	settings   domain.ServerSettings
+	manifests  []domain.CurrentSiteManifest
 	file       domain.UploadFileRecord
 	fileOK     bool
 	siteExists bool
 }
 
-func (r staticHotDataReader) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+func (r staticHotDataReader) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	return r.settings, nil
 }
 
-func (r staticHotDataReader) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
+func (r staticHotDataReader) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
 	return nil, nil
 }
 
@@ -91,11 +91,11 @@ func (r staticHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA str
 	return nil, nil
 }
 
-func (r staticHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
+func (r staticHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	return r.manifests, nil
 }
 
-func (r staticHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+func (r staticHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	return nil, nil
 }
 

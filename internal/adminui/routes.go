@@ -276,7 +276,7 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.write.SavePolicy(r.Context(), domain.PolicyRecord{
-		ScopeType: appsettings.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
+		ScopeType: domain.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
 		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "error", err)

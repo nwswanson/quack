@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"quack/internal/domain"
 	"quack/internal/protocol"
 	"reflect"
 	"strings"
@@ -45,7 +46,7 @@ func TestLoginCheck(t *testing.T) {
 
 func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
@@ -65,7 +66,7 @@ func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 }
 
 func TestUploadRejectsTooManyFiles(t *testing.T) {
-	db := &fakeDatabase{settings: ServerSettings{
+	db := &fakeDatabase{settings: domain.ServerSettings{
 		MaxUploadBytes: DefaultMaxUploadBytes,
 		MaxUploadFiles: 1,
 	}}
@@ -86,7 +87,7 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 }
 
 func TestUploadRejectsTooManyBytes(t *testing.T) {
-	db := &fakeDatabase{settings: ServerSettings{
+	db := &fakeDatabase{settings: domain.ServerSettings{
 		MaxUploadBytes: 128,
 		MaxUploadFiles: DefaultMaxUploadFiles,
 	}}
@@ -107,10 +108,10 @@ func TestUploadRejectsTooManyBytes(t *testing.T) {
 
 func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		settings: ServerSettings{
+		settings: domain.ServerSettings{
 			MaxUploadBytes: DefaultMaxUploadBytes,
 			MaxUploadFiles: DefaultMaxUploadFiles,
 		},
@@ -137,7 +138,7 @@ func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
 	deletedVersions := []int64{}
 	db := &fakeDatabase{
 		prunedVersions: []int64{1, 2},
-		settings: ServerSettings{
+		settings: domain.ServerSettings{
 			MaxUploadBytes:      DefaultMaxUploadBytes,
 			MaxUploadFiles:      DefaultMaxUploadFiles,
 			MaxRetainedVersions: 3,
@@ -160,10 +161,10 @@ func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
 
 func TestRevisionListReturnsWarningWithoutOlderRevisions(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		revisions: []RevisionRecord{{Version: 3, Current: true, Files: 1, Bytes: 5}},
+		revisions: []domain.RevisionRecord{{Version: 3, Current: true, Files: 1, Bytes: 5}},
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
@@ -182,10 +183,10 @@ func TestRevisionListReturnsWarningWithoutOlderRevisions(t *testing.T) {
 
 func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		rollback: RollbackRecord{CurrentVersion: 3, Warning: "no older revisions available"},
+		rollback: domain.RollbackRecord{CurrentVersion: 3, Warning: "no older revisions available"},
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
@@ -204,10 +205,10 @@ func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
 
 func TestUnpublishSite(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		unpublish: UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
+		unpublish: domain.UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
@@ -226,10 +227,10 @@ func TestUnpublishSite(t *testing.T) {
 
 func TestPublishSite(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		publish: PublishRecord{Published: true, LiveState: "live"},
+		publish: domain.PublishRecord{Published: true, LiveState: "live"},
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
@@ -248,10 +249,10 @@ func TestPublishSite(t *testing.T) {
 
 func TestListSitesReturnsSiteSummaries(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		sites: []PublishedSite{{
+		sites: []domain.PublishedSite{{
 			Site: "foo", SiteSHA: "foo-sha", PublishedBy: "alice",
 			CurrentVersion: 2, VersionCount: 3, FileCount: 4, ByteCount: 512, UpdatedAt: "2026-06-16T12:00:00Z",
 		}},
@@ -276,7 +277,7 @@ func TestListSitesReturnsSiteSummaries(t *testing.T) {
 
 func TestListSitesAllRequiresAdmin(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
@@ -294,11 +295,11 @@ func TestListSitesAllRequiresAdmin(t *testing.T) {
 
 func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"admin-token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
 			"user-token":  {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
-		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
@@ -324,7 +325,7 @@ func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
 
 func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	db := &fakeDatabase{
-		usersByToken: map[string]AdminUser{
+		usersByToken: map[string]domain.AdminUser{
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}

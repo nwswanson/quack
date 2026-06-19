@@ -49,19 +49,19 @@ func (s fakeStorage) DeleteSiteVersion(ctx context.Context, siteSHA string, vers
 
 type fakeDatabase struct {
 	files                map[string]domain.UploadFileRecord
-	adminUser            AdminUser
-	usersByToken         map[string]AdminUser
-	sessions             map[string]AdminUser
-	settings             ServerSettings
-	policies             []PolicyRecord
+	adminUser            domain.AdminUser
+	usersByToken         map[string]domain.AdminUser
+	sessions             map[string]domain.AdminUser
+	settings             domain.ServerSettings
+	policies             []domain.PolicyRecord
 	uploadSettings       map[string]map[string]string
-	violations           map[string][]PolicyViolation
+	violations           map[string][]domain.PolicyViolation
 	prunedVersions       []int64
-	revisions            []RevisionRecord
-	rollback             RollbackRecord
-	unpublish            UnpublishRecord
-	publish              PublishRecord
-	sites                []PublishedSite
+	revisions            []domain.RevisionRecord
+	rollback             domain.RollbackRecord
+	unpublish            domain.UnpublishRecord
+	publish              domain.PublishRecord
+	sites                []domain.PublishedSite
 	lastPublisherUserID  int64
 	lastPublisherIsAdmin bool
 	linkedUserID         int64
@@ -115,19 +115,19 @@ func (db fakeDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([
 	return out, len(out) > 0, nil
 }
 
-func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user AdminUser, site string, siteSHA string) ([]RevisionRecord, error) {
+func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user domain.AdminUser, site string, siteSHA string) ([]domain.RevisionRecord, error) {
 	return db.revisions, nil
 }
 
-func (db *fakeDatabase) RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error) {
+func (db *fakeDatabase) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
 	return db.rollback, nil
 }
 
-func (db *fakeDatabase) UnpublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (UnpublishRecord, error) {
+func (db *fakeDatabase) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
 	return db.unpublish, nil
 }
 
-func (db *fakeDatabase) PublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (PublishRecord, error) {
+func (db *fakeDatabase) PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error) {
 	return db.publish, nil
 }
 
@@ -135,14 +135,14 @@ func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string)
 	return true, nil
 }
 
-func (db *fakeDatabase) AuthenticateAdmin(ctx context.Context, username string, password string) (AdminUser, bool, error) {
+func (db *fakeDatabase) AuthenticateAdmin(ctx context.Context, username string, password string) (domain.AdminUser, bool, error) {
 	if db.adminUser.ID == 0 || username != db.adminUser.Username || password != "secret" {
-		return AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
 	return db.adminUser, true, nil
 }
 
-func (db *fakeDatabase) FindUserByToken(ctx context.Context, token string) (AdminUser, bool, error) {
+func (db *fakeDatabase) FindUserByToken(ctx context.Context, token string) (domain.AdminUser, bool, error) {
 	if db.usersByToken != nil {
 		user, ok := db.usersByToken[token]
 		return user, ok, nil
@@ -150,19 +150,19 @@ func (db *fakeDatabase) FindUserByToken(ctx context.Context, token string) (Admi
 	if token == "user-token" && db.adminUser.ID > 0 {
 		return db.adminUser, true, nil
 	}
-	return AdminUser{}, false, nil
+	return domain.AdminUser{}, false, nil
 }
 
 func (db *fakeDatabase) CreateAdminSession(ctx context.Context, userID int64) (string, error) {
 	if db.sessions == nil {
-		db.sessions = map[string]AdminUser{}
+		db.sessions = map[string]domain.AdminUser{}
 	}
 	token := "test-session-token"
 	db.sessions[token] = db.adminUser
 	return token, nil
 }
 
-func (db *fakeDatabase) FindAdminSession(ctx context.Context, token string) (AdminUser, bool, error) {
+func (db *fakeDatabase) FindAdminSession(ctx context.Context, token string) (domain.AdminUser, bool, error) {
 	user, ok := db.sessions[token]
 	return user, ok, nil
 }
@@ -172,26 +172,26 @@ func (db *fakeDatabase) DeleteAdminSession(ctx context.Context, token string) er
 	return nil
 }
 
-func (db *fakeDatabase) CreateUser(ctx context.Context, username string, adminPriv string) (CreatedUser, error) {
-	return CreatedUser{
-		User:     AdminUser{ID: 99, Username: username, AdminPriv: adminPriv},
+func (db *fakeDatabase) CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error) {
+	return domain.CreatedUser{
+		User:     domain.AdminUser{ID: 99, Username: username, AdminPriv: adminPriv},
 		Password: "generated-password",
 		Token:    "generated-token",
 	}, nil
 }
 
-func (db *fakeDatabase) ListUserSites(ctx context.Context, userID int64) ([]PublishedSite, error) {
+func (db *fakeDatabase) ListUserSites(ctx context.Context, userID int64) ([]domain.PublishedSite, error) {
 	return db.sites, nil
 }
 
-func (db *fakeDatabase) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]PublishedSite, error) {
+func (db *fakeDatabase) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error) {
 	if includeAll {
 		return db.sites, nil
 	}
 	return db.sites, nil
 }
 
-func (db *fakeDatabase) ListPublishedSitesByUsername(ctx context.Context, username string) ([]PublishedSite, error) {
+func (db *fakeDatabase) ListPublishedSitesByUsername(ctx context.Context, username string) ([]domain.PublishedSite, error) {
 	return db.sites, nil
 }
 
@@ -201,9 +201,9 @@ func (db *fakeDatabase) LinkUserSite(ctx context.Context, userID int64, siteSHA 
 	return nil
 }
 
-func (db *fakeDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	if db.settings.MaxUploadBytes == 0 && db.settings.MaxUploadFiles == 0 && db.settings.LogLevel == "" {
-		return ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"}, nil
+		return domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"}, nil
 	}
 	if db.settings.LogLevel == "" {
 		db.settings.LogLevel = "warn"
@@ -211,7 +211,7 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (ServerSettings, 
 	return db.settings, nil
 }
 
-func (db *fakeDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {
+func (db *fakeDatabase) SaveServerSettings(ctx context.Context, settings domain.ServerSettings) error {
 	db.settings = settings
 	return nil
 }
@@ -220,8 +220,8 @@ func (db *fakeDatabase) PruneSiteVersions(ctx context.Context, siteSHA string, m
 	return db.prunedVersions, nil
 }
 
-func (db *fakeDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
-	var out []PolicyRecord
+func (db *fakeDatabase) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
+	var out []domain.PolicyRecord
 	for _, policy := range db.policies {
 		for _, scope := range scopes {
 			if policy.ScopeType == scope.Type && policy.ScopeID == scope.ID {
@@ -232,7 +232,7 @@ func (db *fakeDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) 
 	return out, nil
 }
 
-func (db *fakeDatabase) SavePolicy(ctx context.Context, policy PolicyRecord) error {
+func (db *fakeDatabase) SavePolicy(ctx context.Context, policy domain.PolicyRecord) error {
 	if policy.ScopeType == "" {
 		policy.ScopeType = domain.ScopeSystem
 	}
@@ -273,28 +273,28 @@ func (db *fakeDatabase) SaveUploadSettings(ctx context.Context, siteSHA string, 
 	return nil
 }
 
-func (db *fakeDatabase) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
-	var out []CurrentSiteManifest
+func (db *fakeDatabase) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
+	var out []domain.CurrentSiteManifest
 	for _, site := range db.sites {
 		settings, _ := db.LoadUploadSettings(ctx, site.SiteSHA, site.CurrentVersion)
-		out = append(out, CurrentSiteManifest{Site: site.Site, SiteSHA: site.SiteSHA, Version: site.CurrentVersion, Settings: settings})
+		out = append(out, domain.CurrentSiteManifest{Site: site.Site, SiteSHA: site.SiteSHA, Version: site.CurrentVersion, Settings: settings})
 	}
 	return out, nil
 }
 
-func (db *fakeDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+func (db *fakeDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	if db.violations == nil {
 		return nil, nil
 	}
 	return db.violations[siteSHA+":"+strconv.FormatInt(version, 10)], nil
 }
 
-func (db *fakeDatabase) SavePolicyViolation(ctx context.Context, violation PolicyViolation) error {
+func (db *fakeDatabase) SavePolicyViolation(ctx context.Context, violation domain.PolicyViolation) error {
 	if db.violations == nil {
-		db.violations = map[string][]PolicyViolation{}
+		db.violations = map[string][]domain.PolicyViolation{}
 	}
 	key := violation.SiteSHA + ":" + strconv.FormatInt(violation.UploadVersion, 10)
-	db.violations[key] = []PolicyViolation{violation}
+	db.violations[key] = []domain.PolicyViolation{violation}
 	return nil
 }
 
