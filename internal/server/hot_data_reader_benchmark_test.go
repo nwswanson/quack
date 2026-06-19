@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"quack/internal/sites"
 )
 
 func BenchmarkHotDataReaderFindCurrentSiteFile(b *testing.B) {
@@ -193,7 +195,7 @@ func (r staticHotDataReader) ListCurrentSiteFiles(ctx context.Context, site stri
 }
 
 func (r staticHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
-	return resolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(r.settings.DefaultSite), false)
+	return sites.ResolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(r.settings.DefaultSite), false)
 }
 
 type staticStore struct{}

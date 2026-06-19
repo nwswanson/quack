@@ -425,31 +425,31 @@ Purpose: isolate pure site-routing rules before moving services.
 
 Purpose: move serving decisions and runtime policy calculation out of HTTP handlers.
 
-* [ ] Move `SiteReadService` into `internal/sites`.
-* [ ] Move serving decision types:
+* [x] Move `SiteReadService` into `internal/sites`.
+* [x] Move serving decision types:
 
-  * [ ] `ServeSiteFileStatus`
-  * [ ] `ServeSiteFileDecision`
-* [ ] Move read service implementation:
+  * [x] `ServeSiteFileStatus`
+  * [x] `ServeSiteFileDecision`
+* [x] Move read service implementation:
 
-  * [ ] `siteReadService`
-  * [ ] `NewSiteReadService`
-  * [ ] `ServerSettings`
-  * [ ] `UploadPolicy`
-  * [ ] `ValidateUploadManifest`
-  * [ ] `CurrentSiteRuntime`
-  * [ ] `CurrentSiteFile`
-  * [ ] `ServeSiteFile`
-* [ ] Move helper logic:
+  * [x] `siteReadService`
+  * [x] `NewSiteReadService`
+  * [x] `ServerSettings`
+  * [x] `UploadPolicy`
+  * [x] `ValidateUploadManifest`
+  * [x] `CurrentSiteRuntime`
+  * [x] `CurrentSiteFile`
+  * [x] `ServeSiteFile`
+* [x] Move helper logic:
 
-  * [ ] `resolveSiteFile`
-  * [ ] `currentSiteRuntime`
-  * [ ] `SystemDatabasePolicy`
-  * [ ] `databaseAllowed`
-  * [ ] `runtimeDecisionFromViolations`
-* [ ] Replace direct `server` type references with `domain` and `settings`.
-* [ ] Move `site_read_service_test.go`.
-* [ ] Run tests.
+  * [x] `resolveSiteFile`
+  * [x] `currentSiteRuntime`
+  * [x] `SystemDatabasePolicy`
+  * [x] `databaseAllowed`
+  * [x] `runtimeDecisionFromViolations`
+* [x] Replace direct `server` type references with `domain` and `settings`.
+* [x] Move `site_read_service_test.go`.
+* [x] Run tests.
 
 ## Phase 7: Extract site write service
 

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	appsettings "quack/internal/settings"
+	"quack/internal/sites"
 )
 
 type SiteWriteService interface {
@@ -123,7 +124,7 @@ func (s siteWriteService) ReconcilePolicyViolations(ctx context.Context) error {
 	for _, manifest := range manifests {
 		enabled := appsettings.ParseBool(manifest.Settings[appsettings.SettingDatabaseFeature])
 		required := appsettings.ParseBool(manifest.Settings[appsettings.SettingDatabaseFeatureRequired])
-		allowed, reason, err := databaseAllowed(ctx, s.hot, AdminUser{}, manifest.Site)
+		allowed, reason, err := sites.DatabaseAllowed(ctx, s.hot, AdminUser{}, manifest.Site)
 		if err != nil {
 			return err
 		}

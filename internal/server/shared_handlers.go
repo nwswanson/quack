@@ -101,7 +101,7 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 	var maxBytesErr *http.MaxBytesError
 	var limitErr uploadLimitError
 	var badRequest badArchiveError
-	var forbidden forbiddenPolicyError
+	var forbidden sites.ForbiddenPolicyError
 
 	switch {
 	case errors.As(err, &maxBytesErr):

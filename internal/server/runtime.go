@@ -15,15 +15,3 @@ const (
 )
 
 type SiteRuntimeDecision = domain.SiteRuntimeDecision
-
-type forbiddenPolicyError struct {
-	err error
-}
-
-func (e forbiddenPolicyError) Error() string {
-	return e.err.Error()
-}
-
-func (e forbiddenPolicyError) Unwrap() error {
-	return e.err
-}

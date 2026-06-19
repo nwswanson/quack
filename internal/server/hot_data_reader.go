@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"strings"
+
+	"quack/internal/sites"
 )
 
 type HotDataReader interface {
@@ -126,7 +128,7 @@ func (r passthroughHotDataReader) ServeSiteFile(ctx context.Context, site string
 	if err != nil {
 		return ServeSiteFileDecision{}, err
 	}
-	return resolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
+	return sites.ResolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
