@@ -32,7 +32,7 @@ func (h *handler) authorizedAPIUser(r *http.Request) (AdminUser, bool, error) {
 		return AdminUser{}, true, nil
 	}
 	if hasBearerToken {
-		user, ok, err := h.db.FindUserByToken(r.Context(), requestToken)
+		user, ok, err := h.users.FindUserByToken(r.Context(), requestToken)
 		if err != nil || ok {
 			return user, ok, err
 		}

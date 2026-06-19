@@ -79,7 +79,7 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 	username := strings.TrimSpace(r.Form.Get("username"))
 	password := r.Form.Get("password")
-	user, ok, err := h.db.AuthenticateAdmin(r.Context(), username, password)
+	user, ok, err := h.users.AuthenticateAdmin(r.Context(), username, password)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "admin login failed", "username", username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -91,7 +91,7 @@ func (h *handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.db.CreateAdminSession(r.Context(), user.ID)
+	token, err := h.sessions.CreateAdminSession(r.Context(), user.ID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "create admin session failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -112,7 +112,7 @@ func (h *handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie, err := r.Cookie(adminSessionCookieName)
 	if err == nil && cookie.Value != "" {
-		if err := h.db.DeleteAdminSession(r.Context(), cookie.Value); err != nil {
+		if err := h.sessions.DeleteAdminSession(r.Context(), cookie.Value); err != nil {
 			slog.ErrorContext(r.Context(), "delete admin session failed", "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -144,7 +144,7 @@ func (h *handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 		h.renderAdminPageWithMessage(w, r, user, "Unable to read user form.", "")
 		return
 	}
-	created, err := h.db.CreateUser(r.Context(), r.Form.Get("username"), r.Form.Get("admin_priv"))
+	created, err := h.users.CreateUser(r.Context(), r.Form.Get("username"), r.Form.Get("admin_priv"))
 	if err != nil {
 		slog.WarnContext(r.Context(), "create admin user failed", "username", r.Form.Get("username"), "error", err)
 		h.renderAdminPageWithMessage(w, r, user, err.Error(), "")
@@ -271,7 +271,7 @@ func (d adminPageData) HasCreatedUser() bool {
 }
 
 func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData, error) {
-	sites, err := h.db.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
+	sites, err := h.users.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
 	if err != nil {
 		return adminPageData{}, err
 	}
@@ -333,7 +333,7 @@ func (h *handler) currentAdminUser(r *http.Request) (AdminUser, bool, error) {
 	if err != nil || cookie.Value == "" {
 		return AdminUser{}, false, nil
 	}
-	return h.db.FindAdminSession(r.Context(), cookie.Value)
+	return h.sessions.FindAdminSession(r.Context(), cookie.Value)
 }
 
 func (h *handler) requireAdminSameOrigin(w http.ResponseWriter, r *http.Request) bool {
@@ -423,15 +423,15 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 			protocol.WriteError(w, http.StatusForbidden, "not allowed to list all sites")
 			return
 		}
-		sites, err = h.db.ListPublishedSites(r.Context(), user.ID, true)
+		sites, err = h.users.ListPublishedSites(r.Context(), user.ID, true)
 	case username != "":
 		if !Can(user, "sites.view_all") {
 			protocol.WriteError(w, http.StatusForbidden, "not allowed to list another user's sites")
 			return
 		}
-		sites, err = h.db.ListPublishedSitesByUsername(r.Context(), username)
+		sites, err = h.users.ListPublishedSitesByUsername(r.Context(), username)
 	default:
-		sites, err = h.db.ListPublishedSites(r.Context(), user.ID, false)
+		sites, err = h.users.ListPublishedSites(r.Context(), user.ID, false)
 	}
 	if err != nil {
 		slog.ErrorContext(r.Context(), "list sites failed", "username", user.Username, "target_username", username, "all", includeAll, "error", err)
@@ -617,7 +617,7 @@ func (h *handler) handleSiteRevisionRoutes(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *handler) handleListRevisions(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	revisions, err := h.db.ListSiteRevisions(r.Context(), user, site, sha256Hex(site))
+	revisions, err := h.revisions.ListSiteRevisions(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")

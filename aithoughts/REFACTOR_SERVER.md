@@ -542,28 +542,28 @@ Purpose: pull the tar/archive upload workflow out of HTTP handlers.
 Purpose: leave `server` as transport composition and routing, not business logic.
 
 * [x] Keep `server.New` as the composition root.
-* [ ] Keep/rename files around HTTP concerns only:
+* [x] Keep/rename files around HTTP concerns only:
 
-  * [ ] `server.go`
-  * [ ] `router.go`
-  * [ ] `middleware.go`
-  * [ ] `handler.go`
-  * [ ] `auth.go`
-* [ ] Move request logger into `middleware.go`.
-* [ ] Move admin-host router into `router.go`.
-* [ ] Make handler dependencies explicit:
+  * [x] `server.go`
+  * [x] `router.go`
+  * [x] `middleware.go`
+  * [x] `handler.go`
+  * [x] `auth.go`
+* [x] Move request logger into `middleware.go`.
+* [x] Move admin-host router into `router.go`.
+* [x] Make handler dependencies explicit:
 
-  * [ ] token/auth config
-  * [ ] storage service
+  * [x] token/auth config
+  * [x] storage service
   * [x] upload service
   * [x] site read service
   * [x] site write service
-  * [ ] user/session repositories
-* [ ] Remove fallback constructors from handler methods if possible:
+  * [x] user/session repositories
+* [x] Remove fallback constructors from handler methods if possible:
 
   * [x] `siteReadService()`
   * [x] `siteWriteService()`
-* [ ] Run tests.
+* [x] Run tests.
 
 ## Phase 11: Optional HTTP package split
 

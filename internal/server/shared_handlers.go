@@ -8,19 +8,8 @@ import (
 
 	"quack/internal/protocol"
 	"quack/internal/sites"
-	appstorage "quack/internal/storage"
 	appuploads "quack/internal/uploads"
 )
-
-type handler struct {
-	token                string
-	store                appstorage.Storage
-	db                   Database
-	read                 SiteReadService
-	write                SiteWriteService
-	uploads              appuploads.Service
-	allowUnauthenticated bool
-}
 
 func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	site, user, policy, ok := h.validUploadRequest(w, r)
