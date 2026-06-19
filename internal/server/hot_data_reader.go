@@ -1,133 +1,19 @@
 package server
 
-import (
-	"context"
-	"strings"
+import "quack/internal/hotdata"
 
-	"quack/internal/sites"
-)
+type HotDataReader = hotdata.HotDataReader
+type HotDataInvalidator = hotdata.HotDataInvalidator
+type MutableHotDataReader = hotdata.MutableHotDataReader
 
-type HotDataReader interface {
-	GetServerSettings(ctx context.Context) (ServerSettings, error)
-	LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error)
-	LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error)
-	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
-	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error)
-	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
-	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
-	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
+func NewPassthroughHotDataReader(db hotdata.Source) HotDataReader {
+	return hotdata.NewPassthroughHotDataReader(db)
 }
 
-type hotDataSource interface {
-	GetServerSettings(ctx context.Context) (ServerSettings, error)
-	LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error)
-	LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error)
-	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
-	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error)
-	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
-	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
+func NewMemoryHotDataReader(source HotDataReader, opts MemoryHotDataReaderOptions) MutableHotDataReader {
+	return hotdata.NewMemoryHotDataReader(source, opts)
 }
 
-type MutableHotDataReader interface {
-	HotDataReader
-	HotDataInvalidator
-}
-
-type passthroughHotDataReader struct {
-	db hotDataSource
-}
-
-func NewPassthroughHotDataReader(db hotDataSource) HotDataReader {
-	return passthroughHotDataReader{db: db}
-}
-
-func (r passthroughHotDataReader) GetServerSettings(ctx context.Context) (ServerSettings, error) {
-	settings, err := r.db.GetServerSettings(ctx)
-	if err != nil {
-		return ServerSettings{}, err
-	}
-	settings.Locked = cloneBoolMap(settings.Locked)
-	return settings, nil
-}
-
-func (r passthroughHotDataReader) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
-	policies, err := r.db.LoadPolicies(ctx, scopes)
-	if err != nil {
-		return nil, err
-	}
-	return append([]PolicyRecord(nil), policies...), nil
-}
-
-func (r passthroughHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
-	settings, err := r.db.LoadUploadSettings(ctx, siteSHA, version)
-	if err != nil {
-		return nil, err
-	}
-	return cloneStringMap(settings), nil
-}
-
-func (r passthroughHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
-	manifests, err := r.db.ListCurrentSiteManifests(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return cloneCurrentSiteManifests(manifests), nil
-}
-
-func (r passthroughHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
-	violations, err := r.db.ListPolicyViolations(ctx, siteSHA, version)
-	if err != nil {
-		return nil, err
-	}
-	return append([]PolicyViolation(nil), violations...), nil
-}
-
-func (r passthroughHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
-	return r.db.FindCurrentSiteFile(ctx, site, relativePath)
-}
-
-func (r passthroughHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
-	files, siteExists, err := r.db.ListCurrentSiteFiles(ctx, site)
-	if err != nil {
-		return nil, false, err
-	}
-	return append([]UploadFileRecord(nil), files...), siteExists, nil
-}
-
-func (r passthroughHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
-	settings, err := r.GetServerSettings(ctx)
-	if err != nil {
-		return ServeSiteFileDecision{}, err
-	}
-	return sites.ResolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
-}
-
-func cloneStringMap(in map[string]string) map[string]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func cloneBoolMap(in map[string]bool) map[string]bool {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]bool, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func cloneCurrentSiteManifests(in []CurrentSiteManifest) []CurrentSiteManifest {
-	out := append([]CurrentSiteManifest(nil), in...)
-	for i := range out {
-		out[i].Settings = cloneStringMap(out[i].Settings)
-	}
-	return out
+func NewOtterHotDataReader(source HotDataReader, opts OtterHotDataReaderOptions) MutableHotDataReader {
+	return hotdata.NewOtterHotDataReader(source, opts)
 }

@@ -1,29 +1,32 @@
-package server
+package hotdata
 
 import (
 	"context"
 	"testing"
+
+	"quack/internal/domain"
+	appsettings "quack/internal/settings"
 )
 
 func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 	db := &readerBackingDatabase{
-		settings: ServerSettings{
-			MaxUploadBytes: DefaultMaxUploadBytes,
-			MaxUploadFiles: DefaultMaxUploadFiles,
+		settings: domain.ServerSettings{
+			MaxUploadBytes: appsettings.DefaultMaxUploadBytes,
+			MaxUploadFiles: appsettings.DefaultMaxUploadFiles,
 			LogLevel:       "warn",
 			Locked:         map[string]bool{"default_site": true},
 		},
-		policies: []PolicyRecord{{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "allow"}},
+		policies: []domain.PolicyRecord{{ScopeType: domain.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: "allow"}},
 		uploadSettings: map[string]string{
-			SettingDatabaseFeature: "true",
+			appsettings.SettingDatabaseFeature: "true",
 		},
-		manifests: []CurrentSiteManifest{{
+		manifests: []domain.CurrentSiteManifest{{
 			Site:     "example.com",
 			SiteSHA:  "site-sha",
 			Version:  3,
-			Settings: map[string]string{SettingDatabaseFeatureRequired: "true"},
+			Settings: map[string]string{appsettings.SettingDatabaseFeatureRequired: "true"},
 		}},
-		violations: []PolicyViolation{{SiteSHA: "site-sha", UploadVersion: 3, Key: SettingDatabaseFeature}},
+		violations: []domain.PolicyViolation{{SiteSHA: "site-sha", UploadVersion: 3, Key: appsettings.SettingDatabaseFeature}},
 	}
 	reader := NewPassthroughHotDataReader(db)
 	ctx := context.Background()
@@ -37,7 +40,7 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 		t.Fatalf("GetServerSettings leaked Locked map mutation")
 	}
 
-	policies, err := reader.LoadPolicies(ctx, []PolicyScope{{Type: ScopeSystem, ID: ""}})
+	policies, err := reader.LoadPolicies(ctx, []domain.PolicyScope{{Type: domain.ScopeSystem, ID: ""}})
 	if err != nil {
 		t.Fatalf("LoadPolicies error = %v", err)
 	}
@@ -50,8 +53,8 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadUploadSettings error = %v", err)
 	}
-	uploadSettings[SettingDatabaseFeature] = "false"
-	if db.uploadSettings[SettingDatabaseFeature] != "true" {
+	uploadSettings[appsettings.SettingDatabaseFeature] = "false"
+	if db.uploadSettings[appsettings.SettingDatabaseFeature] != "true" {
 		t.Fatalf("LoadUploadSettings leaked map mutation")
 	}
 
@@ -60,8 +63,8 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 		t.Fatalf("ListCurrentSiteManifests error = %v", err)
 	}
 	manifests[0].Site = "mutated.example"
-	manifests[0].Settings[SettingDatabaseFeatureRequired] = "false"
-	if db.manifests[0].Site != "example.com" || db.manifests[0].Settings[SettingDatabaseFeatureRequired] != "true" {
+	manifests[0].Settings[appsettings.SettingDatabaseFeatureRequired] = "false"
+	if db.manifests[0].Site != "example.com" || db.manifests[0].Settings[appsettings.SettingDatabaseFeatureRequired] != "true" {
 		t.Fatalf("ListCurrentSiteManifests leaked mutable result")
 	}
 
@@ -70,14 +73,14 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 		t.Fatalf("ListPolicyViolations error = %v", err)
 	}
 	violations[0].Key = "mutated"
-	if db.violations[0].Key != SettingDatabaseFeature {
+	if db.violations[0].Key != appsettings.SettingDatabaseFeature {
 		t.Fatalf("ListPolicyViolations leaked slice mutation")
 	}
 }
 
 func TestPassthroughHotDataReaderFindCurrentSiteFileDelegates(t *testing.T) {
 	db := &readerBackingDatabase{
-		file: UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", FileSHA: "sha", Bytes: 12},
+		file: domain.UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", FileSHA: "sha", Bytes: 12},
 	}
 	reader := NewPassthroughHotDataReader(db)
 
@@ -91,20 +94,19 @@ func TestPassthroughHotDataReaderFindCurrentSiteFileDelegates(t *testing.T) {
 }
 
 type readerBackingDatabase struct {
-	Database
-	settings       ServerSettings
-	policies       []PolicyRecord
+	settings       domain.ServerSettings
+	policies       []domain.PolicyRecord
 	uploadSettings map[string]string
-	manifests      []CurrentSiteManifest
-	violations     []PolicyViolation
-	file           UploadFileRecord
+	manifests      []domain.CurrentSiteManifest
+	violations     []domain.PolicyViolation
+	file           domain.UploadFileRecord
 }
 
-func (db *readerBackingDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+func (db *readerBackingDatabase) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	return db.settings, nil
 }
 
-func (db *readerBackingDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
+func (db *readerBackingDatabase) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
 	return db.policies, nil
 }
 
@@ -112,18 +114,18 @@ func (db *readerBackingDatabase) LoadUploadSettings(ctx context.Context, siteSHA
 	return db.uploadSettings, nil
 }
 
-func (db *readerBackingDatabase) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
+func (db *readerBackingDatabase) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	return db.manifests, nil
 }
 
-func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	return db.violations, nil
 }
 
-func (db *readerBackingDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+func (db *readerBackingDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
 	return db.file, true, true, nil
 }
 
-func (db *readerBackingDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
-	return []UploadFileRecord{db.file}, true, nil
+func (db *readerBackingDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
+	return []domain.UploadFileRecord{db.file}, true, nil
 }

@@ -1,4 +1,4 @@
-package server
+package hotdata
 
 import (
 	"context"
@@ -6,12 +6,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"quack/internal/domain"
+	appsettings "quack/internal/settings"
+	"quack/internal/sites"
 )
 
 func TestMemoryHotDataReaderCachesServerSettingsUntilTTL(t *testing.T) {
 	now := time.Unix(100, 0)
 	source := &countingHotDataReader{
-		settings: ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{
 		TTL:         time.Second,
@@ -40,7 +44,7 @@ func TestMemoryHotDataReaderCachesServerSettingsUntilTTL(t *testing.T) {
 
 func TestMemoryHotDataReaderCachesNegativeFileLookup(t *testing.T) {
 	source := &countingHotDataReader{
-		file:       UploadFileRecord{},
+		file:       domain.UploadFileRecord{},
 		fileOK:     false,
 		siteExists: true,
 	}
@@ -62,7 +66,7 @@ func TestMemoryHotDataReaderCachesNegativeFileLookup(t *testing.T) {
 
 func TestMemoryHotDataReaderDoesNotCacheErrors(t *testing.T) {
 	source := &countingHotDataReader{
-		settings: ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
 		err:      fmt.Errorf("database unavailable"),
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Second, NegativeTTL: time.Second})
@@ -81,7 +85,7 @@ func TestMemoryHotDataReaderDoesNotCacheErrors(t *testing.T) {
 
 func TestMemoryHotDataReaderSingleflightsConcurrentMisses(t *testing.T) {
 	source := &countingHotDataReader{
-		settings: ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
 		block:    make(chan struct{}),
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Second, NegativeTTL: time.Second})
@@ -115,12 +119,12 @@ func TestMemoryHotDataReaderSingleflightsConcurrentMisses(t *testing.T) {
 
 func TestMemoryHotDataReaderReturnsMutableCopies(t *testing.T) {
 	source := &countingHotDataReader{
-		settings: ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn", Locked: map[string]bool{"default_site": true}},
-		manifests: []CurrentSiteManifest{{
+		settings: domain.ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn", Locked: map[string]bool{"default_site": true}},
+		manifests: []domain.CurrentSiteManifest{{
 			Site:     "example.com",
 			SiteSHA:  "site-sha",
 			Version:  1,
-			Settings: map[string]string{SettingDatabaseFeature: "true"},
+			Settings: map[string]string{appsettings.SettingDatabaseFeature: "true"},
 		}},
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Second, NegativeTTL: time.Second})
@@ -142,20 +146,20 @@ func TestMemoryHotDataReaderReturnsMutableCopies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCurrentSiteManifests error = %v", err)
 	}
-	manifests[0].Settings[SettingDatabaseFeature] = "false"
+	manifests[0].Settings[appsettings.SettingDatabaseFeature] = "false"
 	manifestsAgain, err := hot.ListCurrentSiteManifests(context.Background())
 	if err != nil {
 		t.Fatalf("second ListCurrentSiteManifests error = %v", err)
 	}
-	if manifestsAgain[0].Settings[SettingDatabaseFeature] != "true" {
+	if manifestsAgain[0].Settings[appsettings.SettingDatabaseFeature] != "true" {
 		t.Fatalf("cached manifest settings map was mutated")
 	}
 }
 
 func TestMemoryHotDataReaderInvalidation(t *testing.T) {
 	source := &countingHotDataReader{
-		settings: ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
-		file:     UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", Bytes: 10},
+		settings: domain.ServerSettings{MaxUploadBytes: 1, MaxUploadFiles: 2, LogLevel: "warn"},
+		file:     domain.UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", Bytes: 10},
 		fileOK:   true,
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute})
@@ -189,11 +193,11 @@ func TestMemoryHotDataReaderInvalidation(t *testing.T) {
 
 func TestMemoryHotDataReaderCachesServeSiteFileDecision(t *testing.T) {
 	source := &countingHotDataReader{
-		serveDecision: ServeSiteFileDecision{
-			Status:       ServeSiteFileFound,
+		serveDecision: sites.ServeSiteFileDecision{
+			Status:       sites.ServeSiteFileFound,
 			Site:         "example.com",
 			RelativePath: "index.html",
-			File:         UploadFileRecord{RelativePath: "index.html", BlobPath: "old-blob"},
+			File:         domain.UploadFileRecord{RelativePath: "index.html", BlobPath: "old-blob"},
 		},
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute})
@@ -232,13 +236,13 @@ func TestMemoryHotDataReaderCachesServeSiteFileDecision(t *testing.T) {
 type countingHotDataReader struct {
 	mu sync.Mutex
 
-	settings      ServerSettings
-	manifests     []CurrentSiteManifest
-	file          UploadFileRecord
+	settings      domain.ServerSettings
+	manifests     []domain.CurrentSiteManifest
+	file          domain.UploadFileRecord
 	fileOK        bool
 	siteExists    bool
-	files         []UploadFileRecord
-	serveDecision ServeSiteFileDecision
+	files         []domain.UploadFileRecord
+	serveDecision sites.ServeSiteFileDecision
 	err           error
 	block         chan struct{}
 
@@ -255,18 +259,18 @@ func (r *countingHotDataReader) wait() {
 	}
 }
 
-func (r *countingHotDataReader) GetServerSettings(ctx context.Context) (ServerSettings, error) {
+func (r *countingHotDataReader) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	r.mu.Lock()
 	r.serverSettingsCalls++
 	r.mu.Unlock()
 	r.wait()
 	if r.err != nil {
-		return ServerSettings{}, r.err
+		return domain.ServerSettings{}, r.err
 	}
 	return r.settings, nil
 }
 
-func (r *countingHotDataReader) LoadPolicies(ctx context.Context, scopes []PolicyScope) ([]PolicyRecord, error) {
+func (r *countingHotDataReader) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
 	return nil, r.err
 }
 
@@ -274,7 +278,7 @@ func (r *countingHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA 
 	return nil, r.err
 }
 
-func (r *countingHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error) {
+func (r *countingHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	r.mu.Lock()
 	r.manifestCalls++
 	r.mu.Unlock()
@@ -284,21 +288,21 @@ func (r *countingHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([
 	return r.manifests, nil
 }
 
-func (r *countingHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error) {
+func (r *countingHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	return nil, r.err
 }
 
-func (r *countingHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+func (r *countingHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
 	r.mu.Lock()
 	r.fileCalls++
 	r.mu.Unlock()
 	if r.err != nil {
-		return UploadFileRecord{}, false, false, r.err
+		return domain.UploadFileRecord{}, false, false, r.err
 	}
 	return r.file, r.fileOK, r.siteExists, nil
 }
 
-func (r *countingHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+func (r *countingHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
 	r.mu.Lock()
 	r.filesCalls++
 	r.mu.Unlock()
@@ -311,15 +315,15 @@ func (r *countingHotDataReader) ListCurrentSiteFiles(ctx context.Context, site s
 	if r.file.RelativePath == "" {
 		return nil, r.siteExists, nil
 	}
-	return []UploadFileRecord{r.file}, r.siteExists, nil
+	return []domain.UploadFileRecord{r.file}, r.siteExists, nil
 }
 
-func (r *countingHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+func (r *countingHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error) {
 	r.mu.Lock()
 	r.serveCalls++
 	r.mu.Unlock()
 	if r.err != nil {
-		return ServeSiteFileDecision{}, r.err
+		return sites.ServeSiteFileDecision{}, r.err
 	}
 	return r.serveDecision, nil
 }

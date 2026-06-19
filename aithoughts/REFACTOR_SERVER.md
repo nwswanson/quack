@@ -478,30 +478,30 @@ Purpose: keep mutation/invalidation behavior out of HTTP and separate from SQLit
 
 Purpose: make cache/read-through behavior independent of the HTTP server package.
 
-* [ ] Create `internal/hotdata`.
-* [ ] Move interfaces:
+* [x] Create `internal/hotdata`.
+* [x] Move interfaces:
 
-  * [ ] `HotDataReader`
-  * [ ] `HotDataInvalidator`
-  * [ ] `MutableHotDataReader`
-* [ ] Move passthrough reader:
+  * [x] `HotDataReader`
+  * [x] `HotDataInvalidator`
+  * [x] `MutableHotDataReader`
+* [x] Move passthrough reader:
 
-  * [ ] `NewPassthroughHotDataReader`
-  * [ ] clone helpers
-* [ ] Move memory reader:
+  * [x] `NewPassthroughHotDataReader`
+  * [x] clone helpers
+* [x] Move memory reader:
 
-  * [ ] `MemoryHotDataReaderOptions`
-  * [ ] `NewMemoryHotDataReader`
-* [ ] Move otter reader:
+  * [x] `MemoryHotDataReaderOptions`
+  * [x] `NewMemoryHotDataReader`
+* [x] Move otter reader:
 
-  * [ ] `OtterHotDataReaderOptions`
-  * [ ] `NewOtterHotDataReader`
-* [ ] Decide whether `ServeSiteFileDecision` cache belongs in:
+  * [x] `OtterHotDataReaderOptions`
+  * [x] `NewOtterHotDataReader`
+* [x] Decide whether `ServeSiteFileDecision` cache belongs in:
 
-  * [ ] `hotdata`, if no cycle is introduced
+  * [x] `hotdata`, if no cycle is introduced
   * [ ] `sites`, if keeping serving decisions closer to domain logic is cleaner
-* [ ] Move hot-data tests and benchmarks.
-* [ ] Run tests.
+* [x] Move hot-data tests and benchmarks.
+* [x] Run tests.
 
 ## Phase 9: Extract upload service
 
