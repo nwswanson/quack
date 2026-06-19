@@ -8,8 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"quack/internal/hotdata"
 	appsettings "quack/internal/settings"
+	"quack/internal/sites"
 	appstorage "quack/internal/storage"
+	"quack/internal/uploads"
 )
 
 const (
@@ -32,17 +35,19 @@ func New(addr string, token string, store appstorage.Storage, db Database, opts 
 	}
 
 	mux := http.NewServeMux()
-	source := NewPassthroughHotDataReader(db)
-	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{})
-	//hot := NewOtterHotDataReader(source, OtterHotDataReaderOptions{})
-	read := NewSiteReadService(hot)
-	write := NewSiteWriteService(db, hot, hot)
+	source := hotdata.NewPassthroughHotDataReader(db)
+	hot := hotdata.NewMemoryHotDataReader(source, hotdata.MemoryHotDataReaderOptions{})
+	//hot := hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{})
+	read := sites.NewSiteReadService(hot)
+	write := sites.NewSiteWriteService(db, hot, hot)
+	uploadService := uploads.NewService(db, store, read, write)
 	h := &handler{
 		token:                token,
 		store:                store,
 		db:                   db,
 		read:                 read,
 		write:                write,
+		uploads:              uploadService,
 		allowUnauthenticated: opts.AllowUnauthenticated,
 	}
 	h.adminRoutes(mux)

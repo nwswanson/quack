@@ -2,6 +2,8 @@ package server
 
 import (
 	"testing"
+
+	"quack/internal/protocol"
 )
 
 func TestSanitizeServingPath(t *testing.T) {
@@ -13,7 +15,7 @@ func TestSanitizeServingPath(t *testing.T) {
 	}
 
 	for input, want := range tests {
-		got, err := sanitizeServingPath(input)
+		got, err := protocol.SanitizeServingPath(input)
 		if err != nil {
 			t.Fatalf("sanitizeServingPath(%q) returned error: %v", input, err)
 		}

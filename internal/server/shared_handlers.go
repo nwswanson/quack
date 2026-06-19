@@ -1,11 +1,7 @@
 package server
 
 import (
-	"archive/tar"
-	"context"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,6 +9,7 @@ import (
 	"quack/internal/protocol"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
+	appuploads "quack/internal/uploads"
 )
 
 type handler struct {
@@ -21,22 +18,8 @@ type handler struct {
 	db                   Database
 	read                 SiteReadService
 	write                SiteWriteService
+	uploads              appuploads.Service
 	allowUnauthenticated bool
-}
-
-func (h *handler) siteReadService() SiteReadService {
-	if h.read != nil {
-		return h.read
-	}
-	return NewSiteReadService(NewPassthroughHotDataReader(h.db))
-}
-
-func (h *handler) siteWriteService() SiteWriteService {
-	if h.write != nil {
-		return h.write
-	}
-	hot := NewPassthroughHotDataReader(h.db)
-	return NewSiteWriteService(h.db, hot, nil)
 }
 
 func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +28,12 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.uploadArchive(r, site, user, policy)
+	resp, err := h.uploads.UploadArchive(r.Context(), appuploads.Request{
+		Site:   site,
+		User:   user,
+		Policy: policy,
+		Body:   r.Body,
+	})
 	if err != nil {
 		h.writeUploadError(w, err)
 		return
@@ -83,7 +71,7 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 			protocol.WriteError(w, http.StatusBadRequest, err.Error())
 			return "", user, policy, false
 		}
-		policy, err = h.siteReadService().UploadPolicy(r.Context(), user, site)
+		policy, err = h.read.UploadPolicy(r.Context(), user, site)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "resolve upload policy failed", "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -99,8 +87,8 @@ func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (st
 
 func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 	var maxBytesErr *http.MaxBytesError
-	var limitErr uploadLimitError
-	var badRequest badArchiveError
+	var limitErr appuploads.LimitError
+	var badRequest appuploads.BadArchiveError
 	var forbidden sites.ForbiddenPolicyError
 
 	switch {
@@ -121,176 +109,6 @@ func (h *handler) writeUploadError(w http.ResponseWriter, err error) {
 
 func (h *handler) authorizedUploadUser(r *http.Request) (AdminUser, bool, error) {
 	return h.authorizedAPIUser(r)
-}
-
-func (h *handler) uploadArchive(r *http.Request, site string, user AdminUser, policy UploadPolicy) (protocol.UploadArchiveResponse, error) {
-	ctx := r.Context()
-	siteSHA := sha256Hex(site)
-
-	upload, err := h.db.BeginUpload(ctx, site, siteSHA, user.ID, user.IsAdmin())
-	if err != nil {
-		return protocol.UploadArchiveResponse{}, fmt.Errorf("begin upload: %w", err)
-	}
-	slog.WarnContext(ctx, "upload started", "site", upload.Site, "version", upload.Version)
-
-	files, bytes, manifest, err := h.acceptArchive(r, &upload, policy)
-	if err != nil {
-		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
-			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
-		}
-		slog.WarnContext(ctx, "upload failed", "site", upload.Site, "version", upload.Version, "error", err)
-		return protocol.UploadArchiveResponse{}, err
-	}
-
-	if err := h.siteReadService().ValidateUploadManifest(ctx, user, site, manifest); err != nil {
-		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
-			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
-		}
-		slog.WarnContext(ctx, "upload rejected by policy", "site", upload.Site, "version", upload.Version, "error", err)
-		return protocol.UploadArchiveResponse{}, err
-	}
-	if err := h.siteWriteService().SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, ManifestSettings(manifest)); err != nil {
-		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
-			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
-		}
-		return protocol.UploadArchiveResponse{}, fmt.Errorf("save upload settings: %w", err)
-	}
-
-	if err := h.siteWriteService().FinishUpload(ctx, upload); err != nil {
-		if markErr := h.db.FailUpload(ctx, upload, err.Error()); markErr != nil {
-			slog.ErrorContext(ctx, "mark upload failed", "site", upload.Site, "version", upload.Version, "upload_error", err, "error", markErr)
-		}
-		slog.ErrorContext(ctx, "finish upload metadata failed", "site", upload.Site, "version", upload.Version, "error", err)
-		return protocol.UploadArchiveResponse{}, fmt.Errorf("finish upload metadata: %w", err)
-	}
-	if err := h.pruneRetainedVersions(ctx, upload, policy.MaxRetainedVersions.Value); err != nil {
-		return protocol.UploadArchiveResponse{}, err
-	}
-	if user.ID > 0 {
-		if err := h.db.LinkUserSite(ctx, user.ID, upload.SiteSHA); err != nil {
-			slog.ErrorContext(ctx, "link user site failed", "site", upload.Site, "version", upload.Version, "username", user.Username, "error", err)
-			return protocol.UploadArchiveResponse{}, fmt.Errorf("link user site: %w", err)
-		}
-	}
-
-	slog.WarnContext(ctx, "upload finished", "site", upload.Site, "version", upload.Version, "files", files, "bytes", bytes)
-	return protocol.UploadArchiveResponse{
-		OK:      true,
-		Site:    upload.Site,
-		Version: upload.Version,
-		Files:   files,
-		Bytes:   bytes,
-	}, nil
-}
-
-func (h *handler) pruneRetainedVersions(ctx context.Context, upload UploadRecord, maxRetainedVersions int64) error {
-	if maxRetainedVersions <= 0 {
-		return nil
-	}
-	versions, err := h.db.PruneSiteVersions(ctx, upload.SiteSHA, maxRetainedVersions)
-	if err != nil {
-		return fmt.Errorf("prune site versions: %w", err)
-	}
-	for _, version := range versions {
-		if err := h.store.DeleteSiteVersion(ctx, upload.SiteSHA, version); err != nil {
-			return fmt.Errorf("delete pruned site version blobs: site=%s version=%d: %w", upload.Site, version, err)
-		}
-		slog.WarnContext(ctx, "site version pruned", "site", upload.Site, "version", version, "max_retained_versions", maxRetainedVersions)
-	}
-	return nil
-}
-
-func (h *handler) acceptArchive(r *http.Request, upload *UploadRecord, policy UploadPolicy) (int64, int64, SiteManifest, error) {
-	ctx := r.Context()
-	tr := tar.NewReader(r.Body)
-
-	manifest := protocol.DefaultSiteManifest()
-	var files, bytes int64
-	for {
-		header, err := tr.Next()
-		switch {
-		case errors.Is(err, io.EOF):
-			return files, bytes, manifest, nil
-		case err != nil:
-			return 0, 0, manifest, badArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
-		}
-
-		if protocol.IsSiteManifestArchiveEntry(header) {
-			parsed, err := protocol.ParseSiteManifest(tr, header.Size)
-			if err != nil {
-				return 0, 0, manifest, badArchiveError{err: err}
-			}
-			manifest = parsed
-			continue
-		}
-
-		rec, n, err := h.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files, policy)
-		if err != nil {
-			return 0, 0, manifest, err
-		}
-		if rec == nil {
-			continue
-		}
-
-		upload.Files = append(upload.Files, *rec)
-		files++
-		bytes += n
-	}
-}
-
-func (h *handler) acceptArchiveEntry(
-	ctx context.Context,
-	body io.Reader,
-	header *tar.Header,
-	siteSHA string,
-	version, files int64,
-	policy UploadPolicy,
-) (*UploadFileRecord, int64, error) {
-	if err := protocol.ValidateArchivePath(header.Name); err != nil {
-		return nil, 0, badArchiveError{err: err}
-	}
-
-	switch header.Typeflag {
-	case tar.TypeDir:
-		return nil, 0, nil
-	case tar.TypeReg, tar.TypeRegA:
-		return h.acceptRegularFile(ctx, body, header, siteSHA, version, files, policy)
-	default:
-		return nil, 0, badArchiveError{err: fmt.Errorf("unsupported archive entry type for %s", header.Name)}
-	}
-}
-
-func (h *handler) acceptRegularFile(
-	ctx context.Context,
-	body io.Reader,
-	header *tar.Header,
-	siteSHA string,
-	version, files int64,
-	policy UploadPolicy,
-) (*UploadFileRecord, int64, error) {
-	if policy.MaxUploadFiles.Value > 0 && files >= policy.MaxUploadFiles.Value {
-		return nil, 0, uploadLimitError{err: fmt.Errorf("upload exceeds maximum file count: %d", policy.MaxUploadFiles.Value)}
-	}
-
-	path, err := sanitizeServingPath(header.Name)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	result, err := h.store.AcceptFile(ctx, StoredFile{
-		SiteSHA: siteSHA, Version: version, RelativePath: path,
-		Mode: header.Mode, Size: header.Size, Body: body,
-	})
-	if err != nil {
-		return nil, 0, fmt.Errorf("accept file %s: %w", header.Name, err)
-	}
-
-	return &UploadFileRecord{
-		RelativePath: path,
-		BlobPath:     result.BlobPath,
-		FileSHA:      result.FileSHA,
-		Bytes:        result.Bytes,
-	}, result.Bytes, nil
 }
 
 func siteFromHost(host string) string {
@@ -327,36 +145,4 @@ func siteFromSuffixedSitePath(urlPath string, suffix string) (string, bool) {
 
 func sha256Hex(value string) string {
 	return sites.HashName(value)
-}
-
-func sanitizeServingPath(name string) (string, error) {
-	out, err := protocol.SanitizeServingPath(name)
-	if err != nil {
-		return "", badArchiveError{err: err}
-	}
-	return out, nil
-}
-
-type badArchiveError struct {
-	err error
-}
-
-func (e badArchiveError) Error() string {
-	return e.err.Error()
-}
-
-func (e badArchiveError) Unwrap() error {
-	return e.err
-}
-
-type uploadLimitError struct {
-	err error
-}
-
-func (e uploadLimitError) Error() string {
-	return e.err.Error()
-}
-
-func (e uploadLimitError) Unwrap() error {
-	return e.err
 }

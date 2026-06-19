@@ -34,7 +34,7 @@ func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
-	decision, err := h.siteReadService().ServeSiteFile(r.Context(), site, urlPath)
+	decision, err := h.read.ServeSiteFile(r.Context(), site, urlPath)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "resolve site file failed", "site", site, "path", urlPath, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")

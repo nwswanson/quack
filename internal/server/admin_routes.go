@@ -189,7 +189,7 @@ func (h *handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "error", err.Error())
 		return
 	}
-	if err := h.siteWriteService().SaveServerSettings(r.Context(), settings); err != nil {
+	if err := h.write.SaveServerSettings(r.Context(), settings); err != nil {
 		slog.ErrorContext(r.Context(), "save server settings failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -232,7 +232,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "error", "Database policy must be inherit, allow, or deny.")
 		return
 	}
-	if err := h.siteWriteService().SavePolicy(r.Context(), PolicyRecord{
+	if err := h.write.SavePolicy(r.Context(), PolicyRecord{
 		ScopeType: ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
 		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
 	}); err != nil {
@@ -240,7 +240,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if err := h.siteWriteService().ReconcilePolicyViolations(r.Context()); err != nil {
+	if err := h.write.ReconcilePolicyViolations(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "reconcile policy violations failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -275,12 +275,12 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 	if err != nil {
 		return adminPageData{}, err
 	}
-	settings, err := h.siteReadService().ServerSettings(r.Context())
+	settings, err := h.read.ServerSettings(r.Context())
 	if err != nil {
 		return adminPageData{}, err
 	}
 	for i := range sites {
-		decision, err := h.siteReadService().CurrentSiteRuntime(r.Context(), sites[i].Site)
+		decision, err := h.read.CurrentSiteRuntime(r.Context(), sites[i].Site)
 		if err != nil {
 			return adminPageData{}, err
 		}
@@ -290,7 +290,7 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 		}
 		sites[i].PolicyReason = decision.Reason
 	}
-	policy, err := h.siteReadService().SystemDatabasePolicy(r.Context())
+	policy, err := h.read.SystemDatabasePolicy(r.Context())
 	if err != nil {
 		return adminPageData{}, err
 	}
@@ -441,7 +441,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 
 	out := protocol.ListSitesResponse{OK: true}
 	for _, site := range sites {
-		decision, err := h.siteReadService().CurrentSiteRuntime(r.Context(), site.Site)
+		decision, err := h.read.CurrentSiteRuntime(r.Context(), site.Site)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site.Site, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -489,14 +489,14 @@ func (h *handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	settings, err := h.siteReadService().ServerSettings(r.Context())
+	settings, err := h.read.ServerSettings(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load server settings failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	settings.DefaultSite = strings.TrimSpace(req.DefaultSite)
-	if err := h.siteWriteService().SaveServerSettings(r.Context(), settings); err != nil {
+	if err := h.write.SaveServerSettings(r.Context(), settings); err != nil {
 		slog.ErrorContext(r.Context(), "save default site failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -532,7 +532,7 @@ func (h *handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	siteSHA := sha256Hex(site)
-	deleted, err := h.siteWriteService().DeleteSite(r.Context(), site, siteSHA)
+	deleted, err := h.write.DeleteSite(r.Context(), site, siteSHA)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -652,7 +652,7 @@ func (h *handler) handleListRevisions(w http.ResponseWriter, r *http.Request, us
 }
 
 func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	rollback, err := h.siteWriteService().RollbackSite(r.Context(), user, site, sha256Hex(site))
+	rollback, err := h.write.RollbackSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -675,7 +675,7 @@ func (h *handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, use
 }
 
 func (h *handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	out, err := h.siteWriteService().UnpublishSite(r.Context(), user, site, sha256Hex(site))
+	out, err := h.write.UnpublishSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -694,7 +694,7 @@ func (h *handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, us
 }
 
 func (h *handler) handlePublishSite(w http.ResponseWriter, r *http.Request, user AdminUser, site string) {
-	out, err := h.siteWriteService().PublishSite(r.Context(), user, site, sha256Hex(site))
+	out, err := h.write.PublishSite(r.Context(), user, site, sha256Hex(site))
 	if err != nil {
 		if errors.Is(err, ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")

@@ -507,41 +507,41 @@ Purpose: make cache/read-through behavior independent of the HTTP server package
 
 Purpose: pull the tar/archive upload workflow out of HTTP handlers.
 
-* [ ] Create `internal/uploads`.
-* [ ] Define an upload service:
+* [x] Create `internal/uploads`.
+* [x] Define an upload service:
 
-  * [ ] `Service`
-  * [ ] `NewService`
-  * [ ] `UploadArchive`
+  * [x] `Service`
+  * [x] `NewService`
+  * [x] `UploadArchive`
 * [ ] Define upload request/result types if protocol response should stay out of the service:
 
-  * [ ] `UploadRequest`
+  * [x] `Request`
   * [ ] `UploadResult`
-* [ ] Move upload flow:
+* [x] Move upload flow:
 
-  * [ ] `uploadArchive`
-  * [ ] `acceptArchive`
-  * [ ] `acceptArchiveEntry`
-  * [ ] `acceptRegularFile`
-  * [ ] `pruneRetainedVersions`
-* [ ] Move upload-specific errors:
+  * [x] `uploadArchive`
+  * [x] `acceptArchive`
+  * [x] `acceptArchiveEntry`
+  * [x] `acceptRegularFile`
+  * [x] `pruneRetainedVersions`
+* [x] Move upload-specific errors:
 
-  * [ ] `badArchiveError`
-  * [ ] `uploadLimitError`
-* [ ] Move manifest helper:
+  * [x] `badArchiveError`
+  * [x] `uploadLimitError`
+* [x] Move manifest helper:
 
-  * [ ] `ManifestSettings`
-* [ ] Keep HTTP response formatting in HTTP handlers.
-* [ ] Keep protocol tar/path validation in `internal/protocol`.
-* [ ] Update upload handler to call `uploads.Service`.
+  * [x] `ManifestSettings`
+* [x] Keep HTTP response formatting in HTTP handlers.
+* [x] Keep protocol tar/path validation in `internal/protocol`.
+* [x] Update upload handler to call `uploads.Service`.
 * [ ] Move upload-related handler tests or add dedicated upload service tests.
-* [ ] Run tests.
+* [x] Run tests.
 
 ## Phase 10: Slim down `internal/server`
 
 Purpose: leave `server` as transport composition and routing, not business logic.
 
-* [ ] Keep `server.New` as the composition root.
+* [x] Keep `server.New` as the composition root.
 * [ ] Keep/rename files around HTTP concerns only:
 
   * [ ] `server.go`
@@ -555,14 +555,14 @@ Purpose: leave `server` as transport composition and routing, not business logic
 
   * [ ] token/auth config
   * [ ] storage service
-  * [ ] upload service
-  * [ ] site read service
-  * [ ] site write service
+  * [x] upload service
+  * [x] site read service
+  * [x] site write service
   * [ ] user/session repositories
 * [ ] Remove fallback constructors from handler methods if possible:
 
-  * [ ] `siteReadService()`
-  * [ ] `siteWriteService()`
+  * [x] `siteReadService()`
+  * [x] `siteWriteService()`
 * [ ] Run tests.
 
 ## Phase 11: Optional HTTP package split
