@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"quack/internal/domain"
+	"quack/internal/hotdata"
+	"quack/internal/settings"
+	"quack/internal/storage"
 	"strings"
 	"testing"
 	"time"
@@ -30,9 +34,9 @@ func BenchmarkServeFileWithBlob(b *testing.B) {
 			Site:     "example.com",
 			SiteSHA:  "site-sha",
 			Version:  1,
-			Settings: map[string]string{SettingDatabaseFeature: "false", SettingDatabaseFeatureRequired: "false"},
+			Settings: map[string]string{settings.SettingDatabaseFeature: "false", settings.SettingDatabaseFeatureRequired: "false"},
 		}},
-		file: UploadFileRecord{
+		file: domain.UploadFileRecord{
 			RelativePath: "index.html",
 			BlobPath:     blobPath,
 			FileSHA:      "file-sha",
@@ -41,14 +45,14 @@ func BenchmarkServeFileWithBlob(b *testing.B) {
 		fileOK:     true,
 		siteExists: true,
 	}
-	benchServeFile(b, "passthrough", NewPassthroughHotDataReader(source))
-	benchServeFile(b, "otter", NewOtterHotDataReader(source, OtterHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute}))
+	benchServeFile(b, "passthrough", hotdata.NewPassthroughHotDataReader(source))
+	benchServeFile(b, "otter", hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute}))
 }
 
-func benchServeFile(b *testing.B, name string, reader HotDataReader) {
+func benchServeFile(b *testing.B, name string, reader hotdata.HotDataReader) {
 	h := &handler{
 		store: staticStore{},
-		read:  NewSiteReadService(reader),
+		read:  sites.NewSiteReadService(reader),
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
 	req.Host = "example.com"
@@ -70,7 +74,7 @@ func benchServeFile(b *testing.B, name string, reader HotDataReader) {
 type staticHotDataReader struct {
 	settings   ServerSettings
 	manifests  []CurrentSiteManifest
-	file       UploadFileRecord
+	file       domain.UploadFileRecord
 	fileOK     bool
 	siteExists bool
 }
@@ -95,25 +99,25 @@ func (r staticHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA s
 	return nil, nil
 }
 
-func (r staticHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+func (r staticHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
 	return r.file, r.fileOK, r.siteExists, nil
 }
 
-func (r staticHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
+func (r staticHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
 	if !r.fileOK {
 		return nil, r.siteExists, nil
 	}
-	return []UploadFileRecord{r.file}, r.siteExists, nil
+	return []domain.UploadFileRecord{r.file}, r.siteExists, nil
 }
 
-func (r staticHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+func (r staticHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error) {
 	return sites.ResolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(r.settings.DefaultSite), false)
 }
 
 type staticStore struct{}
 
-func (staticStore) AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error) {
-	return StoredFileResult{}, nil
+func (staticStore) AcceptFile(ctx context.Context, file storage.StoredFile) (storage.StoredFileResult, error) {
+	return storage.StoredFileResult{}, nil
 }
 
 func (staticStore) OpenBlob(ctx context.Context, blobPath string) (*os.File, error) {

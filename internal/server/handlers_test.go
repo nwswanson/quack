@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"quack/internal/domain"
+	"quack/internal/storage"
 	"reflect"
 	"strconv"
 	"strings"
@@ -23,7 +25,7 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	writeTestBlob(t, root, "file-js", "file js")
 
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
-		files: map[string]UploadFileRecord{
+		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
 				BlobPath:     "blog-index",
@@ -90,7 +92,7 @@ func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	writeTestBlob(t, root, "site-index", "site index")
 
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
-		files: map[string]UploadFileRecord{
+		files: map[string]domain.UploadFileRecord{
 			fileKey("nathanielswanson", "index.html"): {
 				RelativePath: "index.html",
 				BlobPath:     "site-index",
@@ -116,7 +118,7 @@ func TestDefaultSiteFallbackForUnknownSite(t *testing.T) {
 	writeTestBlob(t, root, "default-index", "default index")
 	db := &fakeDatabase{
 		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
-		files: map[string]UploadFileRecord{
+		files: map[string]domain.UploadFileRecord{
 			fileKey("home", "index.html"): {
 				RelativePath: "index.html",
 				BlobPath:     "default-index",
@@ -144,7 +146,7 @@ func TestDefaultSiteDoesNotHandleMissingPathForExistingSite(t *testing.T) {
 	writeTestBlob(t, root, "foo-index", "foo index")
 	db := &fakeDatabase{
 		settings: ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
-		files: map[string]UploadFileRecord{
+		files: map[string]domain.UploadFileRecord{
 			fileKey("home", "missing.html"): {
 				RelativePath: "missing.html",
 				BlobPath:     "default-file",
@@ -172,7 +174,7 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 	writeTestBlob(t, root, "blog-index", "blog index")
 
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
-		files: map[string]UploadFileRecord{
+		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
 				BlobPath:     "blog-index",
@@ -575,7 +577,7 @@ func TestSiteHostRootStillServesSite(t *testing.T) {
 	opts := DefaultOptions()
 	opts.AdminHost = "https://quack.example.com"
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
-		files: map[string]UploadFileRecord{
+		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
 				BlobPath:     "index",
@@ -907,12 +909,12 @@ type fakeStorage struct {
 	deletedVersions *[]int64
 }
 
-func (fakeStorage) AcceptFile(ctx context.Context, file StoredFile) (StoredFileResult, error) {
+func (fakeStorage) AcceptFile(ctx context.Context, file storage.StoredFile) (storage.StoredFileResult, error) {
 	n, err := io.Copy(io.Discard, file.Body)
 	if err != nil {
-		return StoredFileResult{}, err
+		return storage.StoredFileResult{}, err
 	}
-	return StoredFileResult{
+	return storage.StoredFileResult{
 		BlobPath: "blobs/site:fake/1/file:fake",
 		FileSHA:  "fake",
 		Bytes:    n,
@@ -938,7 +940,7 @@ func (s fakeStorage) DeleteSiteVersion(ctx context.Context, siteSHA string, vers
 }
 
 type fakeDatabase struct {
-	files                map[string]UploadFileRecord
+	files                map[string]domain.UploadFileRecord
 	adminUser            AdminUser
 	usersByToken         map[string]AdminUser
 	sessions             map[string]AdminUser
@@ -958,45 +960,45 @@ type fakeDatabase struct {
 	linkedSiteSHA        string
 }
 
-func (db *fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (UploadRecord, error) {
+func (db *fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error) {
 	db.lastPublisherUserID = publisherUserID
 	db.lastPublisherIsAdmin = publisherIsAdmin
-	return UploadRecord{
+	return domain.UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,
 		Version: 1,
-		State:   UploadStateUploading,
+		State:   domain.UploadStateUploading,
 	}, nil
 }
 
-func (fakeDatabase) FinishUpload(ctx context.Context, upload UploadRecord) error {
+func (fakeDatabase) FinishUpload(ctx context.Context, upload domain.UploadRecord) error {
 	return nil
 }
 
-func (fakeDatabase) FailUpload(ctx context.Context, upload UploadRecord, reason string) error {
+func (fakeDatabase) FailUpload(ctx context.Context, upload domain.UploadRecord, reason string) error {
 	return nil
 }
 
-func (db fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error) {
+func (db fakeDatabase) FindCurrentFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, error) {
 	file, fileOK, _, err := db.FindCurrentSiteFile(ctx, site, relativePath)
 	return file, fileOK, err
 }
 
-func (db fakeDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
+func (db fakeDatabase) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
 	file, ok := db.files[fileKey(site, relativePath)]
 	if ok {
 		return file, true, true, nil
 	}
 	for key := range db.files {
 		if strings.HasPrefix(key, site+"\x00") {
-			return UploadFileRecord{}, false, true, nil
+			return domain.UploadFileRecord{}, false, true, nil
 		}
 	}
-	return UploadFileRecord{}, false, false, nil
+	return domain.UploadFileRecord{}, false, false, nil
 }
 
-func (db fakeDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
-	var out []UploadFileRecord
+func (db fakeDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
+	var out []domain.UploadFileRecord
 	for key, file := range db.files {
 		if strings.HasPrefix(key, site+"\x00") {
 			out = append(out, file)
@@ -1124,7 +1126,7 @@ func (db *fakeDatabase) LoadPolicies(ctx context.Context, scopes []PolicyScope) 
 
 func (db *fakeDatabase) SavePolicy(ctx context.Context, policy PolicyRecord) error {
 	if policy.ScopeType == "" {
-		policy.ScopeType = ScopeSystem
+		policy.ScopeType = domain.ScopeSystem
 	}
 	for i := range db.policies {
 		if db.policies[i].ScopeType == policy.ScopeType && db.policies[i].ScopeID == policy.ScopeID && db.policies[i].Key == policy.Key {

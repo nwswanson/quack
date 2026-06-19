@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"quack/internal/domain"
 	"strconv"
 	"strings"
 
@@ -233,7 +234,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.write.SavePolicy(r.Context(), PolicyRecord{
-		ScopeType: ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
+		ScopeType: appsettings.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
 		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "error", err)
@@ -286,7 +287,7 @@ func (h *handler) adminPageData(r *http.Request, user AdminUser) (adminPageData,
 		}
 		sites[i].RuntimeStatus = decision.Status
 		if sites[i].RuntimeStatus == "" {
-			sites[i].RuntimeStatus = SiteRuntimeActive
+			sites[i].RuntimeStatus = domain.SiteRuntimeActive
 		}
 		sites[i].PolicyReason = decision.Reason
 	}
@@ -449,7 +450,7 @@ func (h *handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 		}
 		status := decision.Status
 		if status == "" {
-			status = SiteRuntimeActive
+			status = domain.SiteRuntimeActive
 		}
 		out.Sites = append(out.Sites, protocol.SiteSummary{
 			Site: site.Site, SiteSHA: site.SiteSHA, PublishedBy: site.PublishedBy,

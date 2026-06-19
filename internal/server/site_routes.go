@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"quack/internal/domain"
+	"quack/internal/sites"
 	"time"
 
 	"quack/internal/protocol"
@@ -41,16 +43,16 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 		return
 	}
 	switch decision.Status {
-	case ServeSiteFileSuspended:
+	case sites.ServeSiteFileSuspended:
 		protocol.WriteError(w, http.StatusForbidden, "site suspended by administrator policy")
-	case ServeSiteFileFound:
+	case sites.ServeSiteFileFound:
 		h.serveBlob(w, r, decision.Site, decision.RelativePath, decision.File)
-	case ServeSiteFileDirectoryRedirect:
+	case sites.ServeSiteFileDirectoryRedirect:
 		http.Redirect(w, r, directoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
-	case ServeSiteFileEmptyIndex:
+	case sites.ServeSiteFileEmptyIndex:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-	case ServeSiteFileNotFound:
+	case sites.ServeSiteFileNotFound:
 		http.NotFound(w, r)
 	default:
 		slog.ErrorContext(r.Context(), "unknown site file decision", "site", site, "path", urlPath, "status", decision.Status)
@@ -58,7 +60,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	}
 }
 
-func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file UploadFileRecord) {
+func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file domain.UploadFileRecord) {
 	blob, err := h.store.OpenBlob(r.Context(), file.BlobPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

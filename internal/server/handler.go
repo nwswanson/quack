@@ -1,6 +1,7 @@
 package server
 
 import (
+	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 	appuploads "quack/internal/uploads"
 )
@@ -11,8 +12,8 @@ type handler struct {
 
 	store   appstorage.Storage
 	uploads appuploads.Service
-	read    SiteReadService
-	write   SiteWriteService
+	read    sites.SiteReadService
+	write   sites.SiteWriteService
 
 	users     UserRepository
 	sessions  SessionRepository

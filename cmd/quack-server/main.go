@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"quack/internal/storage"
 
 	"quack/internal/server"
 	"quack/internal/sqlitedb"
@@ -34,7 +35,7 @@ func main() {
 		addr = ":8080"
 	}
 
-	store, err := server.NewBlobStorage(*root)
+	store, err := storage.NewBlobStorage(*root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create blob storage failed: %v\n", err)
 		os.Exit(1)

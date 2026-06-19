@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"quack/internal/domain"
 	"strings"
 
 	"quack/internal/protocol"
@@ -31,9 +32,9 @@ func (h *handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, AdminUser, UploadPolicy, bool) {
+func (h *handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (string, AdminUser, domain.UploadPolicy, bool) {
 	var user AdminUser
-	var policy UploadPolicy
+	var policy domain.UploadPolicy
 	switch {
 	case r.Method != http.MethodPost:
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")

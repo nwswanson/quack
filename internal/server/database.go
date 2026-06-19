@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"quack/internal/sites"
 
 	"quack/internal/domain"
 )
@@ -9,16 +10,16 @@ import (
 var ErrSiteOwnership = domain.ErrSiteOwnership
 
 type UploadRepository interface {
-	BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (UploadRecord, error)
-	FailUpload(ctx context.Context, upload UploadRecord, reason string) error
+	BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error)
+	FailUpload(ctx context.Context, upload domain.UploadRecord, reason string) error
 	PruneSiteVersions(ctx context.Context, siteSHA string, maxRetainedVersions int64) ([]int64, error)
 	LinkUserSite(ctx context.Context, userID int64, siteSHA string) error
 }
 
 type SiteReadRepository interface {
-	FindCurrentFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, error)
-	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
-	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
+	FindCurrentFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, error)
+	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
+	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
 	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
 }
 
@@ -59,7 +60,7 @@ type RevisionRepository interface {
 type Database interface {
 	UploadRepository
 	SiteReadRepository
-	SiteWriteRepository
+	sites.SiteWriteRepository
 	UserRepository
 	SessionRepository
 	SettingsRepository
