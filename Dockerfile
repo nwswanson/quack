@@ -22,8 +22,8 @@ COPY --from=build /out/quack-server /usr/local/bin/quack-server
 
 USER quack
 
-ENV ADMIN_ADDR=:8080
-ENV PUBLIC_ADDR=:8081
+ENV ADMIN_ADDR=:8081
+ENV PUBLIC_ADDR=:8080
 EXPOSE 8080 8081
 
 ENTRYPOINT ["/usr/local/bin/quack-server"]
