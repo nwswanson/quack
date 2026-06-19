@@ -31,8 +31,8 @@ func New(addr string, token string, store appstorage.Storage, db Database, opts 
 
 	mux := http.NewServeMux()
 	source := hotdata.NewPassthroughHotDataReader(db)
-	hot := hotdata.NewMemoryHotDataReader(source, hotdata.MemoryHotDataReaderOptions{})
-	//hot := hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{})
+	//hot := hotdata.NewMemoryHotDataReader(source, hotdata.MemoryHotDataReaderOptions{})
+	hot := hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{})
 	read := sites.NewSiteReadService(hot)
 	write := sites.NewSiteWriteService(db, hot, hot)
 	uploadService := uploads.NewService(db, store, read, write)
