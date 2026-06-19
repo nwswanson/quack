@@ -455,24 +455,24 @@ Purpose: move serving decisions and runtime policy calculation out of HTTP handl
 
 Purpose: keep mutation/invalidation behavior out of HTTP and separate from SQLite.
 
-* [ ] Move `SiteWriteService` into `internal/sites`.
-* [ ] Move write service implementation:
+* [x] Move `SiteWriteService` into `internal/sites`.
+* [x] Move write service implementation:
 
-  * [ ] `siteWriteService`
-  * [ ] `NewSiteWriteService`
-  * [ ] `SaveServerSettings`
-  * [ ] `SavePolicy`
-  * [ ] `SaveUploadSettings`
-  * [ ] `FinishUpload`
-  * [ ] `RollbackSite`
-  * [ ] `UnpublishSite`
-  * [ ] `PublishSite`
-  * [ ] `DeleteSite`
-  * [ ] `ReconcilePolicyViolations`
-* [ ] Move narrow write repository interface with the service.
-* [ ] Keep hot-data invalidation abstract behind an interface.
-* [ ] Move `site_write_service_test.go`.
-* [ ] Run tests.
+  * [x] `siteWriteService`
+  * [x] `NewSiteWriteService`
+  * [x] `SaveServerSettings`
+  * [x] `SavePolicy`
+  * [x] `SaveUploadSettings`
+  * [x] `FinishUpload`
+  * [x] `RollbackSite`
+  * [x] `UnpublishSite`
+  * [x] `PublishSite`
+  * [x] `DeleteSite`
+  * [x] `ReconcilePolicyViolations`
+* [x] Move narrow write repository interface with the service.
+* [x] Keep hot-data invalidation abstract behind an interface.
+* [x] Move `site_write_service_test.go`.
+* [x] Run tests.
 
 ## Phase 8: Extract hot data caching
 

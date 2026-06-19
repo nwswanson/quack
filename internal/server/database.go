@@ -22,14 +22,6 @@ type SiteReadRepository interface {
 	ListCurrentSiteManifests(ctx context.Context) ([]CurrentSiteManifest, error)
 }
 
-type SiteWriteRepository interface {
-	FinishUpload(ctx context.Context, upload UploadRecord) error
-	RollbackSite(ctx context.Context, user AdminUser, site string, siteSHA string) (RollbackRecord, error)
-	UnpublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (UnpublishRecord, error)
-	PublishSite(ctx context.Context, user AdminUser, site string, siteSHA string) (PublishRecord, error)
-	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
-}
-
 type UserRepository interface {
 	AuthenticateAdmin(ctx context.Context, username string, password string) (AdminUser, bool, error)
 	FindUserByToken(ctx context.Context, token string) (AdminUser, bool, error)

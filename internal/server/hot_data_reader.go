@@ -28,13 +28,6 @@ type hotDataSource interface {
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
 }
 
-type HotDataInvalidator interface {
-	InvalidateServerSettings(ctx context.Context) error
-	InvalidateSite(ctx context.Context, site string) error
-	InvalidateSiteVersion(ctx context.Context, siteSHA string, version int64) error
-	InvalidatePolicies(ctx context.Context) error
-}
-
 type MutableHotDataReader interface {
 	HotDataReader
 	HotDataInvalidator
@@ -46,28 +39,6 @@ type passthroughHotDataReader struct {
 
 func NewPassthroughHotDataReader(db hotDataSource) HotDataReader {
 	return passthroughHotDataReader{db: db}
-}
-
-func NewNoopHotDataInvalidator() HotDataInvalidator {
-	return noopHotDataInvalidator{}
-}
-
-type noopHotDataInvalidator struct{}
-
-func (noopHotDataInvalidator) InvalidateServerSettings(ctx context.Context) error {
-	return nil
-}
-
-func (noopHotDataInvalidator) InvalidateSite(ctx context.Context, site string) error {
-	return nil
-}
-
-func (noopHotDataInvalidator) InvalidateSiteVersion(ctx context.Context, siteSHA string, version int64) error {
-	return nil
-}
-
-func (noopHotDataInvalidator) InvalidatePolicies(ctx context.Context) error {
-	return nil
 }
 
 func (r passthroughHotDataReader) GetServerSettings(ctx context.Context) (ServerSettings, error) {
