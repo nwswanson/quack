@@ -12,3 +12,4 @@ repomix-output.xml
 *.lock
 *.swp
 *.swo
+/build/

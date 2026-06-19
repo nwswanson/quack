@@ -7,8 +7,8 @@ test:
 	go test ./...
 
 build:
-	go build -o quack-cli ./cmd/quack
-	go build -o quack-server ./cmd/quack-server
+	go build -o build/quack-cli ./cmd/quack
+	go build -o build/quack-server ./cmd/quack-server
 
 
 export:
