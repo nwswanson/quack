@@ -33,10 +33,10 @@ type Servers struct {
 
 func New(adminAddr string, publicAddr string, token string, store appstorage.Storage, db Database, opts Options) Servers {
 	if adminAddr == "" {
-		adminAddr = ":8080"
+		adminAddr = ":8081"
 	}
 	if publicAddr == "" {
-		publicAddr = ":8081"
+		publicAddr = ":8080"
 	}
 
 	adminMux := http.NewServeMux()

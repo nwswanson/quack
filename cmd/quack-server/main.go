@@ -32,14 +32,11 @@ func main() {
 
 	adminAddr := os.Getenv("ADMIN_ADDR")
 	if adminAddr == "" {
-		adminAddr = os.Getenv("ADDR")
-	}
-	if adminAddr == "" {
-		adminAddr = ":8080"
+		adminAddr = ":8081"
 	}
 	publicAddr := os.Getenv("PUBLIC_ADDR")
 	if publicAddr == "" {
-		publicAddr = ":8081"
+		publicAddr = ":8080"
 	}
 
 	store, err := storage.NewBlobStorage(*root)

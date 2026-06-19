@@ -33,11 +33,11 @@ func TestAdminSurfaceServesAPIAndUI(t *testing.T) {
 
 func TestServerAddressDefaultsAndOverrides(t *testing.T) {
 	defaults := New("", "", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
-	if defaults.Admin.Addr != ":8080" {
-		t.Fatalf("default admin addr = %q, want :8080", defaults.Admin.Addr)
+	if defaults.Admin.Addr != ":8081" {
+		t.Fatalf("default admin addr = %q, want :8081", defaults.Admin.Addr)
 	}
-	if defaults.Public.Addr != ":8081" {
-		t.Fatalf("default public addr = %q, want :8081", defaults.Public.Addr)
+	if defaults.Public.Addr != ":8080" {
+		t.Fatalf("default public addr = %q, want :8080", defaults.Public.Addr)
 	}
 
 	overrides := New(":9000", ":9001", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
