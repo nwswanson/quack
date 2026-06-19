@@ -19,7 +19,6 @@ const (
 )
 
 type Options struct {
-	AdminHost            string
 	AllowUnauthenticated bool
 }
 
@@ -27,25 +26,35 @@ func DefaultOptions() Options {
 	return Options{}
 }
 
-func New(addr string, token string, store appstorage.Storage, db Database, opts Options) *http.Server {
-	if addr == "" {
-		addr = ":8080"
+type Servers struct {
+	Admin  *http.Server
+	Public *http.Server
+}
+
+func New(adminAddr string, publicAddr string, token string, store appstorage.Storage, db Database, opts Options) Servers {
+	if adminAddr == "" {
+		adminAddr = ":8080"
+	}
+	if publicAddr == "" {
+		publicAddr = ":8081"
 	}
 
-	mux := http.NewServeMux()
+	adminMux := http.NewServeMux()
 	source := hotdata.NewPassthroughHotDataReader(db)
 	//hot := hotdata.NewMemoryHotDataReader(source, hotdata.MemoryHotDataReaderOptions{})
 	hot := hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{})
 	read := sites.NewSiteReadService(hot)
 	write := sites.NewSiteWriteService(db, hot, hot)
 	uploadService := uploads.NewService(db, store, read, write)
+
 	adminui.New(adminui.Options{
 		Users:       db,
 		Sessions:    db,
 		Read:        read,
 		Write:       write,
 		SetLogLevel: SetLogLevel,
-	}).Register(mux)
+	}).Register(adminMux)
+
 	serverapi.New(serverapi.Options{
 		Token:                token,
 		AllowUnauthenticated: opts.AllowUnauthenticated,
@@ -55,19 +64,19 @@ func New(addr string, token string, store appstorage.Storage, db Database, opts 
 		Write:                write,
 		Users:                db,
 		Revisions:            db,
-	}).Register(mux)
+	}).Register(adminMux)
 
-	siteMux := http.NewServeMux()
-	sitehttp.New(store, read).Register(siteMux)
+	publicMux := http.NewServeMux()
+	sitehttp.New(store, read).Register(publicMux)
 
-	router := adminHostRouter{
-		adminHost: normalizeAdminHost(opts.AdminHost),
-		admin:     mux,
-		site:      siteMux,
-	}
-
-	return &http.Server{
-		Addr:    addr,
-		Handler: requestLogger(router),
+	return Servers{
+		Admin: &http.Server{
+			Addr:    adminAddr,
+			Handler: requestLogger(adminMux),
+		},
+		Public: &http.Server{
+			Addr:    publicAddr,
+			Handler: requestLogger(publicMux),
+		},
 	}
 }

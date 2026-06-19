@@ -39,7 +39,7 @@ For local throwaway development only, you can explicitly disable upload/delete a
 go run ./cmd/quack-server -root ./data -database ./quack.sqlite --allow-unauthenticated
 ```
 
-The server listens on `:8080` by default. Set `ADDR` to override it.
+The admin UI and `/v1` API listen on `:8080` by default. Public site traffic listens on `:8081` by default. Set `ADMIN_ADDR` and `PUBLIC_ADDR` to override them. The legacy `ADDR` environment variable still overrides the admin/API listener when `ADMIN_ADDR` is unset.
 
 The server applies DB-backed upload limits by default:
 
@@ -133,7 +133,7 @@ Clear it with `quack default-site --clear`.
 
 ## Serve Uploaded Files
 
-Quack serves the current version of uploaded files from `/` based on the request host's left-most label.
+Quack serves the current version of uploaded files from the public listener based on the request host's left-most label.
 
 For example, a site named `foo` matches:
 
@@ -175,6 +175,7 @@ Run it locally with ephemeral in-container SQLite and blob storage:
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -p 8081:8081 \
   quack-server:dev
 ```
 
@@ -188,6 +189,7 @@ That directory is writable inside the container, but it is not persistent unless
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -p 8081:8081 \
   -v quack-data:/var/lib/quack \
   quack-server:dev
 ```
@@ -211,8 +213,11 @@ For a Kubernetes Service named `quack-server` in the `default` namespace, an exp
 
 ```yaml
 ingress:
-  - hostname: foo.example.com
+  - hostname: quack.example.com
     service: http://quack-server.default.svc.cluster.local:8080
+
+  - hostname: foo.example.com
+    service: http://quack-server.default.svc.cluster.local:8081
 
   - service: http_status:404
 ```
@@ -222,7 +227,7 @@ Then upload a site named `foo`:
 ```bash
 quack deploy ./site foo \
   --token dev-token \
-  --serverURL https://foo.example.com
+  --serverURL https://quack.example.com
 ```
 
 Public requests to `https://foo.example.com/` reach `quack-server`, which reads the request `Host` header and maps the left-most label to the site name:
@@ -236,7 +241,7 @@ The important requirement is that `quack-server` receives the original public `H
 ```yaml
 ingress:
   - hostname: foo.example.com
-    service: http://quack-server.default.svc.cluster.local:8080
+    service: http://quack-server.default.svc.cluster.local:8081
     originRequest:
       httpHostHeader: foo.example.com
 
@@ -248,7 +253,7 @@ For multiple sites, a wildcard hostname can route all site subdomains to the sam
 ```yaml
 ingress:
   - hostname: "*.example.com"
-    service: http://quack-server.default.svc.cluster.local:8080
+    service: http://quack-server.default.svc.cluster.local:8081
 
   - service: http_status:404
 ```

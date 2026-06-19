@@ -12,7 +12,7 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	writeTestBlob(t, root, "blog-index", "blog index")
 	writeTestBlob(t, root, "file-js", "file js")
 
-	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
@@ -61,7 +61,7 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		req.Host = "foo.example.com"
 		rec := httptest.NewRecorder()
-		srv.Handler.ServeHTTP(rec, req)
+		srv.Public.Handler.ServeHTTP(rec, req)
 
 		if rec.Code != tc.status {
 			t.Fatalf("%s: status = %d, want %d; body=%s", name, rec.Code, tc.status, rec.Body.String())
@@ -79,7 +79,7 @@ func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "site-index", "site index")
 
-	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("nathanielswanson", "index.html"): {
 				RelativePath: "index.html",
@@ -91,7 +91,7 @@ func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "www.nathanielswanson.com"
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Public.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -113,12 +113,12 @@ func TestDefaultSiteFallbackForUnknownSite(t *testing.T) {
 			},
 		},
 	}
-	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "missing.example.com"
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Public.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -145,12 +145,12 @@ func TestDefaultSiteDoesNotHandleMissingPathForExistingSite(t *testing.T) {
 			},
 		},
 	}
-	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/missing.html", nil)
 	req.Host = "foo.example.com"
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Public.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
@@ -161,7 +161,7 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "blog-index", "blog index")
 
-	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
@@ -173,7 +173,7 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/serve/foo/blog", nil)
 	req.Host = "anything.example.com"
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Public.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
@@ -183,22 +183,19 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 func TestSiteHostRootStillServesSite(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "index", "site index")
-
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
-	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
 				BlobPath:     "index",
 			},
 		},
-	}, opts)
+	}, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "foo.example.com"
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Public.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())

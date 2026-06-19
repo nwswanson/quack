@@ -18,7 +18,6 @@ import (
 func main() {
 	root := flag.String("root", "", "root directory for blob storage")
 	databasePath := flag.String("database", "", "sqlite database file")
-	adminHost := flag.String("admin-host", "", "host allowed to serve /v1 admin API routes; accepts a host or URL")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
 	flag.Parse()
 	if *root == "" {
@@ -31,9 +30,16 @@ func main() {
 	}
 	uploadToken := os.Getenv("UPLOAD_TOKEN")
 
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":8080"
+	adminAddr := os.Getenv("ADMIN_ADDR")
+	if adminAddr == "" {
+		adminAddr = os.Getenv("ADDR")
+	}
+	if adminAddr == "" {
+		adminAddr = ":8080"
+	}
+	publicAddr := os.Getenv("PUBLIC_ADDR")
+	if publicAddr == "" {
+		publicAddr = ":8081"
 	}
 
 	store, err := storage.NewBlobStorage(*root)
@@ -83,12 +89,12 @@ func main() {
 	}
 
 	opts := server.DefaultOptions()
-	opts.AdminHost = *adminHost
 	opts.AllowUnauthenticated = *allowUnauthenticated
 
-	srv := server.New(addr, uploadToken, store, db, opts)
+	servers := server.New(adminAddr, publicAddr, uploadToken, store, db, opts)
 	slog.Warn("starting quack server",
-		"addr", addr,
+		"admin_addr", adminAddr,
+		"public_addr", publicAddr,
 		"root", *root,
 		"database", *databasePath,
 		"max_upload_bytes", settings.MaxUploadBytes,
@@ -96,12 +102,29 @@ func main() {
 		"max_retained_versions", settings.MaxRetainedVersions,
 		"default_site", settings.DefaultSite,
 		"log_level", settings.LogLevel,
-		"admin_host", *adminHost,
 		"legacy_upload_token_enabled", uploadToken != "",
 		"allow_unauthenticated", *allowUnauthenticated,
 	)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error("server stopped unexpectedly", "error", err)
+
+	type serverError struct {
+		name string
+		err  error
+	}
+	errCh := make(chan serverError, 2)
+	go func() {
+		if err := servers.Admin.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- serverError{name: "admin", err: err}
+		}
+	}()
+	go func() {
+		if err := servers.Public.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- serverError{name: "public", err: err}
+		}
+	}()
+
+	failed := <-errCh
+	if failed.err != nil {
+		slog.Error("server stopped unexpectedly", "listener", failed.name, "error", failed.err)
 		os.Exit(1)
 	}
 }

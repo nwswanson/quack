@@ -22,8 +22,9 @@ COPY --from=build /out/quack-server /usr/local/bin/quack-server
 
 USER quack
 
-ENV ADDR=:8080
-EXPOSE 8080
+ENV ADMIN_ADDR=:8080
+ENV PUBLIC_ADDR=:8081
+EXPOSE 8080 8081
 
 ENTRYPOINT ["/usr/local/bin/quack-server"]
-CMD ["-root", "/var/lib/quack", "-database", "/var/lib/quack/quack.sqlite", "-admin-host", "https://quack.k3s.nathanielswanson.com"]
+CMD ["-root", "/var/lib/quack", "-database", "/var/lib/quack/quack.sqlite"]

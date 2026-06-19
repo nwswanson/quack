@@ -11,15 +11,13 @@ import (
 	"testing"
 )
 
-func TestAdminHostRootShowsLoginPlaceholder(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
-	srv := New("", "token", fakeStorage{}, &fakeDatabase{}, opts)
+func TestAdminRootShowsLoginPlaceholder(t *testing.T) {
+	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "quack.example.com"
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -34,8 +32,6 @@ func TestAdminHostRootShowsLoginPlaceholder(t *testing.T) {
 }
 
 func TestAdminLoginAndLogout(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sites: []domain.PublishedSite{
@@ -44,7 +40,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 		},
 		sessions: map[string]domain.AdminUser{},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	loginBody := strings.NewReader("username=admin&password=secret")
 	loginReq := httptest.NewRequest(http.MethodPost, "/login", loginBody)
@@ -53,7 +49,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	loginReq.Header.Set("Origin", "https://quack.example.com")
 	loginReq.Header.Set("X-Forwarded-Proto", "https")
 	loginRec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(loginRec, loginReq)
+	srv.Admin.Handler.ServeHTTP(loginRec, loginReq)
 
 	if loginRec.Code != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want %d; body=%s", loginRec.Code, http.StatusSeeOther, loginRec.Body.String())
@@ -73,7 +69,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	rootReq.Host = "quack.example.com"
 	rootReq.AddCookie(cookie)
 	rootRec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rootRec, rootReq)
+	srv.Admin.Handler.ServeHTTP(rootRec, rootReq)
 
 	if rootRec.Code != http.StatusOK {
 		t.Fatalf("root status = %d, want %d; body=%s", rootRec.Code, http.StatusOK, rootRec.Body.String())
@@ -99,7 +95,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	logoutReq.Header.Set("Origin", "https://quack.example.com")
 	logoutReq.AddCookie(cookie)
 	logoutRec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(logoutRec, logoutReq)
+	srv.Admin.Handler.ServeHTTP(logoutRec, logoutReq)
 
 	if logoutRec.Code != http.StatusSeeOther {
 		t.Fatalf("logout status = %d, want %d", logoutRec.Code, http.StatusSeeOther)
@@ -110,13 +106,11 @@ func TestAdminLoginAndLogout(t *testing.T) {
 }
 
 func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
 	req.Host = "quack.example.com"
@@ -124,7 +118,7 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 	req.Header.Set("Origin", "https://quack.example.com")
 	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK {
@@ -138,13 +132,11 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 }
 
 func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
 	req.Host = "quack.example.com"
@@ -152,7 +144,7 @@ func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
 	req.Header.Set("Origin", "https://alice.example.com")
 	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
@@ -163,20 +155,18 @@ func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
 }
 
 func TestAdminPostRejectsMissingOrigin(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
@@ -184,13 +174,11 @@ func TestAdminPostRejectsMissingOrigin(t *testing.T) {
 }
 
 func TestAdminSettingsUpdate(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
 	req.Host = "quack.example.com"
@@ -198,7 +186,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	req.Header.Set("Origin", "https://quack.example.com")
 	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
@@ -214,7 +202,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	get.Host = "quack.example.com"
 	get.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	page := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(page, get)
+	srv.Admin.Handler.ServeHTTP(page, get)
 	if page.Code != http.StatusOK {
 		t.Fatalf("get status = %d, want %d; body=%s", page.Code, http.StatusOK, page.Body.String())
 	}
@@ -231,15 +219,12 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 	t.Cleanup(func() {
 		_ = ConfigureLogger("warn", io.Discard)
 	})
-
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 		settings:  domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	update := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=536870912&max_upload_files=10000&log_level=debug"))
 	update.Host = "quack.example.com"
@@ -247,7 +232,7 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 	update.Header.Set("Origin", "https://quack.example.com")
 	update.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, update)
+	srv.Admin.Handler.ServeHTTP(rec, update)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
@@ -256,7 +241,7 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	req.Host = "foo.example.com"
 	rec = httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
@@ -266,20 +251,18 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 }
 
 func TestAdminLoginRejectsInvalidPassword(t *testing.T) {
-	opts := DefaultOptions()
-	opts.AdminHost = "https://quack.example.com"
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{},
 	}
-	srv := New("", "token", fakeStorage{}, db, opts)
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=bad"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())

@@ -13,13 +13,13 @@ import (
 )
 
 func TestLoginCheck(t *testing.T) {
-	srv := New("", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 
 	t.Run("authorized", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
 		req.Header.Set("Authorization", "Bearer token")
 		rec := httptest.NewRecorder()
-		srv.Handler.ServeHTTP(rec, req)
+		srv.Admin.Handler.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -33,7 +33,7 @@ func TestLoginCheck(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
 		req.Header.Set("Authorization", "Bearer bad")
 		rec := httptest.NewRecorder()
-		srv.Handler.ServeHTTP(rec, req)
+		srv.Admin.Handler.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
@@ -50,12 +50,12 @@ func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -70,7 +70,7 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 		MaxUploadBytes: DefaultMaxUploadBytes,
 		MaxUploadFiles: 1,
 	}}
-	srv := New("", "", fakeStorage{}, db, Options{
+	srv := New("", "", "", fakeStorage{}, db, Options{
 		AllowUnauthenticated: true,
 	})
 
@@ -79,7 +79,7 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 		"two.txt": "two",
 	}))
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
@@ -91,7 +91,7 @@ func TestUploadRejectsTooManyBytes(t *testing.T) {
 		MaxUploadBytes: 128,
 		MaxUploadFiles: DefaultMaxUploadFiles,
 	}}
-	srv := New("", "", fakeStorage{}, db, Options{
+	srv := New("", "", "", fakeStorage{}, db, Options{
 		AllowUnauthenticated: true,
 	})
 
@@ -99,7 +99,7 @@ func TestUploadRejectsTooManyBytes(t *testing.T) {
 		"large.txt": "this content is intentionally long enough to push the tar request over the tiny test limit",
 	}))
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
@@ -116,12 +116,12 @@ func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 			MaxUploadFiles: DefaultMaxUploadFiles,
 		},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -145,11 +145,11 @@ func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
 			LogLevel:            "warn",
 		},
 	}
-	srv := New("", "", fakeStorage{deletedVersions: &deletedVersions}, db, Options{AllowUnauthenticated: true})
+	srv := New("", "", "", fakeStorage{deletedVersions: &deletedVersions}, db, Options{AllowUnauthenticated: true})
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -166,12 +166,12 @@ func TestRevisionListReturnsWarningWithoutOlderRevisions(t *testing.T) {
 		},
 		revisions: []domain.RevisionRecord{{Version: 3, Current: true, Files: 1, Bytes: 5}},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRevisionPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -188,12 +188,12 @@ func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
 		},
 		rollback: domain.RollbackRecord{CurrentVersion: 3, Warning: "no older revisions available"},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRollbackPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -210,12 +210,12 @@ func TestUnpublishSite(t *testing.T) {
 		},
 		unpublish: domain.UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteUnpublishPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -232,12 +232,12 @@ func TestPublishSite(t *testing.T) {
 		},
 		publish: domain.PublishRecord{Published: true, LiveState: "live"},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SitePublishPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -257,12 +257,12 @@ func TestListSitesReturnsSiteSummaries(t *testing.T) {
 			CurrentVersion: 2, VersionCount: 3, FileCount: 4, ByteCount: 512, UpdatedAt: "2026-06-16T12:00:00Z",
 		}},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -281,12 +281,12 @@ func TestListSitesAllRequiresAdmin(t *testing.T) {
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath+"?all=true", nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
@@ -301,12 +301,12 @@ func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
 		},
 		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	userReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
 	userReq.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, userReq)
+	srv.Admin.Handler.ServeHTTP(rec, userReq)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("user status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
@@ -314,7 +314,7 @@ func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
 	adminReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
 	adminReq.Header.Set("Authorization", "Bearer admin-token")
 	rec = httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, adminReq)
+	srv.Admin.Handler.ServeHTTP(rec, adminReq)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -329,12 +329,12 @@ func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
-	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"foo", nil)
 	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	srv.Admin.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
