@@ -1137,6 +1137,7 @@ func siteFromHost(host string) string {
 	if host == "" {
 		return ""
 	}
+	host = strings.TrimPrefix(host, "www.")
 	if i := strings.IndexByte(host, '.'); i >= 0 {
 		host = host[:i]
 	}

@@ -218,10 +218,44 @@ func TestOtterHotDataReaderReloadsCurrentFileAfterSiteUpdate(t *testing.T) {
 	}
 }
 
+func TestOtterHotDataReaderReloadsServeSiteFileAfterSiteUpdate(t *testing.T) {
+	db := &siteUpdateCacheDatabase{
+		file: UploadFileRecord{RelativePath: "index.html", BlobPath: "old-blob", Bytes: 10},
+	}
+	hot := NewOtterHotDataReader(db, OtterHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute})
+	write := NewSiteWriteService(db, hot, hot)
+	ctx := context.Background()
+
+	decision, err := hot.ServeSiteFile(ctx, "example.com", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile error = %v", err)
+	}
+	if decision.Status != ServeSiteFileFound || decision.File.BlobPath != "old-blob" {
+		t.Fatalf("ServeSiteFile = %+v, want old cached file", decision)
+	}
+
+	db.file = UploadFileRecord{RelativePath: "index.html", BlobPath: "new-blob", Bytes: 20}
+	if err := write.FinishUpload(ctx, UploadRecord{Site: "example.com", SiteSHA: "site-sha", Version: 2}); err != nil {
+		t.Fatalf("FinishUpload error = %v", err)
+	}
+
+	decision, err = hot.ServeSiteFile(ctx, "example.com", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile after update error = %v", err)
+	}
+	if decision.Status != ServeSiteFileFound || decision.File.BlobPath != "new-blob" {
+		t.Fatalf("ServeSiteFile after update = %+v, want reloaded file", decision)
+	}
+	if db.serveCalls != 2 {
+		t.Fatalf("serve calls = %d, want 2", db.serveCalls)
+	}
+}
+
 type siteUpdateCacheDatabase struct {
 	Database
-	file      UploadFileRecord
-	fileCalls int
+	file       UploadFileRecord
+	fileCalls  int
+	serveCalls int
 }
 
 func (db *siteUpdateCacheDatabase) GetServerSettings(ctx context.Context) (ServerSettings, error) {
@@ -252,6 +286,16 @@ func (db *siteUpdateCacheDatabase) FindCurrentSiteFile(ctx context.Context, site
 func (db *siteUpdateCacheDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error) {
 	db.fileCalls++
 	return []UploadFileRecord{db.file}, true, nil
+}
+
+func (db *siteUpdateCacheDatabase) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	db.serveCalls++
+	return ServeSiteFileDecision{
+		Status:       ServeSiteFileFound,
+		Site:         site,
+		RelativePath: db.file.RelativePath,
+		File:         db.file,
+	}, nil
 }
 
 func (db *siteUpdateCacheDatabase) SaveServerSettings(ctx context.Context, settings ServerSettings) error {

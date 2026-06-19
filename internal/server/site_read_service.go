@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"strings"
 )
 
 type SiteReadService interface {
@@ -75,21 +74,7 @@ func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor Admin
 }
 
 func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, error) {
-	manifests, err := s.hot.ListCurrentSiteManifests(ctx)
-	if err != nil {
-		return SiteRuntimeDecision{}, err
-	}
-	for _, manifest := range manifests {
-		if manifest.Site != site {
-			continue
-		}
-		violations, err := s.hot.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
-		if err != nil {
-			return SiteRuntimeDecision{}, err
-		}
-		return runtimeDecisionFromViolations(violations), nil
-	}
-	return SiteRuntimeDecision{Status: SiteRuntimeActive}, nil
+	return currentSiteRuntime(ctx, s.hot, site)
 }
 
 func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error) {
@@ -97,15 +82,11 @@ func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relat
 }
 
 func (s siteReadService) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
-	settings, err := s.hot.GetServerSettings(ctx)
-	if err != nil {
-		return ServeSiteFileDecision{}, err
-	}
-	return s.resolveSiteFile(ctx, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
+	return s.hot.ServeSiteFile(ctx, site, urlPath)
 }
 
-func (s siteReadService) resolveSiteFile(ctx context.Context, site string, urlPath string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
-	decision, err := s.CurrentSiteRuntime(ctx, site)
+func resolveSiteFile(ctx context.Context, hot HotDataReader, site string, urlPath string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
+	decision, err := currentSiteRuntime(ctx, hot, site)
 	if err != nil {
 		return ServeSiteFileDecision{}, err
 	}
@@ -113,12 +94,12 @@ func (s siteReadService) resolveSiteFile(ctx context.Context, site string, urlPa
 		return ServeSiteFileDecision{Status: ServeSiteFileSuspended, Site: site, Runtime: decision}, nil
 	}
 
-	files, siteExists, err := s.hot.ListCurrentSiteFiles(ctx, site)
+	files, siteExists, err := hot.ListCurrentSiteFiles(ctx, site)
 	if err != nil {
 		return ServeSiteFileDecision{}, err
 	}
 	if !siteExists && !usingDefault && defaultSite != "" && defaultSite != site {
-		return s.resolveSiteFile(ctx, defaultSite, urlPath, defaultSite, true)
+		return resolveSiteFile(ctx, hot, defaultSite, urlPath, defaultSite, true)
 	}
 
 	fileByPath := make(map[string]UploadFileRecord, len(files))
@@ -153,6 +134,24 @@ func (s siteReadService) resolveSiteFile(ctx context.Context, site string, urlPa
 		return ServeSiteFileDecision{Status: ServeSiteFileEmptyIndex, Site: site, RelativePath: relativePath, Runtime: decision}, nil
 	}
 	return ServeSiteFileDecision{Status: ServeSiteFileNotFound, Site: site, RelativePath: relativePath, Runtime: decision}, nil
+}
+
+func currentSiteRuntime(ctx context.Context, hot HotDataReader, site string) (SiteRuntimeDecision, error) {
+	manifests, err := hot.ListCurrentSiteManifests(ctx)
+	if err != nil {
+		return SiteRuntimeDecision{}, err
+	}
+	for _, manifest := range manifests {
+		if manifest.Site != site {
+			continue
+		}
+		violations, err := hot.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
+		if err != nil {
+			return SiteRuntimeDecision{}, err
+		}
+		return runtimeDecisionFromViolations(violations), nil
+	}
+	return SiteRuntimeDecision{Status: SiteRuntimeActive}, nil
 }
 
 func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (PolicyRecord, error) {

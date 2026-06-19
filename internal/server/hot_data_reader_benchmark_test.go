@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -189,6 +190,10 @@ func (r staticHotDataReader) ListCurrentSiteFiles(ctx context.Context, site stri
 		return nil, r.siteExists, nil
 	}
 	return []UploadFileRecord{r.file}, r.siteExists, nil
+}
+
+func (r staticHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	return resolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(r.settings.DefaultSite), false)
 }
 
 type staticStore struct{}

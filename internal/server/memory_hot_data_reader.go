@@ -158,8 +158,20 @@ func (r *memoryHotDataReader) ListCurrentSiteFiles(ctx context.Context, site str
 	return append([]UploadFileRecord(nil), cached.files...), cached.siteExists, nil
 }
 
+func (r *memoryHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	key := "serve_site_file:" + site + ":" + urlPath
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		return r.source.ServeSiteFile(ctx, site, urlPath)
+	})
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	return value.(ServeSiteFileDecision), nil
+}
+
 func (r *memoryHotDataReader) InvalidateServerSettings(ctx context.Context) error {
 	r.deletePrefix("server_settings")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
@@ -167,6 +179,7 @@ func (r *memoryHotDataReader) InvalidateSite(ctx context.Context, site string) e
 	r.deletePrefix("current_site_file:" + site + ":")
 	r.deletePrefix("current_site_files:" + site)
 	r.deletePrefix("current_site_manifests")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
@@ -174,12 +187,14 @@ func (r *memoryHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA
 	r.deletePrefix("upload_settings:" + siteSHA + ":")
 	r.deletePrefix("policy_violations:" + siteSHA + ":")
 	r.deletePrefix("current_site_manifests")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
 func (r *memoryHotDataReader) InvalidatePolicies(ctx context.Context) error {
 	r.deletePrefix("policies:")
 	r.deletePrefix("policy_violations:")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
@@ -215,6 +230,9 @@ func (r *memoryHotDataReader) load(ctx context.Context, key string, ttl time.Dur
 			ttl = r.negativeTTL
 		}
 		if files, ok := value.(cachedCurrentSiteFiles); ok && !files.siteExists {
+			ttl = r.negativeTTL
+		}
+		if decision, ok := value.(ServeSiteFileDecision); ok && decision.Status == ServeSiteFileNotFound {
 			ttl = r.negativeTTL
 		}
 		r.entries[key] = memoryEntry{value: value, expiry: now.Add(r.ttlWithJitter(key, ttl))}

@@ -167,8 +167,20 @@ func (r *otterHotDataReader) ListCurrentSiteFiles(ctx context.Context, site stri
 	return append([]UploadFileRecord(nil), cached.files...), cached.siteExists, nil
 }
 
+func (r *otterHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	key := "serve_site_file:" + site + ":" + urlPath
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		return r.source.ServeSiteFile(ctx, site, urlPath)
+	})
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	return value.(ServeSiteFileDecision), nil
+}
+
 func (r *otterHotDataReader) InvalidateServerSettings(ctx context.Context) error {
 	r.deletePrefix("server_settings")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
@@ -176,6 +188,7 @@ func (r *otterHotDataReader) InvalidateSite(ctx context.Context, site string) er
 	r.deletePrefix("current_site_file:" + site + ":")
 	r.deletePrefix("current_site_files:" + site)
 	r.deletePrefix("current_site_manifests")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
@@ -183,12 +196,14 @@ func (r *otterHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA 
 	r.deletePrefix("upload_settings:" + siteSHA + ":")
 	r.deletePrefix("policy_violations:" + siteSHA + ":")
 	r.deletePrefix("current_site_manifests")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
 func (r *otterHotDataReader) InvalidatePolicies(ctx context.Context) error {
 	r.deletePrefix("policies:")
 	r.deletePrefix("policy_violations:")
+	r.deletePrefix("serve_site_file:")
 	return nil
 }
 
@@ -222,6 +237,9 @@ func (r *otterHotDataReader) load(ctx context.Context, key string, ttl time.Dura
 			ttl = r.negativeTTL
 		}
 		if files, ok := value.(cachedCurrentSiteFiles); ok && !files.siteExists {
+			ttl = r.negativeTTL
+		}
+		if decision, ok := value.(ServeSiteFileDecision); ok && decision.Status == ServeSiteFileNotFound {
 			ttl = r.negativeTTL
 		}
 		r.cache.Set(key, value, r.ttlWithJitter(key, ttl))

@@ -187,22 +187,66 @@ func TestMemoryHotDataReaderInvalidation(t *testing.T) {
 	}
 }
 
+func TestMemoryHotDataReaderCachesServeSiteFileDecision(t *testing.T) {
+	source := &countingHotDataReader{
+		serveDecision: ServeSiteFileDecision{
+			Status:       ServeSiteFileFound,
+			Site:         "example.com",
+			RelativePath: "index.html",
+			File:         UploadFileRecord{RelativePath: "index.html", BlobPath: "old-blob"},
+		},
+	}
+	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute})
+
+	first, err := hot.ServeSiteFile(context.Background(), "example.com", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile error = %v", err)
+	}
+	source.serveDecision.File.BlobPath = "new-blob"
+	second, err := hot.ServeSiteFile(context.Background(), "example.com", "/")
+	if err != nil {
+		t.Fatalf("second ServeSiteFile error = %v", err)
+	}
+	if first.File.BlobPath != "old-blob" || second.File.BlobPath != "old-blob" {
+		t.Fatalf("ServeSiteFile decisions = %+v then %+v, want cached old blob", first, second)
+	}
+	if source.serveCalls != 1 {
+		t.Fatalf("serve calls = %d, want 1", source.serveCalls)
+	}
+
+	if err := hot.InvalidateSite(context.Background(), "example.com"); err != nil {
+		t.Fatalf("InvalidateSite error = %v", err)
+	}
+	third, err := hot.ServeSiteFile(context.Background(), "example.com", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile after invalidation error = %v", err)
+	}
+	if third.File.BlobPath != "new-blob" {
+		t.Fatalf("ServeSiteFile after invalidation = %+v, want new blob", third)
+	}
+	if source.serveCalls != 2 {
+		t.Fatalf("serve calls after invalidation = %d, want 2", source.serveCalls)
+	}
+}
+
 type countingHotDataReader struct {
 	mu sync.Mutex
 
-	settings   ServerSettings
-	manifests  []CurrentSiteManifest
-	file       UploadFileRecord
-	fileOK     bool
-	siteExists bool
-	files      []UploadFileRecord
-	err        error
-	block      chan struct{}
+	settings      ServerSettings
+	manifests     []CurrentSiteManifest
+	file          UploadFileRecord
+	fileOK        bool
+	siteExists    bool
+	files         []UploadFileRecord
+	serveDecision ServeSiteFileDecision
+	err           error
+	block         chan struct{}
 
 	serverSettingsCalls int
 	manifestCalls       int
 	fileCalls           int
 	filesCalls          int
+	serveCalls          int
 }
 
 func (r *countingHotDataReader) wait() {
@@ -268,4 +312,14 @@ func (r *countingHotDataReader) ListCurrentSiteFiles(ctx context.Context, site s
 		return nil, r.siteExists, nil
 	}
 	return []UploadFileRecord{r.file}, r.siteExists, nil
+}
+
+func (r *countingHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	r.mu.Lock()
+	r.serveCalls++
+	r.mu.Unlock()
+	if r.err != nil {
+		return ServeSiteFileDecision{}, r.err
+	}
+	return r.serveDecision, nil
 }

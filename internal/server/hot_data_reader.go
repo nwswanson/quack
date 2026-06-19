@@ -1,6 +1,9 @@
 package server
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type HotDataReader interface {
 	GetServerSettings(ctx context.Context) (ServerSettings, error)
@@ -10,6 +13,7 @@ type HotDataReader interface {
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]UploadFileRecord, bool, error)
+	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
 }
 
 type hotDataSource interface {
@@ -115,6 +119,14 @@ func (r passthroughHotDataReader) ListCurrentSiteFiles(ctx context.Context, site
 		return nil, false, err
 	}
 	return append([]UploadFileRecord(nil), files...), siteExists, nil
+}
+
+func (r passthroughHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+	settings, err := r.GetServerSettings(ctx)
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	return resolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

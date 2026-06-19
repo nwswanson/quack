@@ -24,6 +24,8 @@ func TestSiteFromHost(t *testing.T) {
 		"foo.domain.com":     "foo",
 		"foo.example.com:80": "foo",
 		"LOCALHOST:8080":     "localhost",
+		"www.foo.com":        "foo",
+		"WWW.foo.com:443":    "foo",
 		"bad_site.example":   "",
 		"v1.example.com":     "",
 	}
@@ -175,6 +177,32 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 		if tc.body != "" && rec.Body.String() != tc.body {
 			t.Fatalf("%s: body = %q, want %q", name, rec.Body.String(), tc.body)
 		}
+	}
+}
+
+func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "site-index", "site index")
+
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		files: map[string]UploadFileRecord{
+			fileKey("nathanielswanson", "index.html"): {
+				RelativePath: "index.html",
+				BlobPath:     "site-index",
+			},
+		},
+	}, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "www.nathanielswanson.com"
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != "site index" {
+		t.Fatalf("body = %q, want site index", rec.Body.String())
 	}
 }
 
