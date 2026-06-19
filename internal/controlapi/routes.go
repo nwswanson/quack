@@ -1,4 +1,4 @@
-package serverapi
+package controlapi
 
 import (
 	"context"
@@ -220,15 +220,15 @@ func (h Handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 
 	out := protocol.ListSitesResponse{OK: true}
 	for _, site := range siteList {
-		decision, err := h.read.CurrentSiteRuntime(r.Context(), site.Site)
+		decision, err := h.read.CurrentSiteServingStatus(r.Context(), site.Site)
 		if err != nil {
-			slog.ErrorContext(r.Context(), "resolve site runtime failed", "site", site.Site, "error", err)
+			slog.ErrorContext(r.Context(), "resolve site serving status failed", "site", site.Site, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		status := decision.Status
 		if status == "" {
-			status = domain.SiteRuntimeActive
+			status = domain.SiteServingActive
 		}
 		out.Sites = append(out.Sites, protocol.SiteSummary{
 			Site: site.Site, SiteSHA: site.SiteSHA, PublishedBy: site.PublishedBy,

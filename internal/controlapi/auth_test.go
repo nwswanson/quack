@@ -1,4 +1,4 @@
-package serverapi
+package controlapi
 
 import (
 	"net/http/httptest"

@@ -53,7 +53,7 @@ handleServeFile
   -> serveSiteFile
       -> siteReadService.ServerSettings
       -> serveSiteFileWithFallback
-          -> siteReadService.CurrentSiteRuntime
+          -> siteReadService.CurrentSiteServingStatus
           -> requestedRelativePath
           -> siteReadService.CurrentSiteFile
           -> serveBlob
@@ -167,7 +167,7 @@ before opening the blob:
 
 ```text
 ServerSettings
-CurrentSiteRuntime
+CurrentSiteServingStatus
 CurrentSiteFile
 ```
 
@@ -238,7 +238,7 @@ The current implementation asks several smaller questions on every request:
 
 ```text
 What are server settings?
-What is this site's runtime status?
+What is this site's serving status?
 What is the file for this path?
 If no file exists, is there an index file?
 ```
@@ -246,9 +246,9 @@ If no file exists, is there an index file?
 Caching those pieces independently helps database pressure, but it does not
 minimize request work.
 
-### `CurrentSiteRuntime` scans current manifests
+### `CurrentSiteServingStatus` scans current manifests
 
-`CurrentSiteRuntime` currently calls `ListCurrentSiteManifests` and scans for the
+`CurrentSiteServingStatus` currently calls `ListCurrentSiteManifests` and scans for the
 requested site. Even if the list is cached, that means each request has work
 proportional to the number of current sites:
 
@@ -266,7 +266,7 @@ The cached manifest slice also has to be copied before returning because it
 contains mutable map fields. That is correct for safety, but it costs allocations
 and CPU.
 
-A request-shaped cache would avoid this scan by caching per-site runtime data.
+A request-shaped cache would avoid this scan by caching per-site serving-status data.
 
 ### The cache does not cache file bytes or file descriptors
 
@@ -403,7 +403,7 @@ type CurrentSiteSnapshot struct {
 	Site    string
 	SiteSHA string
 	Version int64
-	Runtime SiteRuntimeDecision
+	Serving SiteServingDecision
 	Files   map[string]UploadFileRecord
 }
 ```
@@ -412,7 +412,7 @@ With this, serving `GET /path` becomes:
 
 ```text
 snapshot := cache.Get(site)
-if snapshot.Runtime is suspended -> 403
+if snapshot.Serving is suspended -> 403
 file := snapshot.Files[relativePath]
 if found -> serve blob
 if not found and directory index applies -> check snapshot.Files[indexPath]
@@ -430,14 +430,14 @@ PublishSite       -> invalidate snapshot(site)
 RollbackSite      -> invalidate snapshot(site)
 UnpublishSite     -> invalidate snapshot(site)
 DeleteSite        -> invalidate snapshot(site)
-SavePolicy        -> invalidate all snapshots or runtime data
-Policy violation  -> invalidate snapshot(site) or runtime data
+SavePolicy        -> invalidate all snapshots or serving-status data
+Policy violation  -> invalidate snapshot(site) or serving-status data
 ```
 
 This cache should not include blob bytes at first. Cache metadata and decisions
 before caching content.
 
-### 4. A direct per-site runtime lookup
+### 4. A direct per-site serving-status lookup
 
 If a full snapshot is too much for the next step, a smaller improvement is to
 avoid `ListCurrentSiteManifests` on every served request.
@@ -445,10 +445,10 @@ avoid `ListCurrentSiteManifests` on every served request.
 Add a reader method like:
 
 ```go
-CurrentSiteRuntime(ctx context.Context, site string) (SiteRuntimeDecision, bool, error)
+CurrentSiteServingStatus(ctx context.Context, site string) (SiteServingDecision, bool, error)
 ```
 
-or cache a per-site runtime record internally. The important point is avoiding
+or cache a per-site serving-status record internally. The important point is avoiding
 an all-sites list and scan for every request.
 
 ### 5. HTTP caching headers

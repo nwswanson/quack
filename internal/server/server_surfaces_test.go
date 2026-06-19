@@ -52,12 +52,57 @@ func TestServerAddressDefaultsAndOverrides(t *testing.T) {
 func TestPublicSurfaceDoesNotServeAPI(t *testing.T) {
 	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 
-	req := httptest.NewRequest(http.MethodGet, protocol.LoginCheckPath, nil)
-	rec := httptest.NewRecorder()
-	srv.Public.Handler.ServeHTTP(rec, req)
+	tests := map[string]struct {
+		method string
+		path   string
+		body   string
+	}{
+		"login check":     {method: http.MethodPost, path: protocol.LoginCheckPath},
+		"upload archive":  {method: http.MethodPost, path: protocol.UploadArchivePath},
+		"settings update": {method: http.MethodPost, path: protocol.SettingsDefaultSitePath, body: `{"default_site":"home"}`},
+		"site management": {method: http.MethodDelete, path: protocol.DeleteSitePathPrefix + "foo"},
+		"site revisions":  {method: http.MethodGet, path: protocol.DeleteSitePathPrefix + "foo" + protocol.SiteRevisionPathSuffix},
+		"site rollback":   {method: http.MethodPost, path: protocol.DeleteSitePathPrefix + "foo" + protocol.SiteRollbackPathSuffix},
+		"site unpublish":  {method: http.MethodPost, path: protocol.DeleteSitePathPrefix + "foo" + protocol.SiteUnpublishPathSuffix},
+		"site publish":    {method: http.MethodPost, path: protocol.DeleteSitePathPrefix + "foo" + protocol.SitePublishPathSuffix},
+		"site list":       {method: http.MethodGet, path: protocol.SitesPath},
+	}
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	for name, tc := range tests {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Authorization", "Bearer token")
+		rec := httptest.NewRecorder()
+		srv.Public.Handler.ServeHTTP(rec, req)
+
+		if rec.Code >= 200 && rec.Code < 300 {
+			t.Fatalf("%s: status = %d, want non-success from public surface; body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAdminControlRoutesDoNotDependOnPublicHostRouting(t *testing.T) {
+	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+
+	tests := map[string]struct {
+		method string
+		path   string
+		host   string
+		status int
+	}{
+		"login check on site host": {method: http.MethodPost, path: protocol.LoginCheckPath, host: "foo.example.com", status: http.StatusOK},
+		"site list on site host":   {method: http.MethodGet, path: protocol.SitesPath, host: "foo.example.com", status: http.StatusOK},
+	}
+
+	for name, tc := range tests {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Host = tc.host
+		req.Header.Set("Authorization", "Bearer token")
+		rec := httptest.NewRecorder()
+		srv.Admin.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != tc.status {
+			t.Fatalf("%s: status = %d, want %d; body=%s", name, rec.Code, tc.status, rec.Body.String())
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-package sitehttp
+package statichttp
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	appstorage "quack/internal/storage"
 )
 
-func TestHandlerServesBlobFromHostSite(t *testing.T) {
+func TestHandlerServesBlobForStaticRequest(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "index-blob"), []byte("site index"), 0o644); err != nil {
 		t.Fatal(err)
@@ -28,19 +28,36 @@ func TestHandlerServesBlobFromHostSite(t *testing.T) {
 			File:         domain.UploadFileRecord{BlobPath: "index-blob"},
 		},
 	})
-	mux := http.NewServeMux()
-	h.Register(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Host = "foo.example.com"
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	h.ServeSiteFile(rec, req, Request{Site: "foo", URLPath: "/"})
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	if rec.Body.String() != "site index" {
 		t.Fatalf("body = %q, want site index", rec.Body.String())
+	}
+}
+
+func TestHandlerPreservesDirectoryRedirect(t *testing.T) {
+	h := New(testStore{}, testReadService{
+		decision: sites.ServeSiteFileDecision{
+			Status: sites.ServeSiteFileDirectoryRedirect,
+			Site:   "foo",
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/blog?x=1", nil)
+	rec := httptest.NewRecorder()
+	h.ServeSiteFile(rec, req, Request{Site: "foo", URLPath: "/blog"})
+
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusMovedPermanently, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/blog/?x=1" {
+		t.Fatalf("location = %q, want /blog/?x=1", got)
 	}
 }
 
@@ -60,8 +77,8 @@ func (r testReadService) ValidateUploadManifest(ctx context.Context, actor domai
 	return nil
 }
 
-func (r testReadService) CurrentSiteRuntime(ctx context.Context, site string) (domain.SiteRuntimeDecision, error) {
-	return domain.SiteRuntimeDecision{}, nil
+func (r testReadService) CurrentSiteServingStatus(ctx context.Context, site string) (domain.SiteServingDecision, error) {
+	return domain.SiteServingDecision{}, nil
 }
 
 func (r testReadService) CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {

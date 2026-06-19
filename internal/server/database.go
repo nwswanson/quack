@@ -2,8 +2,8 @@ package server
 
 import (
 	"quack/internal/adminui"
+	"quack/internal/controlapi"
 	"quack/internal/hotdata"
-	"quack/internal/serverapi"
 	"quack/internal/sites"
 	"quack/internal/uploads"
 )
@@ -14,7 +14,7 @@ type Database interface {
 	sites.SiteWriteRepository
 	adminui.UserRepository
 	adminui.SessionRepository
-	serverapi.UserRepository
-	serverapi.RevisionRepository
+	controlapi.UserRepository
+	controlapi.RevisionRepository
 	Close() error
 }

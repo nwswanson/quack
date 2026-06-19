@@ -1,4 +1,4 @@
-package sitehttp
+package statichttp
 
 import (
 	"errors"
@@ -13,38 +13,28 @@ import (
 	appstorage "quack/internal/storage"
 )
 
-type Handler struct {
+type Request struct {
+	Site    string
+	URLPath string
+}
+
+type Handler interface {
+	ServeSiteFile(w http.ResponseWriter, r *http.Request, req Request)
+}
+
+type handler struct {
 	store appstorage.Storage
 	read  sites.SiteReadService
 }
 
 func New(store appstorage.Storage, read sites.SiteReadService) Handler {
-	return Handler{store: store, read: read}
+	return handler{store: store, read: read}
 }
 
-func (h Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/", h.handleServeFile)
-}
-
-func (h Handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	site := sites.NameFromHost(r.Host)
-	if site == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	h.serveSiteFile(w, r, site, r.URL.Path, "")
-}
-
-func (h Handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
-	decision, err := h.read.ServeSiteFile(r.Context(), site, urlPath)
+func (h handler) ServeSiteFile(w http.ResponseWriter, r *http.Request, req Request) {
+	decision, err := h.read.ServeSiteFile(r.Context(), req.Site, req.URLPath)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "resolve site file failed", "site", site, "path", urlPath, "error", err)
+		slog.ErrorContext(r.Context(), "resolve site file failed", "site", req.Site, "path", req.URLPath, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -54,19 +44,19 @@ func (h Handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site stri
 	case sites.ServeSiteFileFound:
 		h.serveBlob(w, r, decision.Site, decision.RelativePath, decision.File)
 	case sites.ServeSiteFileDirectoryRedirect:
-		http.Redirect(w, r, sites.DirectoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
+		http.Redirect(w, r, sites.DirectoryRedirectPath(r, "", req.URLPath), http.StatusMovedPermanently)
 	case sites.ServeSiteFileEmptyIndex:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 	case sites.ServeSiteFileNotFound:
 		http.NotFound(w, r)
 	default:
-		slog.ErrorContext(r.Context(), "unknown site file decision", "site", site, "path", urlPath, "status", decision.Status)
+		slog.ErrorContext(r.Context(), "unknown site file decision", "site", req.Site, "path", req.URLPath, "status", decision.Status)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 	}
 }
 
-func (h Handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file domain.UploadFileRecord) {
+func (h handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file domain.UploadFileRecord) {
 	blob, err := h.store.OpenBlob(r.Context(), file.BlobPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

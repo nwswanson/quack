@@ -194,8 +194,9 @@ type SiteSummary struct {
 	ByteCount      int64  `json:"byte_count"`
 	UpdatedAt      string `json:"updated_at,omitempty"`
 	LiveState      string `json:"live_state,omitempty"`
-	RuntimeStatus  string `json:"runtime_status,omitempty"`
-	PolicyReason   string `json:"policy_reason,omitempty"`
+	// RuntimeStatus is the compatibility wire name for internal serving status.
+	RuntimeStatus string `json:"runtime_status,omitempty"`
+	PolicyReason  string `json:"policy_reason,omitempty"`
 }
 
 type ListSitesResponse struct {

@@ -34,12 +34,12 @@ func TestSiteReadServiceUploadPolicyUsesServerSettings(t *testing.T) {
 	}
 }
 
-func TestSiteReadServiceCurrentSiteRuntime(t *testing.T) {
+func TestSiteReadServiceCurrentSiteServingStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		site       string
 		violations []domain.PolicyViolation
-		want       domain.SiteRuntimeDecision
+		want       domain.SiteServingDecision
 	}{
 		{
 			name: "active without database violations",
@@ -49,7 +49,7 @@ func TestSiteReadServiceCurrentSiteRuntime(t *testing.T) {
 				Severity: "suspended",
 				Reason:   "ignored",
 			}},
-			want: domain.SiteRuntimeDecision{Status: domain.SiteRuntimeActive},
+			want: domain.SiteServingDecision{Status: domain.SiteServingActive},
 		},
 		{
 			name: "degraded database violation",
@@ -59,7 +59,7 @@ func TestSiteReadServiceCurrentSiteRuntime(t *testing.T) {
 				Severity: "degraded",
 				Reason:   "database denied",
 			}},
-			want: domain.SiteRuntimeDecision{Status: domain.SiteRuntimeDegraded, Reason: "database denied"},
+			want: domain.SiteServingDecision{Status: domain.SiteServingDegraded, Reason: "database denied"},
 		},
 		{
 			name: "suspended database violation",
@@ -69,12 +69,12 @@ func TestSiteReadServiceCurrentSiteRuntime(t *testing.T) {
 				Severity: "suspended",
 				Reason:   "database required",
 			}},
-			want: domain.SiteRuntimeDecision{Status: domain.SiteRuntimeSuspendedByPolicy, Reason: "database required"},
+			want: domain.SiteServingDecision{Status: domain.SiteServingSuspendedByPolicy, Reason: "database required"},
 		},
 		{
 			name: "unknown site defaults active",
 			site: "missing.example",
-			want: domain.SiteRuntimeDecision{Status: domain.SiteRuntimeActive},
+			want: domain.SiteServingDecision{Status: domain.SiteServingActive},
 		},
 	}
 
@@ -90,12 +90,12 @@ func TestSiteReadServiceCurrentSiteRuntime(t *testing.T) {
 			}
 			read := NewSiteReadService(db)
 
-			got, err := read.CurrentSiteRuntime(context.Background(), tt.site)
+			got, err := read.CurrentSiteServingStatus(context.Background(), tt.site)
 			if err != nil {
-				t.Fatalf("CurrentSiteRuntime error = %v", err)
+				t.Fatalf("CurrentSiteServingStatus error = %v", err)
 			}
 			if got != tt.want {
-				t.Fatalf("CurrentSiteRuntime = %+v, want %+v", got, tt.want)
+				t.Fatalf("CurrentSiteServingStatus = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

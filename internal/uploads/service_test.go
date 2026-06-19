@@ -142,8 +142,8 @@ func (r uploadServiceRead) ValidateUploadManifest(ctx context.Context, actor dom
 	return r.validateErr
 }
 
-func (r uploadServiceRead) CurrentSiteRuntime(ctx context.Context, site string) (domain.SiteRuntimeDecision, error) {
-	return domain.SiteRuntimeDecision{}, nil
+func (r uploadServiceRead) CurrentSiteServingStatus(ctx context.Context, site string) (domain.SiteServingDecision, error) {
+	return domain.SiteServingDecision{}, nil
 }
 
 func (r uploadServiceRead) CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {

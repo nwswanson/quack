@@ -4,11 +4,12 @@ import (
 	"net/http"
 
 	"quack/internal/adminui"
+	"quack/internal/controlapi"
 	"quack/internal/hotdata"
-	"quack/internal/serverapi"
+	"quack/internal/publichttp"
 	appsettings "quack/internal/settings"
-	"quack/internal/sitehttp"
 	"quack/internal/sites"
+	"quack/internal/statichttp"
 	appstorage "quack/internal/storage"
 	"quack/internal/uploads"
 )
@@ -55,7 +56,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		SetLogLevel: SetLogLevel,
 	}).Register(adminMux)
 
-	serverapi.New(serverapi.Options{
+	controlapi.New(controlapi.Options{
 		Token:                token,
 		AllowUnauthenticated: opts.AllowUnauthenticated,
 		Store:                store,
@@ -67,7 +68,8 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	}).Register(adminMux)
 
 	publicMux := http.NewServeMux()
-	sitehttp.New(store, read).Register(publicMux)
+	staticHandler := statichttp.New(store, read)
+	publichttp.New(staticHandler).Register(publicMux)
 
 	return Servers{
 		Admin: &http.Server{

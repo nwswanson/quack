@@ -8,14 +8,15 @@ import (
 	"path/filepath"
 	"quack/internal/domain"
 	"quack/internal/hotdata"
+	"quack/internal/publichttp"
 	"quack/internal/settings"
-	"quack/internal/sitehttp"
 	"quack/internal/storage"
 	"strings"
 	"testing"
 	"time"
 
 	"quack/internal/sites"
+	"quack/internal/statichttp"
 )
 
 func BenchmarkServeFileWithBlob(b *testing.B) {
@@ -51,7 +52,8 @@ func BenchmarkServeFileWithBlob(b *testing.B) {
 }
 
 func benchServeFile(b *testing.B, name string, reader hotdata.HotDataReader) {
-	h := sitehttp.New(staticStore{}, sites.NewSiteReadService(reader))
+	staticHandler := statichttp.New(staticStore{}, sites.NewSiteReadService(reader))
+	h := publichttp.New(staticHandler)
 	mux := http.NewServeMux()
 	h.Register(mux)
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)

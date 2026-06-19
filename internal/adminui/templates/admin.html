@@ -112,7 +112,7 @@
                 <th>Files</th>
                 <th>Bytes</th>
                 <th>Live</th>
-                <th>Runtime status</th>
+                <th>Serving status</th>
                 <th>Policy reason</th>
                 <th>Updated</th>
               </tr>
@@ -127,7 +127,7 @@
                   <td>{{.FileCount}}</td>
                   <td>{{.ByteCount}}</td>
                   <td>{{if .LiveState}}{{.LiveState}}{{else}}-{{end}}</td>
-                  <td>{{.RuntimeStatus}}</td>
+                  <td>{{.ServingStatus}}</td>
                   <td>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</td>
                   <td>{{.UpdatedAt}}</td>
                 </tr>

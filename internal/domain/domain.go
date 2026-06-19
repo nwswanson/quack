@@ -29,16 +29,18 @@ const (
 	ScopeUpload ScopeType = "upload"
 )
 
-type SiteRuntimeStatus string
+type SiteServingStatus string
 
 const (
-	SiteRuntimeActive            SiteRuntimeStatus = "active"
-	SiteRuntimeDegraded          SiteRuntimeStatus = "degraded"
-	SiteRuntimeSuspendedByPolicy SiteRuntimeStatus = "suspended_by_policy"
+	SiteServingActive            SiteServingStatus = "active"
+	SiteServingDegraded          SiteServingStatus = "degraded"
+	SiteServingSuspendedByPolicy SiteServingStatus = "suspended_by_policy"
 )
 
-type SiteRuntimeDecision struct {
-	Status SiteRuntimeStatus
+// SiteServingDecision describes whether a static site release may be served.
+// It is not related to executing user-provided runtime code.
+type SiteServingDecision struct {
+	Status SiteServingStatus
 	Reason string
 }
 
@@ -52,7 +54,7 @@ type PublishedSite struct {
 	ByteCount      int64
 	UpdatedAt      string
 	LiveState      string
-	RuntimeStatus  SiteRuntimeStatus
+	ServingStatus  SiteServingStatus
 	PolicyReason   string
 }
 

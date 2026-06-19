@@ -323,13 +323,13 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser) (adminPag
 		return adminPageData{}, err
 	}
 	for i := range siteList {
-		decision, err := h.read.CurrentSiteRuntime(r.Context(), siteList[i].Site)
+		decision, err := h.read.CurrentSiteServingStatus(r.Context(), siteList[i].Site)
 		if err != nil {
 			return adminPageData{}, err
 		}
-		siteList[i].RuntimeStatus = decision.Status
-		if siteList[i].RuntimeStatus == "" {
-			siteList[i].RuntimeStatus = domain.SiteRuntimeActive
+		siteList[i].ServingStatus = decision.Status
+		if siteList[i].ServingStatus == "" {
+			siteList[i].ServingStatus = domain.SiteServingActive
 		}
 		siteList[i].PolicyReason = decision.Reason
 	}

@@ -26,33 +26,33 @@ Lock down current behavior before changing package boundaries.
 
 ## Tasks
 
-* [ ] Run the full test suite and capture current passing state.
-* [ ] Add or confirm integration coverage for:
+* [x] Run the full test suite and capture current passing state.
+* [x] Add or confirm integration coverage for:
 
-  * [ ] CLI deploy flow.
-  * [ ] Upload archive flow.
-  * [ ] Public static file serving.
-  * [ ] Default site routing.
-  * [ ] Publish, unpublish, rollback, and delete flows.
-  * [ ] Admin settings updates.
-  * [ ] Policy violation reconciliation.
-* [ ] Add tests proving public routes do not expose control API routes.
-* [ ] Add tests proving admin/control API routes do not depend on public host routing.
-* [ ] Add a package dependency snapshot using `go list` or a simple architecture test.
-* [ ] Document the intended top-level layers:
+  * [x] CLI deploy flow.
+  * [x] Upload archive flow.
+  * [x] Public static file serving.
+  * [x] Default site routing.
+  * [x] Publish, unpublish, rollback, and delete flows.
+  * [x] Admin settings updates.
+  * [x] Policy violation reconciliation.
+* [x] Add tests proving public routes do not expose control API routes.
+* [x] Add tests proving admin/control API routes do not depend on public host routing.
+* [x] Add a package dependency snapshot using `go list` or a simple architecture test.
+* [x] Document the intended top-level layers:
 
-  * [ ] Transport.
-  * [ ] Application services.
-  * [ ] Domain concepts.
-  * [ ] Infrastructure.
-  * [ ] Composition root.
+  * [x] Transport.
+  * [x] Application services.
+  * [x] Domain concepts.
+  * [x] Infrastructure.
+  * [x] Composition root.
 
 ## Acceptance Criteria
 
-* [ ] All existing tests pass.
-* [ ] Refactor can proceed without relying on manual behavior checks.
-* [ ] There is clear test coverage around the current user-visible flows.
-* [ ] The team agrees that public data-plane behavior and control-plane behavior are separate concerns.
+* [x] All existing tests pass.
+* [x] Refactor can proceed without relying on manual behavior checks.
+* [x] There is clear test coverage around the current user-visible flows.
+* [x] The team agrees that public data-plane behavior and control-plane behavior are separate concerns.
 
 ---
 
@@ -89,21 +89,21 @@ internal/controlapi
 
 ## Tasks
 
-* [ ] Rename `internal/serverapi` to `internal/controlapi`.
-* [ ] Update package declarations.
-* [ ] Update imports.
-* [ ] Update tests.
-* [ ] Update any comments or docs referring to this package as the general server API.
-* [ ] Keep route paths unchanged.
-* [ ] Keep response payloads unchanged.
-* [ ] Verify CLI behavior is unchanged.
-* [ ] Verify integration tests are unchanged except package/import names.
+* [x] Rename `internal/serverapi` to `internal/controlapi`.
+* [x] Update package declarations.
+* [x] Update imports.
+* [x] Update tests.
+* [x] Update any comments or docs referring to this package as the general server API.
+* [x] Keep route paths unchanged.
+* [x] Keep response payloads unchanged.
+* [x] Verify CLI behavior is unchanged.
+* [x] Verify integration tests are unchanged except package/import names.
 
 ## Acceptance Criteria
 
-* [ ] No behavior changes.
-* [ ] All existing `/v1` management routes still work.
-* [ ] It is clear that this package owns deployment and management APIs, not future user-generated APIs.
+* [x] No behavior changes.
+* [x] All existing `/v1` management routes still work.
+* [x] It is clear that this package owns deployment and management APIs, not future user-generated APIs.
 
 ---
 
@@ -146,19 +146,19 @@ CurrentSiteServingStatus
 
 ## Tasks
 
-* [ ] Rename domain types related to static-site runtime status.
-* [ ] Rename read service methods that return current runtime decisions.
-* [ ] Rename admin UI fields that display runtime status.
-* [ ] Rename API or CLI fields only if they are not externally committed.
-* [ ] If API fields are externally committed, keep wire field names stable and only rename internal structs.
-* [ ] Update tests.
-* [ ] Add comments explaining that this status is about serving eligibility, not script execution.
+* [x] Rename domain types related to static-site runtime status.
+* [x] Rename read service methods that return current runtime decisions.
+* [x] Rename admin UI fields that display runtime status.
+* [x] Rename API or CLI fields only if they are not externally committed.
+* [x] If API fields are externally committed, keep wire field names stable and only rename internal structs.
+* [x] Update tests.
+* [x] Add comments explaining that this status is about serving eligibility, not script execution.
 
 ## Acceptance Criteria
 
-* [ ] The codebase no longer uses `runtime` to describe static-site availability.
-* [ ] Future `internal/runtime` package can exist without awkward naming collisions.
-* [ ] External API compatibility is preserved unless intentionally versioned.
+* [x] The codebase no longer uses `runtime` to describe static-site availability.
+* [x] Future `internal/runtime` package can exist without awkward naming collisions.
+* [x] External API compatibility is preserved unless intentionally versioned.
 
 ---
 
@@ -192,21 +192,21 @@ internal/statichttp
 
 ## Tasks
 
-* [ ] Create `internal/publichttp`.
-* [ ] Move public host/site routing responsibility into `publichttp`.
-* [ ] Create `internal/statichttp`.
-* [ ] Move blob-backed file response behavior into `statichttp`.
-* [ ] Keep existing HTTP behavior unchanged:
+* [x] Create `internal/publichttp`.
+* [x] Move public host/site routing responsibility into `publichttp`.
+* [x] Create `internal/statichttp`.
+* [x] Move blob-backed file response behavior into `statichttp`.
+* [x] Keep existing HTTP behavior unchanged:
 
-  * [ ] Static file serving.
-  * [ ] Directory/index handling.
-  * [ ] Missing file handling.
-  * [ ] Suspended/degraded site handling.
-  * [ ] Default site behavior.
-* [ ] Introduce a route decision type, even if it initially only supports static files.
-* [ ] Avoid adding runtime behavior in this phase.
-* [ ] Update `server.New` composition to register public routes through `publichttp`.
-* [ ] Update integration tests.
+  * [x] Static file serving.
+  * [x] Directory/index handling.
+  * [x] Missing file handling.
+  * [x] Suspended/degraded site handling.
+  * [x] Default site behavior.
+* [x] Introduce a route decision type, even if it initially only supports static files.
+* [x] Avoid adding runtime behavior in this phase.
+* [x] Update `server.New` composition to register public routes through `publichttp`.
+* [x] Update integration tests.
 
 ## Initial Route Decision Shape
 
@@ -237,11 +237,11 @@ const (
 
 ## Acceptance Criteria
 
-* [ ] Static serving behavior is unchanged.
-* [ ] Public request routing is no longer synonymous with static file serving.
-* [ ] There is an obvious place to add dynamic HTTP and socket routing later.
-* [ ] `statichttp` does not know about future runtime execution.
-* [ ] `publichttp` does not directly know about blob storage internals beyond calling the static handler/service.
+* [x] Static serving behavior is unchanged.
+* [x] Public request routing is no longer synonymous with static file serving.
+* [x] There is an obvious place to add dynamic HTTP and socket routing later.
+* [x] `statichttp` does not know about future runtime execution.
+* [x] `publichttp` does not directly know about blob storage internals beyond calling the static handler/service.
 
 ---
 
@@ -926,7 +926,7 @@ Make the new boundaries durable.
 
 * [ ] A new engineer can understand where to add static, dynamic HTTP, and WebSocket features.
 * [ ] The architecture has executable or reviewable guardrails.
-* [ ] Future work is less likely to collapse back into `sites` or `sitehttp`.
+* [ ] Future work is less likely to collapse back into `sites`, `publichttp`, or `statichttp`.
 
 ---
 
@@ -934,14 +934,14 @@ Make the new boundaries durable.
 
 ## Safe First PRs
 
-* [ ] Phase 0: Safety net and baseline.
-* [ ] Phase 1: Rename `serverapi` to `controlapi`.
-* [ ] Phase 2: Rename current runtime status concepts.
+* [x] Phase 0: Safety net and baseline.
+* [x] Phase 1: Rename `serverapi` to `controlapi`.
+* [x] Phase 2: Rename current runtime status concepts.
 * [ ] Phase 5: Extract manifest parsing.
 
 ## Medium-Risk Structural PRs
 
-* [ ] Phase 3: Split public serving from static file serving.
+* [x] Phase 3: Split public serving from static file serving.
 * [ ] Phase 4: Extract publishing and release concepts.
 * [ ] Phase 6: Extract policy and capability evaluation.
 * [ ] Phase 7: Reduce `hotdata` to cached reads.
@@ -1008,13 +1008,13 @@ internal/
 
 ## Final Definition of Done
 
-* [ ] Static hosting behavior is preserved.
-* [ ] Control plane and data plane are clearly separated.
-* [ ] Runtime terminology refers only to code execution.
-* [ ] Site availability/policy status has separate terminology.
+* [x] Static hosting behavior is preserved.
+* [x] Control plane and data plane are clearly separated.
+* [x] Runtime terminology refers only to code execution.
+* [x] Site availability/policy status has separate terminology.
 * [ ] Releases are the core deployable unit.
 * [ ] Policy is capability-based.
 * [ ] Manifest parsing has its own package.
 * [ ] Public routing can choose static, HTTP runtime, or WebSocket runtime routes.
-* [ ] Runtime execution can be added without bloating `sites`, `sitehttp`, or `controlapi`.
-* [ ] Package boundaries are documented and tested.
+* [ ] Runtime execution can be added without bloating `sites`, `publichttp`, `statichttp`, or `controlapi`.
+* [x] Package boundaries are documented and tested.

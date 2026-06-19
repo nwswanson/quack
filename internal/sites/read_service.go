@@ -26,7 +26,7 @@ type SiteReadService interface {
 	ServerSettings(ctx context.Context) (domain.ServerSettings, error)
 	UploadPolicy(ctx context.Context, actor domain.AdminUser, site string) (domain.UploadPolicy, error)
 	ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest protocol.SiteManifest) error
-	CurrentSiteRuntime(ctx context.Context, site string) (domain.SiteRuntimeDecision, error)
+	CurrentSiteServingStatus(ctx context.Context, site string) (domain.SiteServingDecision, error)
 	CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
 	SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error)
@@ -47,7 +47,7 @@ type ServeSiteFileDecision struct {
 	Site         string
 	RelativePath string
 	File         domain.UploadFileRecord
-	Runtime      domain.SiteRuntimeDecision
+	Serving      domain.SiteServingDecision
 }
 
 type siteReadService struct {
@@ -88,8 +88,8 @@ func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor domai
 	return nil
 }
 
-func (s siteReadService) CurrentSiteRuntime(ctx context.Context, site string) (domain.SiteRuntimeDecision, error) {
-	return currentSiteRuntime(ctx, s.hot, site)
+func (s siteReadService) CurrentSiteServingStatus(ctx context.Context, site string) (domain.SiteServingDecision, error) {
+	return currentSiteServingStatus(ctx, s.hot, site)
 }
 
 func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
@@ -107,12 +107,12 @@ type SiteFileResolver interface {
 }
 
 func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, urlPath string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
-	decision, err := currentSiteRuntime(ctx, hot, site)
+	decision, err := currentSiteServingStatus(ctx, hot, site)
 	if err != nil {
 		return ServeSiteFileDecision{}, err
 	}
-	if decision.Status == domain.SiteRuntimeSuspendedByPolicy {
-		return ServeSiteFileDecision{Status: ServeSiteFileSuspended, Site: site, Runtime: decision}, nil
+	if decision.Status == domain.SiteServingSuspendedByPolicy {
+		return ServeSiteFileDecision{Status: ServeSiteFileSuspended, Site: site, Serving: decision}, nil
 	}
 
 	files, siteExists, err := hot.ListCurrentSiteFiles(ctx, site)
@@ -135,7 +135,7 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 			Site:         site,
 			RelativePath: relativePath,
 			File:         file,
-			Runtime:      decision,
+			Serving:      decision,
 		}, nil
 	}
 
@@ -146,21 +146,21 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 				Status:       ServeSiteFileDirectoryRedirect,
 				Site:         site,
 				RelativePath: indexPath,
-				Runtime:      decision,
+				Serving:      decision,
 			}, nil
 		}
 	}
 
 	if wantsIndex {
-		return ServeSiteFileDecision{Status: ServeSiteFileEmptyIndex, Site: site, RelativePath: relativePath, Runtime: decision}, nil
+		return ServeSiteFileDecision{Status: ServeSiteFileEmptyIndex, Site: site, RelativePath: relativePath, Serving: decision}, nil
 	}
-	return ServeSiteFileDecision{Status: ServeSiteFileNotFound, Site: site, RelativePath: relativePath, Runtime: decision}, nil
+	return ServeSiteFileDecision{Status: ServeSiteFileNotFound, Site: site, RelativePath: relativePath, Serving: decision}, nil
 }
 
-func currentSiteRuntime(ctx context.Context, hot SiteFileResolver, site string) (domain.SiteRuntimeDecision, error) {
+func currentSiteServingStatus(ctx context.Context, hot SiteFileResolver, site string) (domain.SiteServingDecision, error) {
 	manifests, err := hot.ListCurrentSiteManifests(ctx)
 	if err != nil {
-		return domain.SiteRuntimeDecision{}, err
+		return domain.SiteServingDecision{}, err
 	}
 	for _, manifest := range manifests {
 		if manifest.Site != site {
@@ -168,11 +168,11 @@ func currentSiteRuntime(ctx context.Context, hot SiteFileResolver, site string) 
 		}
 		violations, err := hot.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
 		if err != nil {
-			return domain.SiteRuntimeDecision{}, err
+			return domain.SiteServingDecision{}, err
 		}
-		return runtimeDecisionFromViolations(violations), nil
+		return servingDecisionFromViolations(violations), nil
 	}
-	return domain.SiteRuntimeDecision{Status: domain.SiteRuntimeActive}, nil
+	return domain.SiteServingDecision{Status: domain.SiteServingActive}, nil
 }
 
 func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error) {
@@ -230,17 +230,17 @@ func DatabaseAllowed(ctx context.Context, hot HotDataReader, actor domain.AdminU
 	return databaseAllowed(ctx, hot, actor, site)
 }
 
-func runtimeDecisionFromViolations(violations []domain.PolicyViolation) domain.SiteRuntimeDecision {
-	decision := domain.SiteRuntimeDecision{Status: domain.SiteRuntimeActive}
+func servingDecisionFromViolations(violations []domain.PolicyViolation) domain.SiteServingDecision {
+	decision := domain.SiteServingDecision{Status: domain.SiteServingActive}
 	for _, violation := range violations {
 		if violation.Key != appsettings.SettingDatabaseFeature {
 			continue
 		}
 		if violation.Severity == "suspended" {
-			return domain.SiteRuntimeDecision{Status: domain.SiteRuntimeSuspendedByPolicy, Reason: violation.Reason}
+			return domain.SiteServingDecision{Status: domain.SiteServingSuspendedByPolicy, Reason: violation.Reason}
 		}
-		if decision.Status == domain.SiteRuntimeActive {
-			decision = domain.SiteRuntimeDecision{Status: domain.SiteRuntimeDegraded, Reason: violation.Reason}
+		if decision.Status == domain.SiteServingActive {
+			decision = domain.SiteServingDecision{Status: domain.SiteServingDegraded, Reason: violation.Reason}
 		}
 	}
 	return decision

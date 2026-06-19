@@ -16,7 +16,7 @@ handler
       -> HotDataInvalidator
 ```
 
-The important idea is that handlers ask for application concepts, not cache details. A handler should ask for server settings, current runtime status, or a current file. It should not know whether the answer came from SQLite, memory, Redis, a snapshot, or a read-through cache.
+The important idea is that handlers ask for application concepts, not cache details. A handler should ask for server settings, current serving status, or a current file. It should not know whether the answer came from SQLite, memory, Redis, a snapshot, or a read-through cache.
 
 ## Key interfaces
 
@@ -265,14 +265,14 @@ Coarse invalidation is preferred at this stage. It is better to evict a little t
 Expected write invalidations:
 
 - `SaveServerSettings`: invalidate server settings.
-- `SavePolicy`: invalidate policies and runtime-related policy data.
+- `SavePolicy`: invalidate policies and serving-status policy data.
 - `SaveUploadSettings`: invalidate upload settings for that site version.
 - `FinishUpload`: invalidate site and site-version data.
 - `PublishSite`: invalidate site data.
 - `RollbackSite`: invalidate site data.
 - `UnpublishSite`: invalidate site data.
 - `DeleteSite`: invalidate site data.
-- `SavePolicyViolation` / `ResolvePolicyViolation`: invalidate site-version runtime data.
+- `SavePolicyViolation` / `ResolvePolicyViolation`: invalidate site-version serving-status data.
 
 This is why invalidation lives in `SiteWriteService`, not in handlers and not in SQLite.
 
@@ -328,7 +328,7 @@ Invalidation:
 - Server settings invalidation reloads settings.
 - Site invalidation evicts current file lookups and current manifests.
 - Site-version invalidation evicts upload settings and policy violations.
-- Policy invalidation evicts policy reads and runtime-related policy data.
+- Policy invalidation evicts policy reads and serving-status policy data.
 - Failed writes do not invalidate.
 
 Service integration:
@@ -359,7 +359,7 @@ type CurrentSiteSnapshot struct {
 	Site    string
 	SiteSHA string
 	Version int64
-	Runtime SiteRuntimeDecision
+	Serving SiteServingDecision
 	Files   map[string]UploadFileRecord
 }
 ```

@@ -74,7 +74,7 @@ func benchServeMetadataReader(b *testing.B, name string, reader HotDataReader) {
 	if _, err := read.ServerSettings(ctx); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := read.CurrentSiteRuntime(ctx, "example.com"); err != nil {
+	if _, err := read.CurrentSiteServingStatus(ctx, "example.com"); err != nil {
 		b.Fatal(err)
 	}
 	if _, _, _, err := read.CurrentSiteFile(ctx, "example.com", "index.html"); err != nil {
@@ -87,7 +87,7 @@ func benchServeMetadataReader(b *testing.B, name string, reader HotDataReader) {
 				if _, err := read.ServerSettings(ctx); err != nil {
 					b.Fatal(err)
 				}
-				if _, err := read.CurrentSiteRuntime(ctx, "example.com"); err != nil {
+				if _, err := read.CurrentSiteServingStatus(ctx, "example.com"); err != nil {
 					b.Fatal(err)
 				}
 				file, ok, siteExists, err := read.CurrentSiteFile(ctx, "example.com", "index.html")

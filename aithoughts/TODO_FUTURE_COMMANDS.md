@@ -5,7 +5,7 @@ Looking at the current lifecycle, you already have the core destructive/publishi
 The commands I’d add next are:
 
 `quack sites`
-List published sites, with current version, owner/publisher, file count, byte count, update time, runtime status, and policy reason. The admin page already has most of this data; the CLI needs the same inventory view.
+List published sites, with current version, owner/publisher, file count, byte count, update time, serving status, and policy reason. The admin page already has most of this data; the CLI needs the same inventory view.
 
 `quack status <site>`
 Show the current deployed version, whether it is active/blocked by policy, when it was published, who published it, and basic serving health. This is the first command people reach for during maintenance.
