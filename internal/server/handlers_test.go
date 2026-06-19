@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"quack/internal/adminui"
 	"quack/internal/domain"
 	"quack/internal/storage"
 	"reflect"
@@ -337,8 +338,8 @@ func TestAdminLoginAndLogout(t *testing.T) {
 		t.Fatalf("login status = %d, want %d; body=%s", loginRec.Code, http.StatusSeeOther, loginRec.Body.String())
 	}
 	cookie := loginRec.Result().Cookies()[0]
-	if cookie.Name != adminSessionCookieName {
-		t.Fatalf("cookie = %q, want %q", cookie.Name, adminSessionCookieName)
+	if cookie.Name != adminui.SessionCookieName {
+		t.Fatalf("cookie = %q, want %q", cookie.Name, adminui.SessionCookieName)
 	}
 	if !cookie.HttpOnly {
 		t.Fatal("session cookie is not HttpOnly")
@@ -400,7 +401,7 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
-	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
@@ -428,7 +429,7 @@ func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://alice.example.com")
-	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
@@ -452,7 +453,7 @@ func TestAdminPostRejectsMissingOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
@@ -474,7 +475,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
-	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 
@@ -490,7 +491,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 
 	get := httptest.NewRequest(http.MethodGet, rec.Header().Get("Location"), nil)
 	get.Host = "quack.example.com"
-	get.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	get.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	page := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(page, get)
 	if page.Code != http.StatusOK {
@@ -523,7 +524,7 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 	update.Host = "quack.example.com"
 	update.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	update.Header.Set("Origin", "https://quack.example.com")
-	update.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "session"})
+	update.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, update)
 	if rec.Code != http.StatusSeeOther {

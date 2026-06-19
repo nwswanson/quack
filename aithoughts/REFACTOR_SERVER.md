@@ -569,29 +569,29 @@ Purpose: leave `server` as transport composition and routing, not business logic
 
 Purpose: separate public site serving, JSON API, and admin UI once core services are clean.
 
-* [ ] Create `internal/serverapi` or keep as `internal/server/api`.
-* [ ] Move JSON API routes:
+* [x] Create `internal/serverapi` or keep as `internal/server/api`.
+* [x] Move JSON API routes:
 
-  * [ ] login check
-  * [ ] upload
-  * [ ] list sites
-  * [ ] default site settings
-  * [ ] delete site
-  * [ ] revisions
-  * [ ] rollback
-  * [ ] publish/unpublish
-* [ ] Create `internal/adminui`.
-* [ ] Move admin UI:
+  * [x] login check
+  * [x] upload
+  * [x] list sites
+  * [x] default site settings
+  * [x] delete site
+  * [x] revisions
+  * [x] rollback
+  * [x] publish/unpublish
+* [x] Create `internal/adminui`.
+* [x] Move admin UI:
 
-  * [ ] HTML routes
-  * [ ] admin templates
-  * [ ] admin page data
-  * [ ] admin session cookie helpers
-  * [ ] same-origin checks
-* [ ] Create `internal/sitehttp` if useful.
-* [ ] Move public site serving handlers.
-* [ ] Keep `internal/server` wiring these route groups together.
-* [ ] Run tests.
+  * [x] HTML routes
+  * [x] admin templates
+  * [x] admin page data
+  * [x] admin session cookie helpers
+  * [x] same-origin checks
+* [x] Create `internal/sitehttp` if useful.
+* [x] Move public site serving handlers.
+* [x] Keep `internal/server` wiring these route groups together.
+* [x] Run tests.
 
 ## Phase 12: Test cleanup
 

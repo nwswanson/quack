@@ -9,6 +9,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/hotdata"
 	"quack/internal/settings"
+	"quack/internal/sitehttp"
 	"quack/internal/storage"
 	"strings"
 	"testing"
@@ -50,19 +51,18 @@ func BenchmarkServeFileWithBlob(b *testing.B) {
 }
 
 func benchServeFile(b *testing.B, name string, reader hotdata.HotDataReader) {
-	h := &handler{
-		store: staticStore{},
-		read:  sites.NewSiteReadService(reader),
-	}
+	h := sitehttp.New(staticStore{}, sites.NewSiteReadService(reader))
+	mux := http.NewServeMux()
+	h.Register(mux)
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
 	req.Host = "example.com"
-	h.handleServeFile(&discardResponseWriter{header: http.Header{}}, req)
+	mux.ServeHTTP(&discardResponseWriter{header: http.Header{}}, req)
 	b.Run(name, func(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				w := &discardResponseWriter{header: http.Header{}}
-				h.handleServeFile(w, req)
+				mux.ServeHTTP(w, req)
 				if w.status != http.StatusOK {
 					b.Fatalf("status = %d, want %d", w.status, http.StatusOK)
 				}

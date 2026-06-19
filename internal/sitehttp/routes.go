@@ -1,28 +1,38 @@
-package server
+package sitehttp
 
 import (
 	"errors"
 	"log/slog"
 	"net/http"
 	"os"
-	"quack/internal/domain"
-	"quack/internal/sites"
 	"time"
 
+	"quack/internal/domain"
 	"quack/internal/protocol"
+	"quack/internal/sites"
+	appstorage "quack/internal/storage"
 )
 
-func (h *handler) siteRoutes(mux *http.ServeMux) {
+type Handler struct {
+	store appstorage.Storage
+	read  sites.SiteReadService
+}
+
+func New(store appstorage.Storage, read sites.SiteReadService) Handler {
+	return Handler{store: store, read: read}
+}
+
+func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleServeFile)
 }
 
-func (h *handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
+func (h Handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	site := siteFromHost(r.Host)
+	site := sites.NameFromHost(r.Host)
 	if site == "" {
 		http.NotFound(w, r)
 		return
@@ -31,11 +41,7 @@ func (h *handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
 	h.serveSiteFile(w, r, site, r.URL.Path, "")
 }
 
-func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
-	http.NotFound(w, r)
-}
-
-func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
+func (h Handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site string, urlPath string, redirectPrefix string) {
 	decision, err := h.read.ServeSiteFile(r.Context(), site, urlPath)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "resolve site file failed", "site", site, "path", urlPath, "error", err)
@@ -48,7 +54,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	case sites.ServeSiteFileFound:
 		h.serveBlob(w, r, decision.Site, decision.RelativePath, decision.File)
 	case sites.ServeSiteFileDirectoryRedirect:
-		http.Redirect(w, r, directoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
+		http.Redirect(w, r, sites.DirectoryRedirectPath(r, redirectPrefix, urlPath), http.StatusMovedPermanently)
 	case sites.ServeSiteFileEmptyIndex:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -60,7 +66,7 @@ func (h *handler) serveSiteFile(w http.ResponseWriter, r *http.Request, site str
 	}
 }
 
-func (h *handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file domain.UploadFileRecord) {
+func (h Handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, relativePath string, file domain.UploadFileRecord) {
 	blob, err := h.store.OpenBlob(r.Context(), file.BlobPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
