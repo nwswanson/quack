@@ -66,8 +66,6 @@ func (h *handler) adminRoutes(mux *http.ServeMux) {
 }
 
 func (h *handler) siteRoutes(mux *http.ServeMux) {
-	//mux.HandleFunc("/serve", h.handleServeDisabled)
-	//mux.HandleFunc("/serve/", h.handleServeDisabled)
 	mux.HandleFunc("/", h.handleServeFile)
 }
 
@@ -762,21 +760,6 @@ func (h *handler) handleServeFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveSiteFile(w, r, site, r.URL.Path, "")
-}
-
-func (h *handler) handleServeExplicitSite(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	site, filePath, ok := siteAndPathFromServePath(r.URL.Path)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-
-	h.serveSiteFile(w, r, site, filePath, "/serve/"+url.PathEscape(site))
 }
 
 func (h *handler) handleServeDisabled(w http.ResponseWriter, r *http.Request) {
