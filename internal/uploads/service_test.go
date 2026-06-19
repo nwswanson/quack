@@ -31,7 +31,7 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 		},
 		Body: tarArchive(t, map[string]string{
 			"index.html": "hello",
-			"site.yaml":  "features:\n  database:\n    enabled: true\n",
+			"site.yaml":  "features:\n  database:\n    enabled: true\nroutes:\n  - path: /api\n    kind: http\n    entrypoint: main\n",
 		}),
 	})
 	if err != nil {
@@ -45,6 +45,9 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	}
 	if got, want := write.settings["features.database.enabled"], "true"; got != want {
 		t.Fatalf("manifest setting = %q, want %q", got, want)
+	}
+	if got, want := write.settings["routes"], `[{"path":"/api","kind":"http","entrypoint":"main"}]`; got != want {
+		t.Fatalf("routes setting = %q, want %q", got, want)
 	}
 	if db.linkedUserID != 7 || db.linkedSiteSHA == "" {
 		t.Fatalf("linked site = (%d, %q), want user 7 and site sha", db.linkedUserID, db.linkedSiteSHA)

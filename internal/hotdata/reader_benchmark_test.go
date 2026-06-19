@@ -2,7 +2,6 @@ package hotdata
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -136,8 +135,4 @@ func (r staticHotDataReader) ListCurrentSiteFiles(ctx context.Context, site stri
 		return nil, r.siteExists, nil
 	}
 	return []domain.UploadFileRecord{r.file}, r.siteExists, nil
-}
-
-func (r staticHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error) {
-	return sites.ResolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(r.settings.DefaultSite), false)
 }

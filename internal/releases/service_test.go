@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"quack/internal/domain"
+	appsettings "quack/internal/settings"
 )
 
 func TestServiceDelegatesRevisionReads(t *testing.T) {
@@ -59,6 +60,53 @@ func TestServiceDoesNotInvalidateFailedReleaseWrite(t *testing.T) {
 	}
 }
 
+func TestServiceLookupRouteDefaultsToStatic(t *testing.T) {
+	invalidator := &releaseInvalidator{manifests: []domain.CurrentSiteManifest{{Site: "foo", Version: 3}}}
+	service := NewService(&releaseRepo{}, invalidator)
+
+	decision, ok, err := service.LookupRoute(context.Background(), "foo", "/docs/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteStatic || decision.Version != 3 || decision.Path != "/docs/" {
+		t.Fatalf("decision = %+v ok=%v, want static route for current release", decision, ok)
+	}
+}
+
+func TestServiceLookupRouteUsesLongestRoutePrecedence(t *testing.T) {
+	invalidator := &releaseInvalidator{manifests: []domain.CurrentSiteManifest{{
+		Site: "foo", Version: 3, Settings: map[string]string{
+			appsettings.SettingRoutes: `[{"path":"/","kind":"static"},{"path":"/api","kind":"http"},{"path":"/api/socket","kind":"websocket"}]`,
+		},
+	}}}
+	service := NewService(&releaseRepo{}, invalidator)
+
+	decision, ok, err := service.LookupRoute(context.Background(), "foo", "/api/socket/connect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteWebSocket || decision.Path != "/api/socket/connect" {
+		t.Fatalf("decision = %+v ok=%v, want websocket route by longest prefix", decision, ok)
+	}
+}
+
+func TestServiceLookupRouteUnknownPathFallsBackToStatic(t *testing.T) {
+	invalidator := &releaseInvalidator{manifests: []domain.CurrentSiteManifest{{
+		Site: "foo", Version: 3, Settings: map[string]string{
+			appsettings.SettingRoutes: `[{"path":"/api","kind":"http"}]`,
+		},
+	}}}
+	service := NewService(&releaseRepo{}, invalidator)
+
+	decision, ok, err := service.LookupRoute(context.Background(), "foo", "/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteStatic {
+		t.Fatalf("decision = %+v ok=%v, want static fallback", decision, ok)
+	}
+}
+
 type releaseRepo struct {
 	revisions []domain.RevisionRecord
 	err       error
@@ -93,7 +141,12 @@ func (r *releaseRepo) DeleteSite(ctx context.Context, site string, siteSHA strin
 }
 
 type releaseInvalidator struct {
-	calls []string
+	calls     []string
+	manifests []domain.CurrentSiteManifest
+}
+
+func (i *releaseInvalidator) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
+	return i.manifests, nil
 }
 
 func (i *releaseInvalidator) InvalidateSite(ctx context.Context, site string) error {

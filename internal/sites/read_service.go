@@ -3,6 +3,7 @@ package sites
 import (
 	"context"
 	"path"
+	"strings"
 
 	"quack/internal/domain"
 	"quack/internal/manifest"
@@ -18,7 +19,6 @@ type HotDataReader interface {
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
-	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
 }
 
 type SiteReadService interface {
@@ -94,7 +94,11 @@ func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relat
 }
 
 func (s siteReadService) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
-	return s.hot.ServeSiteFile(ctx, site, urlPath)
+	settings, err := s.hot.GetServerSettings(ctx)
+	if err != nil {
+		return ServeSiteFileDecision{}, err
+	}
+	return ResolveSiteFile(ctx, s.hot, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
 }
 
 type SiteFileResolver interface {

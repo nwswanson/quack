@@ -2,10 +2,8 @@ package hotdata
 
 import (
 	"context"
-	"strings"
 
 	"quack/internal/domain"
-	"quack/internal/sites"
 )
 
 type HotDataReader interface {
@@ -16,7 +14,6 @@ type HotDataReader interface {
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
-	ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error)
 }
 
 type Source interface {
@@ -100,14 +97,6 @@ func (r passthroughHotDataReader) ListCurrentSiteFiles(ctx context.Context, site
 		return nil, false, err
 	}
 	return append([]domain.UploadFileRecord(nil), files...), siteExists, nil
-}
-
-func (r passthroughHotDataReader) ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error) {
-	settings, err := r.GetServerSettings(ctx)
-	if err != nil {
-		return sites.ServeSiteFileDecision{}, err
-	}
-	return sites.ResolveSiteFile(ctx, r, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

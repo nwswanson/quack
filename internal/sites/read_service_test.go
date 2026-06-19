@@ -140,14 +140,9 @@ func TestSiteReadServiceCurrentSiteFileUsesHotReader(t *testing.T) {
 	}
 }
 
-func TestSiteReadServiceServeSiteFileUsesHotReader(t *testing.T) {
+func TestSiteReadServiceServeSiteFileResolvesFromReadModels(t *testing.T) {
 	db := &siteReadServiceDatabase{
-		serveDecision: ServeSiteFileDecision{
-			Status:       ServeSiteFileFound,
-			Site:         "example.com",
-			RelativePath: "index.html",
-			File:         domain.UploadFileRecord{RelativePath: "index.html", BlobPath: "blob"},
-		},
+		file: domain.UploadFileRecord{RelativePath: "index.html", BlobPath: "blob"},
 	}
 	read := NewSiteReadService(db)
 
@@ -156,10 +151,7 @@ func TestSiteReadServiceServeSiteFileUsesHotReader(t *testing.T) {
 		t.Fatalf("ServeSiteFile error = %v", err)
 	}
 	if decision.Status != ServeSiteFileFound || decision.File.BlobPath != "blob" {
-		t.Fatalf("ServeSiteFile = %+v, want delegated decision", decision)
-	}
-	if db.serveCalls != 1 {
-		t.Fatalf("ServeSiteFile calls = %d, want 1", db.serveCalls)
+		t.Fatalf("ServeSiteFile = %+v, want resolved static file", decision)
 	}
 }
 
@@ -196,14 +188,12 @@ func TestSiteReadServiceSystemDatabasePolicyDefaultsToInherit(t *testing.T) {
 }
 
 type siteReadServiceDatabase struct {
-	settings      domain.ServerSettings
-	policies      []domain.PolicyRecord
-	manifests     []domain.CurrentSiteManifest
-	violations    map[string][]domain.PolicyViolation
-	file          domain.UploadFileRecord
-	files         []domain.UploadFileRecord
-	serveDecision ServeSiteFileDecision
-	serveCalls    int
+	settings   domain.ServerSettings
+	policies   []domain.PolicyRecord
+	manifests  []domain.CurrentSiteManifest
+	violations map[string][]domain.PolicyViolation
+	file       domain.UploadFileRecord
+	files      []domain.UploadFileRecord
 }
 
 func (db *siteReadServiceDatabase) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
@@ -249,9 +239,4 @@ func (db *siteReadServiceDatabase) ListCurrentSiteFiles(ctx context.Context, sit
 		return nil, true, nil
 	}
 	return []domain.UploadFileRecord{db.file}, true, nil
-}
-
-func (db *siteReadServiceDatabase) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
-	db.serveCalls++
-	return db.serveDecision, nil
 }

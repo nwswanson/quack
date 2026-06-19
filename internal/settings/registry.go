@@ -49,6 +49,7 @@ const (
 	SettingLogLevel                = "log_level"
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
+	SettingRoutes                  = "routes"
 )
 
 var registry = map[string]SettingDefinition{
@@ -79,6 +80,10 @@ var registry = map[string]SettingDefinition{
 	SettingDatabaseFeatureRequired: {
 		Key: SettingDatabaseFeatureRequired, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingRoutes: {
+		Key: SettingRoutes, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
 	},
 }
 

@@ -492,47 +492,47 @@ The cache should make expensive reads cheap. It should not own final HTTP servin
 
 Good cache candidates:
 
-* [ ] Current release for site.
-* [ ] Release manifest.
-* [ ] Release file metadata.
-* [ ] Server settings.
-* [ ] Policy records.
-* [ ] Policy violations.
-* [ ] Default site mapping.
+* [x] Current release for site.
+* [x] Release manifest.
+* [x] Release file metadata.
+* [x] Server settings.
+* [x] Policy records.
+* [x] Policy violations.
+* [x] Default site mapping.
 
 Avoid caching as the primary abstraction:
 
-* [ ] Final static file serving decision.
-* [ ] Final dynamic route decision.
-* [ ] Final runtime invocation decision.
-* [ ] Final socket upgrade decision.
+* [x] Final static file serving decision.
+* [x] Final dynamic route decision.
+* [x] Final runtime invocation decision.
+* [x] Final socket upgrade decision.
 
 ## Tasks
 
-* [ ] Review current cached decision keys.
-* [ ] Replace final serving-decision cache entries with cached underlying read models where practical.
-* [ ] Keep compatibility if this is too large for one phase, but add comments marking final-decision caching as transitional.
-* [ ] Add cache invalidation tests for:
+* [x] Review current cached decision keys.
+* [x] Replace final serving-decision cache entries with cached underlying read models where practical.
+* [x] Keep compatibility if this is too large for one phase, but add comments marking final-decision caching as transitional.
+* [x] Add cache invalidation tests for:
 
-  * [ ] New release published.
-  * [ ] Rollback.
-  * [ ] Unpublish.
-  * [ ] Policy update.
-  * [ ] Default site update.
-  * [ ] Settings update.
-* [ ] Make cache invalidation operate around product concepts:
+  * [x] New release published.
+  * [x] Rollback.
+  * [x] Unpublish.
+  * [x] Policy update.
+  * [x] Default site update.
+  * [x] Settings update.
+* [x] Make cache invalidation operate around product concepts:
 
-  * [ ] Release changed.
-  * [ ] Policy changed.
-  * [ ] Settings changed.
-  * [ ] Host/default-site mapping changed.
+  * [x] Release changed.
+  * [x] Policy changed.
+  * [x] Settings changed.
+  * [x] Host/default-site mapping changed.
 
 ## Acceptance Criteria
 
-* [ ] `hotdata` no longer needs to understand every public HTTP outcome.
-* [ ] Adding runtime routes will not require duplicating the static serving cache pattern.
-* [ ] Cache invalidation is organized around release/policy/settings changes.
-* [ ] Public routing remains correct after publish, rollback, unpublish, and policy updates.
+* [x] `hotdata` no longer needs to understand every public HTTP outcome.
+* [x] Adding runtime routes will not require duplicating the static serving cache pattern.
+* [x] Cache invalidation is organized around release/policy/settings changes.
+* [x] Public routing remains correct after publish, rollback, unpublish, and policy updates.
 
 ---
 
@@ -553,23 +553,23 @@ internal/runtimehttp
 
 `internal/runtime` owns:
 
-* [ ] Runtime bundle metadata.
-* [ ] Entrypoint metadata.
-* [ ] Runtime route metadata.
-* [ ] Invocation request and response domain types.
-* [ ] Executor interface.
-* [ ] Runtime service orchestration.
-* [ ] Capability checks needed before invocation.
-* [ ] Logs/metrics interfaces, if introduced.
+* [x] Runtime bundle metadata.
+* [x] Entrypoint metadata.
+* [x] Runtime route metadata.
+* [x] Invocation request and response domain types.
+* [x] Executor interface.
+* [x] Runtime service orchestration.
+* [x] Capability checks needed before invocation.
+* [x] Logs/metrics interfaces, if introduced.
 
 `internal/runtime` does not own:
 
-* [ ] `http.ServeMux`.
-* [ ] Admin UI.
-* [ ] CLI response DTOs.
-* [ ] Static file serving.
-* [ ] SQLite implementation.
-* [ ] Blob storage implementation details.
+* [x] `http.ServeMux`.
+* [x] Admin UI.
+* [x] CLI response DTOs.
+* [x] Static file serving.
+* [x] SQLite implementation.
+* [x] Blob storage implementation details.
 
 ## Initial Interfaces
 
@@ -600,21 +600,21 @@ type InvocationResponse struct {
 
 ## Tasks
 
-* [ ] Create `internal/runtime`.
-* [ ] Create placeholder domain types.
-* [ ] Create `Executor` interface.
-* [ ] Create no-op or disabled runtime service implementation.
-* [ ] Create `internal/runtimehttp`.
-* [ ] Add a runtime HTTP adapter that returns a clear disabled/not-implemented response.
-* [ ] Do not enable user execution yet.
-* [ ] Add tests proving runtime routes are not active unless explicitly configured.
+* [x] Create `internal/runtime`.
+* [x] Create placeholder domain types.
+* [x] Create `Executor` interface.
+* [x] Create no-op or disabled runtime service implementation.
+* [x] Create `internal/runtimehttp`.
+* [x] Add a runtime HTTP adapter that returns a clear disabled/not-implemented response.
+* [x] Do not enable user execution yet.
+* [x] Add tests proving runtime routes are not active unless explicitly configured.
 
 ## Acceptance Criteria
 
-* [ ] Runtime terminology now refers only to script/code execution.
-* [ ] Future runtime work has a clear package home.
-* [ ] Public routing can theoretically route to runtime without changing static file serving.
-* [ ] No security-sensitive execution behavior is introduced prematurely.
+* [x] Runtime terminology now refers only to script/code execution.
+* [x] Future runtime work has a clear package home.
+* [x] Public routing can theoretically route to runtime without changing static file serving.
+* [x] No security-sensitive execution behavior is introduced prematurely.
 
 ---
 
@@ -636,26 +636,26 @@ Initial implementation may only allow `static`.
 
 ## Tasks
 
-* [ ] Add route declarations to manifest model.
-* [ ] Persist route declarations as part of release metadata.
-* [ ] Add route lookup to release read service.
-* [ ] Update public routing to use route lookup.
-* [ ] Preserve current static file fallback behavior.
-* [ ] Add tests for:
+* [x] Add route declarations to manifest model.
+* [x] Persist route declarations as part of release metadata.
+* [x] Add route lookup to release read service.
+* [x] Update public routing to use route lookup.
+* [x] Preserve current static file fallback behavior.
+* [x] Add tests for:
 
-  * [ ] Static route resolution.
-  * [ ] Unknown route.
-  * [ ] Index fallback.
-  * [ ] Route precedence.
-  * [ ] Future dynamic route declared but disabled by policy.
-  * [ ] WebSocket route declared but disabled by policy.
+  * [x] Static route resolution.
+  * [x] Unknown route.
+  * [x] Index fallback.
+  * [x] Route precedence.
+  * [x] Future dynamic route declared but disabled by policy.
+  * [x] WebSocket route declared but disabled by policy.
 
 ## Acceptance Criteria
 
-* [ ] Public routing is route-table driven.
-* [ ] Static sites behave exactly as before.
-* [ ] Dynamic route declarations can exist without being executable yet.
-* [ ] Route precedence is explicit and tested.
+* [x] Public routing is route-table driven.
+* [x] Static sites behave exactly as before.
+* [x] Dynamic route declarations can exist without being executable yet.
+* [x] Route precedence is explicit and tested.
 
 ---
 
@@ -944,12 +944,12 @@ Make the new boundaries durable.
 * [x] Phase 3: Split public serving from static file serving.
 * [ ] Phase 4: Extract publishing and release concepts.
 * [ ] Phase 6: Extract policy and capability evaluation.
-* [ ] Phase 7: Reduce `hotdata` to cached reads.
+* [x] Phase 7: Reduce `hotdata` to cached reads.
 
 ## Future Feature-Enabling PRs
 
-* [ ] Phase 8: Introduce runtime package skeleton.
-* [ ] Phase 9: Add route table support.
+* [x] Phase 8: Introduce runtime package skeleton.
+* [x] Phase 9: Add route table support.
 * [ ] Phase 10: Prepare persistence for runtime metadata.
 * [ ] Phase 11: Introduce disabled dynamic HTTP path.
 

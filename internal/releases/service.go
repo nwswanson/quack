@@ -30,15 +30,21 @@ type Service interface {
 	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
 	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
 	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
+	LookupRoute(ctx context.Context, site string, urlPath string) (RouteDecision, bool, error)
 }
 
 type service struct {
 	repo        Repository
+	routes      RouteSource
 	invalidator Invalidator
 }
 
 func NewService(repo Repository, invalidator Invalidator) Service {
-	return service{repo: repo, invalidator: invalidator}
+	routes, _ := invalidator.(RouteSource)
+	if routes == nil {
+		routes, _ = repo.(RouteSource)
+	}
+	return service{repo: repo, routes: routes, invalidator: invalidator}
 }
 
 func (s service) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error) {

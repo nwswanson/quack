@@ -11,29 +11,31 @@ import (
 const MaxBytes int64 = 64 << 10
 
 type Manifest struct {
-	Features Features `yaml:"features"`
-	Routes   []Route  `yaml:"routes"`
+	Features Features `json:"features" yaml:"features"`
+	Routes   []Route  `json:"routes" yaml:"routes"`
 }
 
 type Features struct {
-	Database FeatureFlag `yaml:"database"`
+	Database FeatureFlag `json:"database" yaml:"database"`
 }
 
 type FeatureFlag struct {
-	Enabled  bool `yaml:"enabled"`
-	Required bool `yaml:"required"`
+	Enabled  bool `json:"enabled" yaml:"enabled"`
+	Required bool `json:"required" yaml:"required"`
 }
 
 type RouteKind string
 
 const (
-	RouteStatic RouteKind = "static"
+	RouteStatic    RouteKind = "static"
+	RouteHTTP      RouteKind = "http"
+	RouteWebSocket RouteKind = "websocket"
 )
 
 type Route struct {
-	Path       string    `yaml:"path"`
-	Kind       RouteKind `yaml:"kind"`
-	Entrypoint string    `yaml:"entrypoint"`
+	Path       string    `json:"path" yaml:"path"`
+	Kind       RouteKind `json:"kind" yaml:"kind"`
+	Entrypoint string    `json:"entrypoint" yaml:"entrypoint"`
 }
 
 func Default() Manifest {
@@ -77,7 +79,7 @@ func validateRoutes(routes []Route) error {
 			return fmt.Errorf("route.path is required")
 		}
 		switch route.Kind {
-		case "", RouteStatic:
+		case "", RouteStatic, RouteHTTP, RouteWebSocket:
 		default:
 			return fmt.Errorf("unsupported route kind %q", route.Kind)
 		}

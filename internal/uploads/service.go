@@ -3,6 +3,7 @@ package uploads
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -225,10 +226,15 @@ func sanitizeServingPath(name string) (string, error) {
 }
 
 func ManifestSettings(manifest manifest.Manifest) map[string]string {
-	return map[string]string{
+	settings := map[string]string{
 		appsettings.SettingDatabaseFeature:         boolSetting(manifest.Features.Database.Enabled),
 		appsettings.SettingDatabaseFeatureRequired: boolSetting(manifest.Features.Database.Required),
 	}
+	if len(manifest.Routes) > 0 {
+		data, _ := json.Marshal(manifest.Routes)
+		settings[appsettings.SettingRoutes] = string(data)
+	}
+	return settings
 }
 
 func boolSetting(v bool) string {
