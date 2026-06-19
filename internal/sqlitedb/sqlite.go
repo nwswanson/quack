@@ -16,7 +16,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"quack/internal/server"
+	"quack/internal/domain"
+	appsettings "quack/internal/settings"
 )
 
 const (
@@ -239,30 +240,30 @@ func (d *Database) init(ctx context.Context) error {
 	return nil
 }
 
-func (d *Database) FindUserByToken(ctx context.Context, token string) (server.AdminUser, bool, error) {
+func (d *Database) FindUserByToken(ctx context.Context, token string) (domain.AdminUser, bool, error) {
 	if token == "" {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
-	var user server.AdminUser
+	var user domain.AdminUser
 	err := d.readDB.QueryRowContext(ctx, `
 		SELECT id, username, admin_priv
 		FROM users
 		WHERE token_hash = ?
 	`, hashToken(token)).Scan(&user.ID, &user.Username, &user.AdminPriv)
 	if err == sql.ErrNoRows {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
 	if err != nil {
-		return server.AdminUser{}, false, fmt.Errorf("find user by token: %w", err)
+		return domain.AdminUser{}, false, fmt.Errorf("find user by token: %w", err)
 	}
 	return user, true, nil
 }
 
-func (d *Database) CreateUser(ctx context.Context, username string, adminPriv string) (server.CreatedUser, error) {
+func (d *Database) CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error) {
 	username = strings.TrimSpace(username)
 	adminPriv = strings.TrimSpace(adminPriv)
 	if username == "" {
-		return server.CreatedUser{}, fmt.Errorf("username is required")
+		return domain.CreatedUser{}, fmt.Errorf("username is required")
 	}
 	if adminPriv == "" {
 		adminPriv = "user"
@@ -270,15 +271,15 @@ func (d *Database) CreateUser(ctx context.Context, username string, adminPriv st
 
 	password, err := randomSecret(24)
 	if err != nil {
-		return server.CreatedUser{}, fmt.Errorf("generate user password: %w", err)
+		return domain.CreatedUser{}, fmt.Errorf("generate user password: %w", err)
 	}
 	token, err := randomSecret(32)
 	if err != nil {
-		return server.CreatedUser{}, fmt.Errorf("generate user token: %w", err)
+		return domain.CreatedUser{}, fmt.Errorf("generate user token: %w", err)
 	}
 	passwordHash, err := hashPassword(password)
 	if err != nil {
-		return server.CreatedUser{}, fmt.Errorf("hash user password: %w", err)
+		return domain.CreatedUser{}, fmt.Errorf("hash user password: %w", err)
 	}
 
 	d.writeMu.Lock()
@@ -289,14 +290,14 @@ func (d *Database) CreateUser(ctx context.Context, username string, adminPriv st
 		VALUES (?, ?, ?, ?)
 	`, username, passwordHash, adminPriv, hashToken(token))
 	if err != nil {
-		return server.CreatedUser{}, fmt.Errorf("create user: %w", err)
+		return domain.CreatedUser{}, fmt.Errorf("create user: %w", err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return server.CreatedUser{}, fmt.Errorf("created user id: %w", err)
+		return domain.CreatedUser{}, fmt.Errorf("created user id: %w", err)
 	}
-	return server.CreatedUser{
-		User: server.AdminUser{
+	return domain.CreatedUser{
+		User: domain.AdminUser{
 			ID:        id,
 			Username:  username,
 			AdminPriv: adminPriv,
@@ -306,15 +307,15 @@ func (d *Database) CreateUser(ctx context.Context, username string, adminPriv st
 	}, nil
 }
 
-func (d *Database) ListUserSites(ctx context.Context, userID int64) ([]server.PublishedSite, error) {
+func (d *Database) ListUserSites(ctx context.Context, userID int64) ([]domain.PublishedSite, error) {
 	return d.listPublishedSites(ctx, userID, false)
 }
 
-func (d *Database) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]server.PublishedSite, error) {
+func (d *Database) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error) {
 	return d.listPublishedSites(ctx, userID, includeAll)
 }
 
-func (d *Database) ListPublishedSitesByUsername(ctx context.Context, username string) ([]server.PublishedSite, error) {
+func (d *Database) ListPublishedSitesByUsername(ctx context.Context, username string) ([]domain.PublishedSite, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return nil, nil
@@ -330,7 +331,7 @@ func (d *Database) ListPublishedSitesByUsername(ctx context.Context, username st
 	return d.listPublishedSites(ctx, userID, false)
 }
 
-func (d *Database) listPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]server.PublishedSite, error) {
+func (d *Database) listPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error) {
 	if !includeAll && userID <= 0 {
 		return nil, nil
 	}
@@ -358,7 +359,7 @@ func (d *Database) listPublishedSites(ctx context.Context, userID int64, include
 			GROUP BY us.site_sha
 		) legacy ON legacy.site_sha = s.site_sha
 	`
-	args := []any{string(server.UploadStateFinished), string(server.UploadStateFinished)}
+	args := []any{string(domain.UploadStateFinished), string(domain.UploadStateFinished)}
 	if !includeAll {
 		query += `
 		WHERE cur.publisher_user_id = ? OR EXISTS (
@@ -378,10 +379,10 @@ func (d *Database) listPublishedSites(ctx context.Context, userID int64, include
 	return scanPublishedSites(rows)
 }
 
-func scanPublishedSites(rows *sql.Rows) ([]server.PublishedSite, error) {
-	var sites []server.PublishedSite
+func scanPublishedSites(rows *sql.Rows) ([]domain.PublishedSite, error) {
+	var sites []domain.PublishedSite
 	for rows.Next() {
-		var site server.PublishedSite
+		var site domain.PublishedSite
 		if err := rows.Scan(&site.Site, &site.SiteSHA, &site.PublishedBy, &site.CurrentVersion, &site.VersionCount, &site.FileCount, &site.ByteCount, &site.UpdatedAt, &site.LiveState); err != nil {
 			return nil, fmt.Errorf("scan published site: %w", err)
 		}
@@ -411,10 +412,10 @@ func (d *Database) LinkUserSite(ctx context.Context, userID int64, siteSHA strin
 	return nil
 }
 
-func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings, error) {
-	settings := server.ServerSettings{
-		MaxUploadBytes:      server.DefaultMaxUploadBytes,
-		MaxUploadFiles:      server.DefaultMaxUploadFiles,
+func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
+	settings := domain.ServerSettings{
+		MaxUploadBytes:      appsettings.DefaultMaxUploadBytes,
+		MaxUploadFiles:      appsettings.DefaultMaxUploadFiles,
 		MaxRetainedVersions: 0,
 		DefaultSite:         "",
 		LogLevel:            "warn",
@@ -422,7 +423,7 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 	}
 	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value, locked FROM server_settings`)
 	if err != nil {
-		return server.ServerSettings{}, fmt.Errorf("get server settings: %w", err)
+		return domain.ServerSettings{}, fmt.Errorf("get server settings: %w", err)
 	}
 	defer rows.Close()
 
@@ -430,10 +431,10 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 		var key, value string
 		var locked int
 		if err := rows.Scan(&key, &value, &locked); err != nil {
-			return server.ServerSettings{}, fmt.Errorf("scan server setting: %w", err)
+			return domain.ServerSettings{}, fmt.Errorf("scan server setting: %w", err)
 		}
-		if err := server.ValidateSettingValue(key, value); err != nil {
-			return server.ServerSettings{}, err
+		if err := appsettings.Validate(key, value); err != nil {
+			return domain.ServerSettings{}, err
 		}
 		if locked != 0 {
 			settings.Locked[key] = true
@@ -442,19 +443,19 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 		case "max_upload_bytes":
 			n, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxUploadBytes = n
 		case "max_upload_files":
 			n, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxUploadFiles = n
 		case "max_retained_versions":
 			n, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
-				return server.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxRetainedVersions = n
 		case "default_site":
@@ -464,12 +465,12 @@ func (d *Database) GetServerSettings(ctx context.Context) (server.ServerSettings
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return server.ServerSettings{}, fmt.Errorf("iterate server settings: %w", err)
+		return domain.ServerSettings{}, fmt.Errorf("iterate server settings: %w", err)
 	}
 	return settings, nil
 }
 
-func (d *Database) SaveServerSettings(ctx context.Context, settings server.ServerSettings) error {
+func (d *Database) SaveServerSettings(ctx context.Context, settings domain.ServerSettings) error {
 	if settings.MaxUploadBytes < 0 {
 		return fmt.Errorf("max upload bytes must be >= 0")
 	}
@@ -482,7 +483,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
-	if err := server.ValidateSettingValue("log_level", settings.LogLevel); err != nil {
+	if err := appsettings.Validate("log_level", settings.LogLevel); err != nil {
 		return err
 	}
 
@@ -510,7 +511,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 		if locked != 0 {
 			return fmt.Errorf("%s is locked and cannot be edited", key)
 		}
-		if err := server.ValidateSettingValue(key, value); err != nil {
+		if err := appsettings.Validate(key, value); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -527,7 +528,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings server.Serve
 	return nil
 }
 
-func (d *Database) InitializeServerSettings(ctx context.Context, settings server.ServerSettings) error {
+func (d *Database) InitializeServerSettings(ctx context.Context, settings domain.ServerSettings) error {
 	if settings.MaxUploadBytes < 0 {
 		return fmt.Errorf("max upload bytes must be >= 0")
 	}
@@ -540,7 +541,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
-	if err := server.ValidateSettingValue("log_level", settings.LogLevel); err != nil {
+	if err := appsettings.Validate("log_level", settings.LogLevel); err != nil {
 		return err
 	}
 
@@ -554,7 +555,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings server
 		"default_site":          strings.TrimSpace(settings.DefaultSite),
 		"log_level":             settings.LogLevel,
 	} {
-		if err := server.ValidateSettingValue(key, value); err != nil {
+		if err := appsettings.Validate(key, value); err != nil {
 			return err
 		}
 		if _, err := d.writeDB.ExecContext(ctx, `
@@ -588,7 +589,7 @@ func (d *Database) PruneSiteVersions(ctx context.Context, siteSHA string, maxRet
 		WHERE site_sha = ? AND state = ?
 		ORDER BY version DESC
 		LIMIT -1 OFFSET ?
-	`, siteSHA, string(server.UploadStateFinished), maxRetainedVersions)
+	`, siteSHA, string(domain.UploadStateFinished), maxRetainedVersions)
 	if err != nil {
 		return nil, fmt.Errorf("list prunable site versions: %w", err)
 	}
@@ -623,7 +624,7 @@ func (d *Database) PruneSiteVersions(ctx context.Context, siteSHA string, maxRet
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM uploads
 			WHERE site_sha = ? AND version = ? AND state = ?
-		`, siteSHA, version, string(server.UploadStateFinished)); err != nil {
+		`, siteSHA, version, string(domain.UploadStateFinished)); err != nil {
 			return nil, fmt.Errorf("delete pruned upload version %d: %w", version, err)
 		}
 	}
@@ -634,11 +635,11 @@ func (d *Database) PruneSiteVersions(ctx context.Context, siteSHA string, maxRet
 	return versions, nil
 }
 
-func (d *Database) LoadPolicies(ctx context.Context, scopes []server.PolicyScope) ([]server.PolicyRecord, error) {
+func (d *Database) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
 	if len(scopes) == 0 {
 		return nil, nil
 	}
-	var out []server.PolicyRecord
+	var out []domain.PolicyRecord
 	for _, scope := range scopes {
 		rows, err := d.readDB.QueryContext(ctx, `
 			SELECT scope_type, scope_id, key, mode, value, reason, COALESCE(updated_by_user_id, 0)
@@ -649,13 +650,13 @@ func (d *Database) LoadPolicies(ctx context.Context, scopes []server.PolicyScope
 			return nil, fmt.Errorf("load policies: %w", err)
 		}
 		for rows.Next() {
-			var p server.PolicyRecord
+			var p domain.PolicyRecord
 			var scopeType string
 			if err := rows.Scan(&scopeType, &p.ScopeID, &p.Key, &p.Mode, &p.Value, &p.Reason, &p.UpdatedByUserID); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("scan policy: %w", err)
 			}
-			p.ScopeType = server.ScopeType(scopeType)
+			p.ScopeType = domain.ScopeType(scopeType)
 			out = append(out, p)
 		}
 		if err := rows.Err(); err != nil {
@@ -667,9 +668,9 @@ func (d *Database) LoadPolicies(ctx context.Context, scopes []server.PolicyScope
 	return out, nil
 }
 
-func (d *Database) SavePolicy(ctx context.Context, policy server.PolicyRecord) error {
+func (d *Database) SavePolicy(ctx context.Context, policy domain.PolicyRecord) error {
 	if policy.ScopeType == "" {
-		policy.ScopeType = server.ScopeSystem
+		policy.ScopeType = domain.ScopeSystem
 	}
 	if policy.Mode == "" {
 		policy.Mode = "inherit"
@@ -730,7 +731,7 @@ func (d *Database) SaveUploadSettings(ctx context.Context, siteSHA string, versi
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	for key, value := range settings {
-		if err := server.ValidateSettingValue(key, value); err != nil {
+		if err := appsettings.Validate(key, value); err != nil {
 			return err
 		}
 		if _, err := d.writeDB.ExecContext(ctx, `
@@ -744,7 +745,7 @@ func (d *Database) SaveUploadSettings(ctx context.Context, siteSHA string, versi
 	return nil
 }
 
-func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]server.CurrentSiteManifest, error) {
+func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	rows, err := d.readDB.QueryContext(ctx, `
 		SELECT site, site_sha, current_version
 		FROM sites
@@ -754,9 +755,9 @@ func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]server.Curre
 		return nil, fmt.Errorf("list current sites: %w", err)
 	}
 
-	var out []server.CurrentSiteManifest
+	var out []domain.CurrentSiteManifest
 	for rows.Next() {
-		var m server.CurrentSiteManifest
+		var m domain.CurrentSiteManifest
 		if err := rows.Scan(&m.Site, &m.SiteSHA, &m.Version); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan current site: %w", err)
@@ -777,18 +778,18 @@ func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]server.Curre
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := settings[server.SettingDatabaseFeature]; !ok {
-			settings[server.SettingDatabaseFeature] = "false"
+		if _, ok := settings[appsettings.SettingDatabaseFeature]; !ok {
+			settings[appsettings.SettingDatabaseFeature] = "false"
 		}
-		if _, ok := settings[server.SettingDatabaseFeatureRequired]; !ok {
-			settings[server.SettingDatabaseFeatureRequired] = "false"
+		if _, ok := settings[appsettings.SettingDatabaseFeatureRequired]; !ok {
+			settings[appsettings.SettingDatabaseFeatureRequired] = "false"
 		}
 		m.Settings = settings
 	}
 	return out, nil
 }
 
-func (d *Database) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]server.PolicyViolation, error) {
+func (d *Database) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	rows, err := d.readDB.QueryContext(ctx, `
 		SELECT site_sha, upload_version, key, requested_value, policy_value, severity, reason
 		FROM site_policy_violations
@@ -798,9 +799,9 @@ func (d *Database) ListPolicyViolations(ctx context.Context, siteSHA string, ver
 		return nil, fmt.Errorf("list policy violations: %w", err)
 	}
 	defer rows.Close()
-	var out []server.PolicyViolation
+	var out []domain.PolicyViolation
 	for rows.Next() {
-		var v server.PolicyViolation
+		var v domain.PolicyViolation
 		if err := rows.Scan(&v.SiteSHA, &v.UploadVersion, &v.Key, &v.RequestedValue, &v.PolicyValue, &v.Severity, &v.Reason); err != nil {
 			return nil, fmt.Errorf("scan policy violation: %w", err)
 		}
@@ -809,7 +810,7 @@ func (d *Database) ListPolicyViolations(ctx context.Context, siteSHA string, ver
 	return out, rows.Err()
 }
 
-func (d *Database) SavePolicyViolation(ctx context.Context, violation server.PolicyViolation) error {
+func (d *Database) SavePolicyViolation(ctx context.Context, violation domain.PolicyViolation) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	if _, err := d.writeDB.ExecContext(ctx, `
@@ -840,13 +841,13 @@ func (d *Database) ResolvePolicyViolation(ctx context.Context, siteSHA string, v
 	return nil
 }
 
-func (d *Database) AuthenticateAdmin(ctx context.Context, username string, password string) (server.AdminUser, bool, error) {
+func (d *Database) AuthenticateAdmin(ctx context.Context, username string, password string) (domain.AdminUser, bool, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || password == "" {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
 
-	var user server.AdminUser
+	var user domain.AdminUser
 	var passwordHash string
 	err := d.readDB.QueryRowContext(ctx, `
 		SELECT id, username, admin_priv, password_hash
@@ -854,17 +855,17 @@ func (d *Database) AuthenticateAdmin(ctx context.Context, username string, passw
 		WHERE username = ?
 	`, username).Scan(&user.ID, &user.Username, &user.AdminPriv, &passwordHash)
 	if err == sql.ErrNoRows {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
 	if err != nil {
-		return server.AdminUser{}, false, fmt.Errorf("lookup admin user: %w", err)
+		return domain.AdminUser{}, false, fmt.Errorf("lookup admin user: %w", err)
 	}
 	ok, err := verifyPassword(password, passwordHash)
 	if err != nil {
-		return server.AdminUser{}, false, fmt.Errorf("verify admin password: %w", err)
+		return domain.AdminUser{}, false, fmt.Errorf("verify admin password: %w", err)
 	}
 	if !ok {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
 	return user, true, nil
 }
@@ -890,11 +891,11 @@ func (d *Database) CreateAdminSession(ctx context.Context, userID int64) (string
 	return token, nil
 }
 
-func (d *Database) FindAdminSession(ctx context.Context, token string) (server.AdminUser, bool, error) {
+func (d *Database) FindAdminSession(ctx context.Context, token string) (domain.AdminUser, bool, error) {
 	if token == "" {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
-	var user server.AdminUser
+	var user domain.AdminUser
 	err := d.readDB.QueryRowContext(ctx, `
 		SELECT u.id, u.username, u.admin_priv
 		FROM user_sessions s
@@ -903,10 +904,10 @@ func (d *Database) FindAdminSession(ctx context.Context, token string) (server.A
 			AND s.expires_at > CURRENT_TIMESTAMP
 	`, hashToken(token)).Scan(&user.ID, &user.Username, &user.AdminPriv)
 	if err == sql.ErrNoRows {
-		return server.AdminUser{}, false, nil
+		return domain.AdminUser{}, false, nil
 	}
 	if err != nil {
-		return server.AdminUser{}, false, fmt.Errorf("find admin session: %w", err)
+		return domain.AdminUser{}, false, fmt.Errorf("find admin session: %w", err)
 	}
 	return user, true, nil
 }
@@ -985,12 +986,12 @@ func (d *Database) BootstrapAdmin(ctx context.Context) (BootstrapAdminResult, er
 	}, nil
 }
 
-func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (server.UploadRecord, error) {
+func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error) {
 	if site == "" {
-		return server.UploadRecord{}, fmt.Errorf("site is required")
+		return domain.UploadRecord{}, fmt.Errorf("site is required")
 	}
 	if siteSHA == "" {
-		return server.UploadRecord{}, fmt.Errorf("site sha is required")
+		return domain.UploadRecord{}, fmt.Errorf("site sha is required")
 	}
 
 	d.writeMu.Lock()
@@ -998,14 +999,14 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 
 	tx, err := d.writeDB.BeginTx(ctx, nil)
 	if err != nil {
-		return server.UploadRecord{}, fmt.Errorf("begin upload transaction: %w", err)
+		return domain.UploadRecord{}, fmt.Errorf("begin upload transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	if publisherUserID > 0 && !publisherIsAdmin {
 		var siteExists int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE site_sha = ?`, siteSHA).Scan(&siteExists); err != nil {
-			return server.UploadRecord{}, fmt.Errorf("check site ownership: %w", err)
+			return domain.UploadRecord{}, fmt.Errorf("check site ownership: %w", err)
 		}
 		if siteExists > 0 {
 			var owned int
@@ -1016,10 +1017,10 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 					SELECT 1 FROM uploads WHERE site_sha = ? AND publisher_user_id = ?
 				)
 			`, siteSHA, publisherUserID, siteSHA, publisherUserID).Scan(&owned); err != nil {
-				return server.UploadRecord{}, fmt.Errorf("check site owner: %w", err)
+				return domain.UploadRecord{}, fmt.Errorf("check site owner: %w", err)
 			}
 			if owned == 0 {
-				return server.UploadRecord{}, server.ErrSiteOwnership
+				return domain.UploadRecord{}, domain.ErrSiteOwnership
 			}
 		}
 	}
@@ -1034,28 +1035,28 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING next_version - 1
 	`, siteSHA, site).Scan(&version); err != nil {
-		return server.UploadRecord{}, fmt.Errorf("allocate upload version: %w", err)
+		return domain.UploadRecord{}, fmt.Errorf("allocate upload version: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO uploads (site_sha, site, version, publisher_user_id, files, bytes, state)
 		VALUES (?, ?, ?, NULLIF(?, 0), 0, 0, ?)
-	`, siteSHA, site, version, publisherUserID, string(server.UploadStateUploading)); err != nil {
-		return server.UploadRecord{}, fmt.Errorf("create uploading record: %w", err)
+	`, siteSHA, site, version, publisherUserID, string(domain.UploadStateUploading)); err != nil {
+		return domain.UploadRecord{}, fmt.Errorf("create uploading record: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return server.UploadRecord{}, fmt.Errorf("commit begin upload: %w", err)
+		return domain.UploadRecord{}, fmt.Errorf("commit begin upload: %w", err)
 	}
 
-	return server.UploadRecord{
+	return domain.UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,
 		Version: version,
-		State:   server.UploadStateUploading,
+		State:   domain.UploadStateUploading,
 	}, nil
 }
 
-func (d *Database) FinishUpload(ctx context.Context, upload server.UploadRecord) error {
+func (d *Database) FinishUpload(ctx context.Context, upload domain.UploadRecord) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
@@ -1100,7 +1101,7 @@ func (d *Database) FinishUpload(ctx context.Context, upload server.UploadRecord)
 		UPDATE uploads
 		SET files = ?, bytes = ?, state = ?, error = '', finished_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND state = ?
-	`, len(upload.Files), totalBytes, string(server.UploadStateFinished), uploadID, string(server.UploadStateUploading))
+	`, len(upload.Files), totalBytes, string(domain.UploadStateFinished), uploadID, string(domain.UploadStateUploading))
 	if err != nil {
 		return fmt.Errorf("mark upload finished: %w", err)
 	}
@@ -1131,7 +1132,7 @@ func (d *Database) FinishUpload(ctx context.Context, upload server.UploadRecord)
 	return nil
 }
 
-func (d *Database) FailUpload(ctx context.Context, upload server.UploadRecord, reason string) error {
+func (d *Database) FailUpload(ctx context.Context, upload domain.UploadRecord, reason string) error {
 	if upload.SiteSHA == "" || upload.Version <= 0 {
 		return nil
 	}
@@ -1143,19 +1144,19 @@ func (d *Database) FailUpload(ctx context.Context, upload server.UploadRecord, r
 		UPDATE uploads
 		SET state = ?, error = ?
 		WHERE site_sha = ? AND version = ? AND state = ?
-	`, string(server.UploadStateError), reason, upload.SiteSHA, upload.Version, string(server.UploadStateUploading))
+	`, string(domain.UploadStateError), reason, upload.SiteSHA, upload.Version, string(domain.UploadStateUploading))
 	if err != nil {
 		return fmt.Errorf("mark upload error: %w", err)
 	}
 	return nil
 }
 
-func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePath string) (server.UploadFileRecord, bool, error) {
+func (d *Database) FindCurrentFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, error) {
 	file, fileOK, _, err := d.FindCurrentSiteFile(ctx, site, relativePath)
 	return file, fileOK, err
 }
 
-func (d *Database) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (server.UploadFileRecord, bool, bool, error) {
+func (d *Database) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
 	var currentVersion int64
 	err := d.readDB.QueryRowContext(ctx, `
 		SELECT current_version
@@ -1163,13 +1164,13 @@ func (d *Database) FindCurrentSiteFile(ctx context.Context, site string, relativ
 		WHERE site = ? AND live_state = 'live' AND current_version > 0
 	`, site).Scan(&currentVersion)
 	if err == sql.ErrNoRows {
-		return server.UploadFileRecord{}, false, false, nil
+		return domain.UploadFileRecord{}, false, false, nil
 	}
 	if err != nil {
-		return server.UploadFileRecord{}, false, false, fmt.Errorf("find current site: %w", err)
+		return domain.UploadFileRecord{}, false, false, fmt.Errorf("find current site: %w", err)
 	}
 
-	var file server.UploadFileRecord
+	var file domain.UploadFileRecord
 	err = d.readDB.QueryRowContext(ctx, `
 		SELECT uf.relative_path, uf.blob_path, uf.file_sha, uf.bytes
 		FROM uploads u
@@ -1178,17 +1179,17 @@ func (d *Database) FindCurrentSiteFile(ctx context.Context, site string, relativ
 			AND u.version = ?
 			AND u.state = ?
 			AND uf.relative_path = ?
-	`, site, currentVersion, string(server.UploadStateFinished), relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
+	`, site, currentVersion, string(domain.UploadStateFinished), relativePath).Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes)
 	if err == nil {
 		return file, true, true, nil
 	}
 	if err == sql.ErrNoRows {
-		return server.UploadFileRecord{}, false, true, nil
+		return domain.UploadFileRecord{}, false, true, nil
 	}
-	return server.UploadFileRecord{}, false, true, fmt.Errorf("find current file: %w", err)
+	return domain.UploadFileRecord{}, false, true, fmt.Errorf("find current file: %w", err)
 }
 
-func (d *Database) ListCurrentSiteFiles(ctx context.Context, site string) ([]server.UploadFileRecord, bool, error) {
+func (d *Database) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
 	var currentVersion int64
 	err := d.readDB.QueryRowContext(ctx, `
 		SELECT current_version
@@ -1209,15 +1210,15 @@ func (d *Database) ListCurrentSiteFiles(ctx context.Context, site string) ([]ser
 		WHERE u.site = ?
 			AND u.version = ?
 			AND u.state = ?
-	`, site, currentVersion, string(server.UploadStateFinished))
+	`, site, currentVersion, string(domain.UploadStateFinished))
 	if err != nil {
 		return nil, true, fmt.Errorf("list current files: %w", err)
 	}
 	defer rows.Close()
 
-	var out []server.UploadFileRecord
+	var out []domain.UploadFileRecord
 	for rows.Next() {
-		var file server.UploadFileRecord
+		var file domain.UploadFileRecord
 		if err := rows.Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes); err != nil {
 			return nil, true, fmt.Errorf("scan current file: %w", err)
 		}
@@ -1229,7 +1230,7 @@ func (d *Database) ListCurrentSiteFiles(ctx context.Context, site string) ([]ser
 	return out, true, nil
 }
 
-func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser, site string, siteSHA string) ([]server.RevisionRecord, error) {
+func (d *Database) ListSiteRevisions(ctx context.Context, user domain.AdminUser, site string, siteSHA string) ([]domain.RevisionRecord, error) {
 	if siteSHA == "" {
 		return nil, nil
 	}
@@ -1244,7 +1245,7 @@ func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser,
 				return nil, err
 			}
 			if exists {
-				return nil, server.ErrSiteOwnership
+				return nil, domain.ErrSiteOwnership
 			}
 			return nil, nil
 		}
@@ -1263,15 +1264,15 @@ func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser,
 		LEFT JOIN users pub ON pub.id = u.publisher_user_id
 		WHERE u.site_sha = ? AND u.state = ?
 		ORDER BY u.version DESC
-	`, siteSHA, string(server.UploadStateFinished))
+	`, siteSHA, string(domain.UploadStateFinished))
 	if err != nil {
 		return nil, fmt.Errorf("list site revisions: %w", err)
 	}
 	defer rows.Close()
 
-	var revisions []server.RevisionRecord
+	var revisions []domain.RevisionRecord
 	for rows.Next() {
-		var rev server.RevisionRecord
+		var rev domain.RevisionRecord
 		var current int
 		if err := rows.Scan(&rev.Version, &current, &rev.Files, &rev.Bytes, &rev.PublishedBy, &rev.CreatedAt, &rev.FinishedAt); err != nil {
 			return nil, fmt.Errorf("scan site revision: %w", err)
@@ -1285,9 +1286,9 @@ func (d *Database) ListSiteRevisions(ctx context.Context, user server.AdminUser,
 	return revisions, nil
 }
 
-func (d *Database) RollbackSite(ctx context.Context, user server.AdminUser, site string, siteSHA string) (server.RollbackRecord, error) {
+func (d *Database) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
 	if siteSHA == "" {
-		return server.RollbackRecord{Warning: "no older revisions available"}, nil
+		return domain.RollbackRecord{Warning: "no older revisions available"}, nil
 	}
 
 	d.writeMu.Lock()
@@ -1295,34 +1296,34 @@ func (d *Database) RollbackSite(ctx context.Context, user server.AdminUser, site
 
 	tx, err := d.writeDB.BeginTx(ctx, nil)
 	if err != nil {
-		return server.RollbackRecord{}, fmt.Errorf("begin rollback transaction: %w", err)
+		return domain.RollbackRecord{}, fmt.Errorf("begin rollback transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	if !user.IsAdmin() {
 		allowed, err := d.userCanAccessSite(ctx, tx, user.ID, siteSHA)
 		if err != nil {
-			return server.RollbackRecord{}, err
+			return domain.RollbackRecord{}, err
 		}
 		if !allowed {
 			exists, err := d.siteExists(ctx, tx, siteSHA)
 			if err != nil {
-				return server.RollbackRecord{}, err
+				return domain.RollbackRecord{}, err
 			}
 			if exists {
-				return server.RollbackRecord{}, server.ErrSiteOwnership
+				return domain.RollbackRecord{}, domain.ErrSiteOwnership
 			}
-			return server.RollbackRecord{Warning: "no older revisions available"}, nil
+			return domain.RollbackRecord{Warning: "no older revisions available"}, nil
 		}
 	}
 
 	var currentVersion int64
 	err = tx.QueryRowContext(ctx, `SELECT current_version FROM sites WHERE site_sha = ?`, siteSHA).Scan(&currentVersion)
 	if err == sql.ErrNoRows {
-		return server.RollbackRecord{Warning: "no older revisions available"}, nil
+		return domain.RollbackRecord{Warning: "no older revisions available"}, nil
 	}
 	if err != nil {
-		return server.RollbackRecord{}, fmt.Errorf("load current site version: %w", err)
+		return domain.RollbackRecord{}, fmt.Errorf("load current site version: %w", err)
 	}
 
 	var previousVersion int64
@@ -1332,12 +1333,12 @@ func (d *Database) RollbackSite(ctx context.Context, user server.AdminUser, site
 		WHERE site_sha = ? AND state = ? AND version < ?
 		ORDER BY version DESC
 		LIMIT 1
-	`, siteSHA, string(server.UploadStateFinished), currentVersion).Scan(&previousVersion)
+	`, siteSHA, string(domain.UploadStateFinished), currentVersion).Scan(&previousVersion)
 	if err == sql.ErrNoRows {
-		return server.RollbackRecord{CurrentVersion: currentVersion, Warning: "no older revisions available"}, nil
+		return domain.RollbackRecord{CurrentVersion: currentVersion, Warning: "no older revisions available"}, nil
 	}
 	if err != nil {
-		return server.RollbackRecord{}, fmt.Errorf("find previous site revision: %w", err)
+		return domain.RollbackRecord{}, fmt.Errorf("find previous site revision: %w", err)
 	}
 
 	result, err := tx.ExecContext(ctx, `
@@ -1346,56 +1347,56 @@ func (d *Database) RollbackSite(ctx context.Context, user server.AdminUser, site
 		WHERE site_sha = ? AND current_version = ?
 	`, previousVersion, siteSHA, currentVersion)
 	if err != nil {
-		return server.RollbackRecord{}, fmt.Errorf("rollback site version: %w", err)
+		return domain.RollbackRecord{}, fmt.Errorf("rollback site version: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return server.RollbackRecord{}, fmt.Errorf("rollback rows affected: %w", err)
+		return domain.RollbackRecord{}, fmt.Errorf("rollback rows affected: %w", err)
 	}
 	if affected != 1 {
-		return server.RollbackRecord{}, fmt.Errorf("site version changed during rollback")
+		return domain.RollbackRecord{}, fmt.Errorf("site version changed during rollback")
 	}
 	if err := tx.Commit(); err != nil {
-		return server.RollbackRecord{}, fmt.Errorf("commit rollback transaction: %w", err)
+		return domain.RollbackRecord{}, fmt.Errorf("commit rollback transaction: %w", err)
 	}
-	return server.RollbackRecord{
+	return domain.RollbackRecord{
 		RolledBack:      true,
 		PreviousVersion: currentVersion,
 		CurrentVersion:  previousVersion,
 	}, nil
 }
 
-func (d *Database) UnpublishSite(ctx context.Context, user server.AdminUser, site string, siteSHA string) (server.UnpublishRecord, error) {
+func (d *Database) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
 	if siteSHA == "" {
-		return server.UnpublishRecord{LiveState: "unpublished"}, nil
+		return domain.UnpublishRecord{LiveState: "unpublished"}, nil
 	}
 
 	changed, err := d.setSiteLiveState(ctx, user, site, siteSHA, "unpublished")
 	if err != nil {
-		return server.UnpublishRecord{}, err
+		return domain.UnpublishRecord{}, err
 	}
-	return server.UnpublishRecord{
+	return domain.UnpublishRecord{
 		Unpublished: changed,
 		LiveState:   "unpublished",
 	}, nil
 }
 
-func (d *Database) PublishSite(ctx context.Context, user server.AdminUser, site string, siteSHA string) (server.PublishRecord, error) {
+func (d *Database) PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error) {
 	if siteSHA == "" {
-		return server.PublishRecord{LiveState: "live"}, nil
+		return domain.PublishRecord{LiveState: "live"}, nil
 	}
 
 	changed, err := d.setSiteLiveState(ctx, user, site, siteSHA, "live")
 	if err != nil {
-		return server.PublishRecord{}, err
+		return domain.PublishRecord{}, err
 	}
-	return server.PublishRecord{
+	return domain.PublishRecord{
 		Published: changed,
 		LiveState: "live",
 	}, nil
 }
 
-func (d *Database) setSiteLiveState(ctx context.Context, user server.AdminUser, site string, siteSHA string, liveState string) (bool, error) {
+func (d *Database) setSiteLiveState(ctx context.Context, user domain.AdminUser, site string, siteSHA string, liveState string) (bool, error) {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
@@ -1416,7 +1417,7 @@ func (d *Database) setSiteLiveState(ctx context.Context, user server.AdminUser, 
 				return false, err
 			}
 			if exists {
-				return false, server.ErrSiteOwnership
+				return false, domain.ErrSiteOwnership
 			}
 			return false, nil
 		}
@@ -1553,7 +1554,7 @@ func hashToken(token string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func uploadID(ctx context.Context, tx *sql.Tx, upload server.UploadRecord) (int64, error) {
+func uploadID(ctx context.Context, tx *sql.Tx, upload domain.UploadRecord) (int64, error) {
 	var uploadID int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT id FROM uploads

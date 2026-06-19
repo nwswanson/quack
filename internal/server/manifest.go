@@ -1,5 +1,7 @@
 package server
 
+import appsettings "quack/internal/settings"
+
 import (
 	"quack/internal/protocol"
 )
@@ -12,8 +14,8 @@ type SiteManifestDatabase = protocol.SiteManifestDatabase
 
 func ManifestSettings(manifest SiteManifest) map[string]string {
 	return map[string]string{
-		SettingDatabaseFeature:         boolSetting(manifest.Features.Database.Enabled),
-		SettingDatabaseFeatureRequired: boolSetting(manifest.Features.Database.Required),
+		appsettings.SettingDatabaseFeature:         boolSetting(manifest.Features.Database.Enabled),
+		appsettings.SettingDatabaseFeatureRequired: boolSetting(manifest.Features.Database.Required),
 	}
 }
 

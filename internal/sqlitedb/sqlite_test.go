@@ -13,7 +13,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"quack/internal/server"
+	"quack/internal/domain"
+	appsettings "quack/internal/settings"
 )
 
 func TestFinishUploadPersistsMetadata(t *testing.T) {
@@ -29,7 +30,7 @@ func TestFinishUploadPersistsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	upload.Files = []server.UploadFileRecord{
+	upload.Files = []domain.UploadFileRecord{
 		{
 			RelativePath: "index.html",
 			BlobPath:     "blobs/site:site-sha/1/file:file-sha",
@@ -61,8 +62,8 @@ func TestFinishUploadPersistsMetadata(t *testing.T) {
 	if site != upload.Site || version != upload.Version {
 		t.Fatalf("site row = (%q, %d), want (%q, %d)", site, version, upload.Site, upload.Version)
 	}
-	if state != string(server.UploadStateFinished) {
-		t.Fatalf("upload state = %q, want %q", state, server.UploadStateFinished)
+	if state != string(domain.UploadStateFinished) {
+		t.Fatalf("upload state = %q, want %q", state, domain.UploadStateFinished)
 	}
 
 	var relativePath string
@@ -94,20 +95,20 @@ func TestPruneSiteVersionsRemovesOldFinishedVersions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		upload.Files = []server.UploadFileRecord{{
+		upload.Files = []domain.UploadFileRecord{{
 			RelativePath: "index.html",
 			BlobPath:     fmt.Sprintf("blobs/site:site-sha/%d/file:file-sha", upload.Version),
 			FileSHA:      fmt.Sprintf("file-sha-%d", upload.Version),
 			Bytes:        upload.Version,
 		}}
 		if err := db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, map[string]string{
-			server.SettingDatabaseFeature:         "false",
-			server.SettingDatabaseFeatureRequired: "false",
+			appsettings.SettingDatabaseFeature:         "false",
+			appsettings.SettingDatabaseFeatureRequired: "false",
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.SavePolicyViolation(ctx, server.PolicyViolation{
-			SiteSHA: upload.SiteSHA, UploadVersion: upload.Version, Key: server.SettingDatabaseFeature,
+		if err := db.SavePolicyViolation(ctx, domain.PolicyViolation{
+			SiteSHA: upload.SiteSHA, UploadVersion: upload.Version, Key: appsettings.SettingDatabaseFeature,
 			RequestedValue: "true", PolicyValue: "deny", Severity: "degraded", Reason: "test",
 		}); err != nil {
 			t.Fatal(err)
@@ -125,7 +126,7 @@ func TestPruneSiteVersionsRemovesOldFinishedVersions(t *testing.T) {
 		t.Fatalf("pruned versions = %s, want %s", got, want)
 	}
 
-	rows, err := db.readDB.QueryContext(ctx, `SELECT version FROM uploads WHERE site_sha = ? AND state = ? ORDER BY version`, "site-sha", string(server.UploadStateFinished))
+	rows, err := db.readDB.QueryContext(ctx, `SELECT version FROM uploads WHERE site_sha = ? AND state = ? ORDER BY version`, "site-sha", string(domain.UploadStateFinished))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,14 +175,14 @@ func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin := server.AdminUser{ID: 999, Username: "admin", AdminPriv: "admin:*"}
+	admin := domain.AdminUser{ID: 999, Username: "admin", AdminPriv: "admin:*"}
 
 	for i := 0; i < 2; i++ {
 		upload, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		upload.Files = []server.UploadFileRecord{{
+		upload.Files = []domain.UploadFileRecord{{
 			RelativePath: "index.html",
 			BlobPath:     fmt.Sprintf("blobs/site:site-sha/%d/file:file-sha", upload.Version),
 			FileSHA:      fmt.Sprintf("file-sha-%d", upload.Version),
@@ -192,10 +193,10 @@ func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
 		}
 	}
 
-	if _, err := db.ListSiteRevisions(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+	if _, err := db.ListSiteRevisions(ctx, bob.User, "example", "site-sha"); !errors.Is(err, domain.ErrSiteOwnership) {
 		t.Fatalf("bob list error = %v, want ErrSiteOwnership", err)
 	}
-	if _, err := db.RollbackSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+	if _, err := db.RollbackSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, domain.ErrSiteOwnership) {
 		t.Fatalf("bob rollback error = %v, want ErrSiteOwnership", err)
 	}
 
@@ -244,7 +245,7 @@ func TestPublishStateControlsServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	upload.Files = []server.UploadFileRecord{{
+	upload.Files = []domain.UploadFileRecord{{
 		RelativePath: "index.html",
 		BlobPath:     "blobs/site:site-sha/1/file:file-sha",
 		FileSHA:      "file-sha",
@@ -257,7 +258,7 @@ func TestPublishStateControlsServing(t *testing.T) {
 	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || !ok {
 		t.Fatalf("FindCurrentFile before unpublish = (_, %v, %v), want file", ok, err)
 	}
-	if _, err := db.UnpublishSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+	if _, err := db.UnpublishSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, domain.ErrSiteOwnership) {
 		t.Fatalf("bob unpublish error = %v, want ErrSiteOwnership", err)
 	}
 	unpublished, err := db.UnpublishSite(ctx, alice.User, "example", "site-sha")
@@ -277,7 +278,7 @@ func TestPublishStateControlsServing(t *testing.T) {
 	if len(sites) != 1 || sites[0].LiveState != "unpublished" {
 		t.Fatalf("sites = %#v, want unpublished live state", sites)
 	}
-	if _, err := db.PublishSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, server.ErrSiteOwnership) {
+	if _, err := db.PublishSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, domain.ErrSiteOwnership) {
 		t.Fatalf("bob publish error = %v, want ErrSiteOwnership", err)
 	}
 	published, err := db.PublishSite(ctx, alice.User, "example", "site-sha")
@@ -298,7 +299,7 @@ func TestPublishStateControlsServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next.Files = []server.UploadFileRecord{{
+	next.Files = []domain.UploadFileRecord{{
 		RelativePath: "index.html",
 		BlobPath:     "blobs/site:site-sha/2/file:file-sha",
 		FileSHA:      "file-sha-2",
@@ -511,7 +512,7 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 		t.Fatalf("token user = (%#v, %v), want alice", user, ok)
 	}
 
-	if err := db.InitializeServerSettings(ctx, server.ServerSettings{MaxUploadBytes: 123, MaxUploadFiles: 4}); err != nil {
+	if err := db.InitializeServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 123, MaxUploadFiles: 4}); err != nil {
 		t.Fatal(err)
 	}
 	settings, err := db.GetServerSettings(ctx)
@@ -521,7 +522,7 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
 		t.Fatalf("settings = %#v, want initialized values", settings)
 	}
-	if err := db.InitializeServerSettings(ctx, server.ServerSettings{MaxUploadBytes: 999, MaxUploadFiles: 999}); err != nil {
+	if err := db.InitializeServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 999, MaxUploadFiles: 999}); err != nil {
 		t.Fatal(err)
 	}
 	settings, err = db.GetServerSettings(ctx)
@@ -531,7 +532,7 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
 		t.Fatalf("settings = %#v, initialize should not overwrite", settings)
 	}
-	if err := db.SaveServerSettings(ctx, server.ServerSettings{MaxUploadBytes: 2048, MaxUploadFiles: 8}); err != nil {
+	if err := db.SaveServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 2048, MaxUploadFiles: 8}); err != nil {
 		t.Fatal(err)
 	}
 	settings, err = db.GetServerSettings(ctx)
@@ -567,7 +568,7 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	siteA.Files = []server.UploadFileRecord{{RelativePath: "index.html", BlobPath: "a", FileSHA: "a", Bytes: 1}}
+	siteA.Files = []domain.UploadFileRecord{{RelativePath: "index.html", BlobPath: "a", FileSHA: "a", Bytes: 1}}
 	if err := db.FinishUpload(ctx, siteA); err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +577,7 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	siteB.Files = []server.UploadFileRecord{{RelativePath: "index.html", BlobPath: "b", FileSHA: "b", Bytes: 2}}
+	siteB.Files = []domain.UploadFileRecord{{RelativePath: "index.html", BlobPath: "b", FileSHA: "b", Bytes: 2}}
 	if err := db.FinishUpload(ctx, siteB); err != nil {
 		t.Fatal(err)
 	}
@@ -627,10 +628,10 @@ func TestListCurrentSiteManifestsConcurrentDoesNotExhaustReadPool(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		upload.Files = []server.UploadFileRecord{{RelativePath: "index.html", BlobPath: site, FileSHA: siteSHA, Bytes: 1}}
+		upload.Files = []domain.UploadFileRecord{{RelativePath: "index.html", BlobPath: site, FileSHA: siteSHA, Bytes: 1}}
 		if err := db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, map[string]string{
-			server.SettingDatabaseFeature:         "false",
-			server.SettingDatabaseFeatureRequired: "false",
+			appsettings.SettingDatabaseFeature:         "false",
+			appsettings.SettingDatabaseFeatureRequired: "false",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -690,7 +691,7 @@ func TestBeginUploadRejectsNonOwnerForExistingSite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Files = []server.UploadFileRecord{{RelativePath: "index.html", BlobPath: "v1", FileSHA: "v1", Bytes: 1}}
+	first.Files = []domain.UploadFileRecord{{RelativePath: "index.html", BlobPath: "v1", FileSHA: "v1", Bytes: 1}}
 	if err := db.FinishUpload(ctx, first); err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +699,7 @@ func TestBeginUploadRejectsNonOwnerForExistingSite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := db.BeginUpload(ctx, "foo", "foo-sha", bob.User.ID, false); !errors.Is(err, server.ErrSiteOwnership) {
+	if _, err := db.BeginUpload(ctx, "foo", "foo-sha", bob.User.ID, false); !errors.Is(err, domain.ErrSiteOwnership) {
 		t.Fatalf("bob begin upload error = %v, want ErrSiteOwnership", err)
 	}
 
@@ -817,7 +818,7 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v1.Files = []server.UploadFileRecord{
+	v1.Files = []domain.UploadFileRecord{
 		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
 	}
 	if err := db.FinishUpload(ctx, v1); err != nil {
@@ -843,7 +844,7 @@ func TestFindCurrentFileUsesPublishedCurrentVersion(t *testing.T) {
 		t.Fatalf("blob path before publish = %q, want v1 blob", file.BlobPath)
 	}
 
-	v2.Files = []server.UploadFileRecord{
+	v2.Files = []domain.UploadFileRecord{
 		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/2/file:v2", FileSHA: "v2", Bytes: 2},
 	}
 	if err := db.FinishUpload(ctx, v2); err != nil {
@@ -896,7 +897,7 @@ func TestConcurrentUploadsForDifferentSitesServeIndependently(t *testing.T) {
 				errs <- fmt.Errorf("%s version = %d, want 1", item.site, upload.Version)
 				return
 			}
-			upload.Files = []server.UploadFileRecord{
+			upload.Files = []domain.UploadFileRecord{
 				{RelativePath: "index.html", BlobPath: item.blob, FileSHA: item.blob, Bytes: 1},
 			}
 			if err := db.FinishUpload(ctx, upload); err != nil {
@@ -928,7 +929,7 @@ func TestConcurrentUploadsForDifferentSitesServeIndependently(t *testing.T) {
 	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/1/file:a-v1")
 	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/1/file:b-v1")
 
-	b2.Files = []server.UploadFileRecord{
+	b2.Files = []domain.UploadFileRecord{
 		{RelativePath: "index.html", BlobPath: "blobs/site:site-b-sha/2/file:b-v2", FileSHA: "b-v2", Bytes: 2},
 	}
 	if err := db.FinishUpload(ctx, b2); err != nil {
@@ -938,7 +939,7 @@ func TestConcurrentUploadsForDifferentSitesServeIndependently(t *testing.T) {
 	assertCurrentBlob(t, ctx, db, "site-a", "blobs/site:site-a-sha/1/file:a-v1")
 	assertCurrentBlob(t, ctx, db, "site-b", "blobs/site:site-b-sha/2/file:b-v2")
 
-	a2.Files = []server.UploadFileRecord{
+	a2.Files = []domain.UploadFileRecord{
 		{RelativePath: "index.html", BlobPath: "blobs/site:site-a-sha/2/file:a-v2", FileSHA: "a-v2", Bytes: 2},
 	}
 	if err := db.FinishUpload(ctx, a2); err != nil {
@@ -975,7 +976,7 @@ func TestFindCurrentFileIgnoresUploadingAndErrorVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	upload.Files = []server.UploadFileRecord{
+	upload.Files = []domain.UploadFileRecord{
 		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
 	}
 
@@ -1011,7 +1012,7 @@ func TestDeleteSiteRemovesMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	upload.Files = []server.UploadFileRecord{
+	upload.Files = []domain.UploadFileRecord{
 		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
 	}
 	if err := db.FinishUpload(ctx, upload); err != nil {

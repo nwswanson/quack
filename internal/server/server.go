@@ -7,11 +7,14 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	appsettings "quack/internal/settings"
+	appstorage "quack/internal/storage"
 )
 
 const (
-	DefaultMaxUploadBytes int64 = 512 << 20
-	DefaultMaxUploadFiles int64 = 10000
+	DefaultMaxUploadBytes int64 = appsettings.DefaultMaxUploadBytes
+	DefaultMaxUploadFiles int64 = appsettings.DefaultMaxUploadFiles
 )
 
 type Options struct {
@@ -23,7 +26,7 @@ func DefaultOptions() Options {
 	return Options{}
 }
 
-func New(addr string, token string, store Storage, db Database, opts Options) *http.Server {
+func New(addr string, token string, store appstorage.Storage, db Database, opts Options) *http.Server {
 	if addr == "" {
 		addr = ":8080"
 	}

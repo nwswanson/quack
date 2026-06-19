@@ -1,30 +1,20 @@
 package server
 
-type EffectiveValue[T any] struct {
-	Value    T
-	Source   string
-	Editable bool
-	Reason   string
-}
+import "quack/internal/domain"
 
-type UploadPolicy struct {
-	MaxUploadBytes      EffectiveValue[int64]
-	MaxUploadFiles      EffectiveValue[int64]
-	MaxRetainedVersions EffectiveValue[int64]
-}
+type EffectiveValue[T any] = domain.EffectiveValue[T]
 
-type SiteRuntimeStatus string
+type UploadPolicy = domain.UploadPolicy
+
+type SiteRuntimeStatus = domain.SiteRuntimeStatus
 
 const (
-	SiteRuntimeActive            SiteRuntimeStatus = "active"
-	SiteRuntimeDegraded          SiteRuntimeStatus = "degraded"
-	SiteRuntimeSuspendedByPolicy SiteRuntimeStatus = "suspended_by_policy"
+	SiteRuntimeActive            = domain.SiteRuntimeActive
+	SiteRuntimeDegraded          = domain.SiteRuntimeDegraded
+	SiteRuntimeSuspendedByPolicy = domain.SiteRuntimeSuspendedByPolicy
 )
 
-type SiteRuntimeDecision struct {
-	Status SiteRuntimeStatus
-	Reason string
-}
+type SiteRuntimeDecision = domain.SiteRuntimeDecision
 
 type forbiddenPolicyError struct {
 	err error

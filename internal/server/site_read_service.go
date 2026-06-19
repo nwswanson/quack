@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+
+	appsettings "quack/internal/settings"
 )
 
 type SiteReadService interface {
@@ -159,9 +161,9 @@ func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (PolicyRecord
 	if err != nil {
 		return PolicyRecord{}, err
 	}
-	policy := PolicyRecord{ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: "inherit"}
+	policy := PolicyRecord{ScopeType: ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: "inherit"}
 	for _, p := range policies {
-		if p.Key == SettingDatabaseFeature {
+		if p.Key == appsettings.SettingDatabaseFeature {
 			policy = p
 			break
 		}
@@ -181,10 +183,10 @@ func databaseAllowed(ctx context.Context, hot HotDataReader, actor AdminUser, si
 	if err != nil {
 		return false, "", err
 	}
-	allowed := parseBoolSetting(settingDefault(SettingDatabaseFeature))
+	allowed := appsettings.ParseBool(appsettings.Default(appsettings.SettingDatabaseFeature))
 	reason := ""
 	for _, policy := range policies {
-		if policy.Key != SettingDatabaseFeature {
+		if policy.Key != appsettings.SettingDatabaseFeature {
 			continue
 		}
 		switch policy.Mode {
@@ -208,7 +210,7 @@ func databaseAllowed(ctx context.Context, hot HotDataReader, actor AdminUser, si
 func runtimeDecisionFromViolations(violations []PolicyViolation) SiteRuntimeDecision {
 	decision := SiteRuntimeDecision{Status: SiteRuntimeActive}
 	for _, violation := range violations {
-		if violation.Key != SettingDatabaseFeature {
+		if violation.Key != appsettings.SettingDatabaseFeature {
 			continue
 		}
 		if violation.Severity == "suspended" {

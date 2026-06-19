@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"quack/internal/protocol"
+	appsettings "quack/internal/settings"
 )
 
 const adminSessionCookieName = "quack_admin_session"
@@ -232,7 +233,7 @@ func (h *handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.siteWriteService().SavePolicy(r.Context(), PolicyRecord{
-		ScopeType: ScopeSystem, Key: SettingDatabaseFeature, Mode: mode,
+		ScopeType: ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
 		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "error", err)
@@ -723,7 +724,7 @@ func parseServerSettingsForm(r *http.Request) (ServerSettings, error) {
 	if err != nil {
 		return ServerSettings{}, err
 	}
-	logLevel := parseLogLevelName(r.Form.Get("log_level"))
+	logLevel := appsettings.ParseLogLevel(r.Form.Get("log_level"))
 	if strings.TrimSpace(r.Form.Get("log_level")) == "" {
 		logLevel = "warn"
 	}

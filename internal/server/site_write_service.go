@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"log/slog"
+
+	appsettings "quack/internal/settings"
 )
 
 type SiteWriteService interface {
@@ -119,8 +121,8 @@ func (s siteWriteService) ReconcilePolicyViolations(ctx context.Context) error {
 		return err
 	}
 	for _, manifest := range manifests {
-		enabled := parseBoolSetting(manifest.Settings[SettingDatabaseFeature])
-		required := parseBoolSetting(manifest.Settings[SettingDatabaseFeatureRequired])
+		enabled := appsettings.ParseBool(manifest.Settings[appsettings.SettingDatabaseFeature])
+		required := appsettings.ParseBool(manifest.Settings[appsettings.SettingDatabaseFeatureRequired])
 		allowed, reason, err := databaseAllowed(ctx, s.hot, AdminUser{}, manifest.Site)
 		if err != nil {
 			return err
@@ -134,7 +136,7 @@ func (s siteWriteService) ReconcilePolicyViolations(ctx context.Context) error {
 				reason = "database is disabled by administrator policy"
 			}
 			if err := s.db.SavePolicyViolation(ctx, PolicyViolation{
-				SiteSHA: manifest.SiteSHA, UploadVersion: manifest.Version, Key: SettingDatabaseFeature,
+				SiteSHA: manifest.SiteSHA, UploadVersion: manifest.Version, Key: appsettings.SettingDatabaseFeature,
 				RequestedValue: "true", PolicyValue: "deny", Severity: severity, Reason: reason,
 			}); err != nil {
 				return err
@@ -142,7 +144,7 @@ func (s siteWriteService) ReconcilePolicyViolations(ctx context.Context) error {
 			s.logInvalidation(ctx, "site_version", s.invalidator.InvalidateSiteVersion(ctx, manifest.SiteSHA, manifest.Version))
 			continue
 		}
-		if err := s.db.ResolvePolicyViolation(ctx, manifest.SiteSHA, manifest.Version, SettingDatabaseFeature); err != nil {
+		if err := s.db.ResolvePolicyViolation(ctx, manifest.SiteSHA, manifest.Version, appsettings.SettingDatabaseFeature); err != nil {
 			return err
 		}
 		s.logInvalidation(ctx, "site_version", s.invalidator.InvalidateSiteVersion(ctx, manifest.SiteSHA, manifest.Version))
