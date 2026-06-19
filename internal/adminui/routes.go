@@ -15,6 +15,7 @@ import (
 	"quack/internal/access"
 	"quack/internal/domain"
 	"quack/internal/protocol"
+	"quack/internal/releases"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 )
@@ -29,7 +30,6 @@ var adminTemplates = template.Must(template.ParseFS(templateFS, "templates/*.htm
 type UserRepository interface {
 	AuthenticateAdmin(ctx context.Context, username string, password string) (domain.AdminUser, bool, error)
 	CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error)
-	ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error)
 }
 
 type SessionRepository interface {
@@ -41,6 +41,7 @@ type SessionRepository interface {
 type Handler struct {
 	users       UserRepository
 	sessions    SessionRepository
+	releases    releases.Service
 	read        sites.SiteReadService
 	write       sites.SiteWriteService
 	setLogLevel func(string) error
@@ -49,6 +50,7 @@ type Handler struct {
 type Options struct {
 	Users       UserRepository
 	Sessions    SessionRepository
+	Releases    releases.Service
 	Read        sites.SiteReadService
 	Write       sites.SiteWriteService
 	SetLogLevel func(string) error
@@ -62,6 +64,7 @@ func New(opts Options) Handler {
 	return Handler{
 		users:       opts.Users,
 		sessions:    opts.Sessions,
+		releases:    opts.Releases,
 		read:        opts.Read,
 		write:       opts.Write,
 		setLogLevel: setLogLevel,
@@ -314,7 +317,7 @@ func (d adminPageData) HasCreatedUser() bool {
 }
 
 func (h Handler) adminPageData(r *http.Request, user domain.AdminUser) (adminPageData, error) {
-	siteList, err := h.users.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
+	siteList, err := h.releases.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
 	if err != nil {
 		return adminPageData{}, err
 	}

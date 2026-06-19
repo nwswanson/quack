@@ -314,24 +314,24 @@ Owns:
 
 ## Tasks
 
-* [ ] Create `internal/releases`.
-* [ ] Move revision/current-version read models into `releases`.
-* [ ] Create `internal/publishing`.
-* [ ] Move archive upload orchestration from `uploads` into `publishing`, or make `uploads` a lower-level helper used by `publishing`.
-* [ ] Reduce `internal/sites` to site identity/path/name concerns.
-* [ ] Update control API handlers to depend on `publishing.Service` and `releases.Service`.
-* [ ] Update admin UI to depend on read models from `releases` or a query service.
-* [ ] Keep database persistence in `sqlitedb`.
-* [ ] Keep blob persistence in `storage`.
-* [ ] Update tests package by package.
+* [x] Create `internal/releases`.
+* [x] Move revision/current-version read models into `releases`.
+* [x] Create `internal/publishing`.
+* [x] Move archive upload orchestration from `uploads` into `publishing`, or make `uploads` a lower-level helper used by `publishing`.
+* [x] Reduce `internal/sites` to site identity/path/name concerns.
+* [x] Update control API handlers to depend on `publishing.Service` and `releases.Service`.
+* [x] Update admin UI to depend on read models from `releases` or a query service.
+* [x] Keep database persistence in `sqlitedb`.
+* [x] Keep blob persistence in `storage`.
+* [x] Update tests package by package.
 
 ## Acceptance Criteria
 
-* [ ] Deploying a static site still works.
-* [ ] Revisions still list correctly.
-* [ ] Publish, unpublish, rollback, and delete still work.
-* [ ] `sites` is no longer a catch-all application service.
-* [ ] There is a clear release abstraction that future runtime bundles can attach to.
+* [x] Deploying a static site still works.
+* [x] Revisions still list correctly.
+* [x] Publish, unpublish, rollback, and delete still work.
+* [x] `sites` is no longer a catch-all application service.
+* [x] There is a clear release abstraction that future runtime bundles can attach to.
 
 ---
 
@@ -385,25 +385,25 @@ Runtime routes can be added later without changing the control API boundary.
 
 ## Tasks
 
-* [ ] Create `internal/manifest`.
-* [ ] Move manifest parsing out of `protocol`.
-* [ ] Keep existing manifest syntax backward compatible.
-* [ ] Add tests for:
+* [x] Create `internal/manifest`.
+* [x] Move manifest parsing out of `protocol`.
+* [x] Keep existing manifest syntax backward compatible.
+* [x] Add tests for:
 
-  * [ ] Empty manifest.
-  * [ ] Database feature enabled.
-  * [ ] Database feature required.
-  * [ ] Unknown fields.
-  * [ ] Invalid route declarations, if route syntax is introduced now.
-* [ ] Update publishing flow to use `manifest.Parse`.
-* [ ] Keep wire-level protocol request/response types in `protocol`.
+  * [x] Empty manifest.
+  * [x] Database feature enabled.
+  * [x] Database feature required.
+  * [x] Unknown fields.
+  * [x] Invalid route declarations, if route syntax is introduced now.
+* [x] Update publishing flow to use `manifest.Parse`.
+* [x] Keep wire-level protocol request/response types in `protocol`.
 
 ## Acceptance Criteria
 
-* [ ] `protocol` no longer owns product manifest semantics.
-* [ ] Manifest parsing is independently testable.
-* [ ] Future route declarations have a natural home.
-* [ ] Existing uploads remain compatible.
+* [x] `protocol` no longer owns product manifest semantics.
+* [x] Manifest parsing is independently testable.
+* [x] Future route declarations have a natural home.
+* [x] Existing uploads remain compatible.
 
 ---
 
@@ -455,28 +455,28 @@ type Violation struct {
 
 ## Tasks
 
-* [ ] Create `internal/policy`.
-* [ ] Move policy resolution out of `sites`.
-* [ ] Convert current database feature policy into a capability:
+* [x] Create `internal/policy`.
+* [x] Move policy resolution out of `sites`.
+* [x] Convert current database feature policy into a capability:
 
-  * [ ] `database`.
+  * [x] `database`.
   * [ ] or `capability.database`.
-* [ ] Preserve existing admin UI behavior for database feature policy.
-* [ ] Preserve existing upload validation behavior.
-* [ ] Preserve existing policy violation reconciliation behavior.
-* [ ] Add capability evaluation tests.
-* [ ] Add tests for required versus optional capabilities.
-* [ ] Add tests for system-level policy inheritance.
-* [ ] Add tests for future site-level or release-level overrides, even if not implemented yet.
-* [ ] Keep persistent policy records in `domain` or move them into `policy` if they are not broadly shared.
+* [x] Preserve existing admin UI behavior for database feature policy.
+* [x] Preserve existing upload validation behavior.
+* [x] Preserve existing policy violation reconciliation behavior.
+* [x] Add capability evaluation tests.
+* [x] Add tests for required versus optional capabilities.
+* [x] Add tests for system-level policy inheritance.
+* [x] Add tests for future site-level or release-level overrides, even if not implemented yet.
+* [x] Keep persistent policy records in `domain` or move them into `policy` if they are not broadly shared.
 
 ## Acceptance Criteria
 
-* [ ] Policy evaluation is not tied to static sites.
-* [ ] Database access is represented as one capability among many.
-* [ ] Publishing can ask policy whether a release is allowed.
-* [ ] Public serving can ask policy whether a release is currently servable.
-* [ ] Runtime can later ask policy whether an invocation is allowed.
+* [x] Policy evaluation is not tied to static sites.
+* [x] Database access is represented as one capability among many.
+* [x] Publishing can ask policy whether a release is allowed.
+* [x] Public serving can ask policy whether a release is currently servable.
+* [x] Runtime can later ask policy whether an invocation is allowed.
 
 ---
 

@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"quack/internal/domain"
-	"quack/internal/protocol"
+	"quack/internal/manifest"
+	"quack/internal/policy"
 	appsettings "quack/internal/settings"
 )
 
@@ -112,12 +113,12 @@ func TestSiteReadServiceValidateUploadManifestRejectsDeniedDatabaseFeature(t *te
 	}
 	read := NewSiteReadService(db)
 
-	err := read.ValidateUploadManifest(context.Background(), domain.AdminUser{}, "example.com", protocol.SiteManifest{
-		Features: protocol.SiteManifestFeatures{Database: protocol.SiteManifestDatabase{Enabled: true}},
+	err := read.ValidateUploadManifest(context.Background(), domain.AdminUser{}, "example.com", manifest.Manifest{
+		Features: manifest.Features{Database: manifest.FeatureFlag{Enabled: true}},
 	})
-	var forbidden ForbiddenPolicyError
+	var forbidden policy.ForbiddenError
 	if !errors.As(err, &forbidden) {
-		t.Fatalf("ValidateUploadManifest error = %v, want ForbiddenPolicyError", err)
+		t.Fatalf("ValidateUploadManifest error = %v, want policy.ForbiddenError", err)
 	}
 	if err.Error() != "database disabled" {
 		t.Fatalf("ValidateUploadManifest error = %q, want policy reason", err.Error())

@@ -7,6 +7,8 @@ import (
 	"quack/internal/controlapi"
 	"quack/internal/hotdata"
 	"quack/internal/publichttp"
+	"quack/internal/publishing"
+	"quack/internal/releases"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	"quack/internal/statichttp"
@@ -47,10 +49,13 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	read := sites.NewSiteReadService(hot)
 	write := sites.NewSiteWriteService(db, hot, hot)
 	uploadService := uploads.NewService(db, store, read, write)
+	publishingService := publishing.NewService(uploadService)
+	releaseService := releases.NewService(db, hot)
 
 	adminui.New(adminui.Options{
 		Users:       db,
 		Sessions:    db,
+		Releases:    releaseService,
 		Read:        read,
 		Write:       write,
 		SetLogLevel: SetLogLevel,
@@ -60,11 +65,11 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Token:                token,
 		AllowUnauthenticated: opts.AllowUnauthenticated,
 		Store:                store,
-		Uploads:              uploadService,
+		Publishing:           publishingService,
 		Read:                 read,
 		Write:                write,
 		Users:                db,
-		Revisions:            db,
+		Releases:             releaseService,
 	}).Register(adminMux)
 
 	publicMux := http.NewServeMux()

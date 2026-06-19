@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"quack/internal/domain"
-	"quack/internal/protocol"
+	"quack/internal/manifest"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 )
@@ -73,7 +73,7 @@ func (r testReadService) UploadPolicy(ctx context.Context, actor domain.AdminUse
 	return domain.UploadPolicy{}, nil
 }
 
-func (r testReadService) ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest protocol.SiteManifest) error {
+func (r testReadService) ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, siteManifest manifest.Manifest) error {
 	return nil
 }
 

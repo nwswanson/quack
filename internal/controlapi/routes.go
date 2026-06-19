@@ -11,43 +11,39 @@ import (
 
 	"quack/internal/access"
 	"quack/internal/domain"
+	"quack/internal/policy"
 	"quack/internal/protocol"
+	"quack/internal/publishing"
+	"quack/internal/releases"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
-	appuploads "quack/internal/uploads"
 )
 
 type UserRepository interface {
 	FindUserByToken(ctx context.Context, token string) (domain.AdminUser, bool, error)
-	ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error)
-	ListPublishedSitesByUsername(ctx context.Context, username string) ([]domain.PublishedSite, error)
-}
-
-type RevisionRepository interface {
-	ListSiteRevisions(ctx context.Context, user domain.AdminUser, site string, siteSHA string) ([]domain.RevisionRecord, error)
 }
 
 type Handler struct {
 	token                string
 	allowUnauthenticated bool
 
-	store     appstorage.Storage
-	uploads   appuploads.Service
-	read      sites.SiteReadService
-	write     sites.SiteWriteService
-	users     UserRepository
-	revisions RevisionRepository
+	store      appstorage.Storage
+	publishing publishing.Service
+	read       sites.SiteReadService
+	write      sites.SiteWriteService
+	users      UserRepository
+	releases   releases.Service
 }
 
 type Options struct {
 	Token                string
 	AllowUnauthenticated bool
 	Store                appstorage.Storage
-	Uploads              appuploads.Service
+	Publishing           publishing.Service
 	Read                 sites.SiteReadService
 	Write                sites.SiteWriteService
 	Users                UserRepository
-	Revisions            RevisionRepository
+	Releases             releases.Service
 }
 
 func New(opts Options) Handler {
@@ -55,11 +51,11 @@ func New(opts Options) Handler {
 		token:                opts.Token,
 		allowUnauthenticated: opts.AllowUnauthenticated,
 		store:                opts.Store,
-		uploads:              opts.Uploads,
+		publishing:           opts.Publishing,
 		read:                 opts.Read,
 		write:                opts.Write,
 		users:                opts.Users,
-		revisions:            opts.Revisions,
+		releases:             opts.Releases,
 	}
 }
 
@@ -96,7 +92,7 @@ func (h Handler) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.uploads.UploadArchive(r.Context(), appuploads.Request{
+	resp, err := h.publishing.UploadArchive(r.Context(), publishing.Request{
 		Site:   site,
 		User:   user,
 		Policy: policy,
@@ -155,9 +151,9 @@ func (h Handler) validUploadRequest(w http.ResponseWriter, r *http.Request) (str
 
 func (h Handler) writeUploadError(w http.ResponseWriter, err error) {
 	var maxBytesErr *http.MaxBytesError
-	var limitErr appuploads.LimitError
-	var badRequest appuploads.BadArchiveError
-	var forbidden sites.ForbiddenPolicyError
+	var limitErr publishing.LimitError
+	var badRequest publishing.BadArchiveError
+	var forbidden policy.ForbiddenError
 
 	switch {
 	case errors.As(err, &maxBytesErr):
@@ -202,15 +198,15 @@ func (h Handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 			protocol.WriteError(w, http.StatusForbidden, "not allowed to list all sites")
 			return
 		}
-		siteList, err = h.users.ListPublishedSites(r.Context(), user.ID, true)
+		siteList, err = h.releases.ListPublishedSites(r.Context(), user.ID, true)
 	case username != "":
 		if !access.Can(user, "sites.view_all") {
 			protocol.WriteError(w, http.StatusForbidden, "not allowed to list another user's sites")
 			return
 		}
-		siteList, err = h.users.ListPublishedSitesByUsername(r.Context(), username)
+		siteList, err = h.releases.ListPublishedSitesByUsername(r.Context(), username)
 	default:
-		siteList, err = h.users.ListPublishedSites(r.Context(), user.ID, false)
+		siteList, err = h.releases.ListPublishedSites(r.Context(), user.ID, false)
 	}
 	if err != nil {
 		slog.ErrorContext(r.Context(), "list sites failed", "username", user.Username, "target_username", username, "all", includeAll, "error", err)
@@ -311,7 +307,7 @@ func (h Handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	siteSHA := sites.HashName(site)
-	deleted, err := h.write.DeleteSite(r.Context(), site, siteSHA)
+	deleted, err := h.releases.DeleteSite(r.Context(), site, siteSHA)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -396,7 +392,7 @@ func (h Handler) handleSiteRevisionRoutes(w http.ResponseWriter, r *http.Request
 }
 
 func (h Handler) handleListRevisions(w http.ResponseWriter, r *http.Request, user domain.AdminUser, site string) {
-	revisions, err := h.revisions.ListSiteRevisions(r.Context(), user, site, sites.HashName(site))
+	revisions, err := h.releases.ListSiteRevisions(r.Context(), user, site, sites.HashName(site))
 	if err != nil {
 		if errors.Is(err, domain.ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -431,7 +427,7 @@ func (h Handler) handleListRevisions(w http.ResponseWriter, r *http.Request, use
 }
 
 func (h Handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, user domain.AdminUser, site string) {
-	rollback, err := h.write.RollbackSite(r.Context(), user, site, sites.HashName(site))
+	rollback, err := h.releases.RollbackSite(r.Context(), user, site, sites.HashName(site))
 	if err != nil {
 		if errors.Is(err, domain.ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -454,7 +450,7 @@ func (h Handler) handleRollbackSite(w http.ResponseWriter, r *http.Request, user
 }
 
 func (h Handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, user domain.AdminUser, site string) {
-	out, err := h.write.UnpublishSite(r.Context(), user, site, sites.HashName(site))
+	out, err := h.releases.UnpublishSite(r.Context(), user, site, sites.HashName(site))
 	if err != nil {
 		if errors.Is(err, domain.ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
@@ -473,7 +469,7 @@ func (h Handler) handleUnpublishSite(w http.ResponseWriter, r *http.Request, use
 }
 
 func (h Handler) handlePublishSite(w http.ResponseWriter, r *http.Request, user domain.AdminUser, site string) {
-	out, err := h.write.PublishSite(r.Context(), user, site, sites.HashName(site))
+	out, err := h.releases.PublishSite(r.Context(), user, site, sites.HashName(site))
 	if err != nil {
 		if errors.Is(err, domain.ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")

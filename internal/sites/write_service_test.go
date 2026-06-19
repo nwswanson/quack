@@ -28,18 +28,6 @@ func TestSiteWriteServiceInvalidatesAfterSuccessfulWrites(t *testing.T) {
 	if err := write.FinishUpload(ctx, domain.UploadRecord{Site: "example.com", SiteSHA: "site-sha", Version: 3}); err != nil {
 		t.Fatalf("FinishUpload error = %v", err)
 	}
-	if _, err := write.PublishSite(ctx, domain.AdminUser{}, "example.com", "site-sha"); err != nil {
-		t.Fatalf("PublishSite error = %v", err)
-	}
-	if _, err := write.RollbackSite(ctx, domain.AdminUser{}, "example.com", "site-sha"); err != nil {
-		t.Fatalf("RollbackSite error = %v", err)
-	}
-	if _, err := write.UnpublishSite(ctx, domain.AdminUser{}, "example.com", "site-sha"); err != nil {
-		t.Fatalf("UnpublishSite error = %v", err)
-	}
-	if _, err := write.DeleteSite(ctx, "example.com", "site-sha"); err != nil {
-		t.Fatalf("DeleteSite error = %v", err)
-	}
 
 	assertContains(t, invalidator.calls, "settings")
 	assertContains(t, invalidator.calls, "policies")
@@ -207,22 +195,6 @@ func (db *siteWriteServiceDatabase) SaveUploadSettings(ctx context.Context, site
 
 func (db *siteWriteServiceDatabase) FinishUpload(ctx context.Context, upload domain.UploadRecord) error {
 	return db.err
-}
-
-func (db *siteWriteServiceDatabase) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
-	return domain.RollbackRecord{RolledBack: true}, db.err
-}
-
-func (db *siteWriteServiceDatabase) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
-	return domain.UnpublishRecord{Unpublished: true}, db.err
-}
-
-func (db *siteWriteServiceDatabase) PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error) {
-	return domain.PublishRecord{Published: true}, db.err
-}
-
-func (db *siteWriteServiceDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
-	return true, db.err
 }
 
 func (db *siteWriteServiceDatabase) SavePolicyViolation(ctx context.Context, violation domain.PolicyViolation) error {

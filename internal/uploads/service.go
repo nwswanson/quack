@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	"quack/internal/protocol"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
@@ -123,32 +124,32 @@ func (s service) pruneRetainedVersions(ctx context.Context, upload domain.Upload
 	return nil
 }
 
-func (s service) acceptArchive(ctx context.Context, body io.Reader, upload *domain.UploadRecord, policy domain.UploadPolicy) (int64, int64, protocol.SiteManifest, error) {
+func (s service) acceptArchive(ctx context.Context, body io.Reader, upload *domain.UploadRecord, policy domain.UploadPolicy) (int64, int64, manifest.Manifest, error) {
 	tr := tar.NewReader(body)
 
-	manifest := protocol.DefaultSiteManifest()
+	siteManifest := manifest.Default()
 	var files, bytes int64
 	for {
 		header, err := tr.Next()
 		switch {
 		case errors.Is(err, io.EOF):
-			return files, bytes, manifest, nil
+			return files, bytes, siteManifest, nil
 		case err != nil:
-			return 0, 0, manifest, BadArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
+			return 0, 0, siteManifest, BadArchiveError{err: fmt.Errorf("read tar archive: %w", err)}
 		}
 
 		if protocol.IsSiteManifestArchiveEntry(header) {
-			parsed, err := protocol.ParseSiteManifest(tr, header.Size)
+			parsed, err := manifest.Parse(tr, header.Size)
 			if err != nil {
-				return 0, 0, manifest, BadArchiveError{err: err}
+				return 0, 0, siteManifest, BadArchiveError{err: err}
 			}
-			manifest = parsed
+			siteManifest = parsed
 			continue
 		}
 
 		rec, n, err := s.acceptArchiveEntry(ctx, tr, header, upload.SiteSHA, upload.Version, files, policy)
 		if err != nil {
-			return 0, 0, manifest, err
+			return 0, 0, siteManifest, err
 		}
 		if rec == nil {
 			continue
@@ -223,7 +224,7 @@ func sanitizeServingPath(name string) (string, error) {
 	return out, nil
 }
 
-func ManifestSettings(manifest protocol.SiteManifest) map[string]string {
+func ManifestSettings(manifest manifest.Manifest) map[string]string {
 	return map[string]string{
 		appsettings.SettingDatabaseFeature:         boolSetting(manifest.Features.Database.Enabled),
 		appsettings.SettingDatabaseFeatureRequired: boolSetting(manifest.Features.Database.Required),

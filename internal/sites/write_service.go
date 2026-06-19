@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"quack/internal/domain"
+	"quack/internal/policy"
 	appsettings "quack/internal/settings"
 )
 
@@ -13,10 +14,6 @@ type SiteWriteService interface {
 	SavePolicy(ctx context.Context, policy domain.PolicyRecord) error
 	SaveUploadSettings(ctx context.Context, siteSHA string, version int64, settings map[string]string) error
 	FinishUpload(ctx context.Context, upload domain.UploadRecord) error
-	RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error)
-	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
-	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
-	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
 	ReconcilePolicyViolations(ctx context.Context) error
 }
 
@@ -25,10 +22,6 @@ type SiteWriteRepository interface {
 	SavePolicy(ctx context.Context, policy domain.PolicyRecord) error
 	SaveUploadSettings(ctx context.Context, siteSHA string, version int64, settings map[string]string) error
 	FinishUpload(ctx context.Context, upload domain.UploadRecord) error
-	RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error)
-	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
-	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
-	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
 	SavePolicyViolation(ctx context.Context, violation domain.PolicyViolation) error
 	ResolvePolicyViolation(ctx context.Context, siteSHA string, version int64, key string) error
 }
@@ -108,67 +101,21 @@ func (s siteWriteService) FinishUpload(ctx context.Context, upload domain.Upload
 	return nil
 }
 
-func (s siteWriteService) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
-	record, err := s.db.RollbackSite(ctx, user, site, siteSHA)
-	if err != nil {
-		return domain.RollbackRecord{}, err
-	}
-	s.logInvalidation(ctx, "site", s.invalidator.InvalidateSite(ctx, site))
-	return record, nil
-}
-
-func (s siteWriteService) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
-	record, err := s.db.UnpublishSite(ctx, user, site, siteSHA)
-	if err != nil {
-		return domain.UnpublishRecord{}, err
-	}
-	s.logInvalidation(ctx, "site", s.invalidator.InvalidateSite(ctx, site))
-	return record, nil
-}
-
-func (s siteWriteService) PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error) {
-	record, err := s.db.PublishSite(ctx, user, site, siteSHA)
-	if err != nil {
-		return domain.PublishRecord{}, err
-	}
-	s.logInvalidation(ctx, "site", s.invalidator.InvalidateSite(ctx, site))
-	return record, nil
-}
-
-func (s siteWriteService) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
-	deleted, err := s.db.DeleteSite(ctx, site, siteSHA)
-	if err != nil {
-		return false, err
-	}
-	s.logInvalidation(ctx, "site", s.invalidator.InvalidateSite(ctx, site))
-	s.logInvalidation(ctx, "site_version", s.invalidator.InvalidateSiteVersion(ctx, siteSHA, 0))
-	return deleted, nil
-}
-
 func (s siteWriteService) ReconcilePolicyViolations(ctx context.Context) error {
 	manifests, err := s.hot.ListCurrentSiteManifests(ctx)
 	if err != nil {
 		return err
 	}
 	for _, manifest := range manifests {
-		enabled := appsettings.ParseBool(manifest.Settings[appsettings.SettingDatabaseFeature])
-		required := appsettings.ParseBool(manifest.Settings[appsettings.SettingDatabaseFeatureRequired])
-		allowed, reason, err := DatabaseAllowed(ctx, s.hot, domain.AdminUser{}, manifest.Site)
+		allowed, reason, err := policy.DatabaseAllowed(ctx, s.hot, domain.AdminUser{}, manifest.Site)
 		if err != nil {
 			return err
 		}
-		if enabled && !allowed {
-			severity := "degraded"
-			if required {
-				severity = "suspended"
-			}
-			if reason == "" {
-				reason = "database is disabled by administrator policy"
-			}
-			if err := s.db.SavePolicyViolation(ctx, domain.PolicyViolation{
-				SiteSHA: manifest.SiteSHA, UploadVersion: manifest.Version, Key: appsettings.SettingDatabaseFeature,
-				RequestedValue: "true", PolicyValue: "deny", Severity: severity, Reason: reason,
-			}); err != nil {
+		violation, violated := policy.DatabaseViolationFromSettings(manifest.Settings, allowed, reason)
+		if violated {
+			violation.SiteSHA = manifest.SiteSHA
+			violation.UploadVersion = manifest.Version
+			if err := s.db.SavePolicyViolation(ctx, violation); err != nil {
 				return err
 			}
 			s.logInvalidation(ctx, "site_version", s.invalidator.InvalidateSiteVersion(ctx, manifest.SiteSHA, manifest.Version))

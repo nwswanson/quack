@@ -47,16 +47,6 @@ func TestDecodeResponseUsesBodyFallbackForNonJSONError(t *testing.T) {
 	}
 }
 
-func TestParseSiteManifestRejectsInvalidDatabaseRequirement(t *testing.T) {
-	_, err := ParseSiteManifest(strings.NewReader("features:\n  database:\n    required: true\n"), 45)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "database.required cannot be true") {
-		t.Fatalf("error = %q, want database requirement detail", err.Error())
-	}
-}
-
 func TestSanitizeServingPath(t *testing.T) {
 	got, err := SanitizeServingPath("docs/My File.html")
 	if err != nil {

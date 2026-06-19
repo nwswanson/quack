@@ -2,12 +2,11 @@ package sites
 
 import (
 	"context"
-	"fmt"
 	"path"
-	"strconv"
 
 	"quack/internal/domain"
-	"quack/internal/protocol"
+	"quack/internal/manifest"
+	"quack/internal/policy"
 	appsettings "quack/internal/settings"
 )
 
@@ -25,7 +24,7 @@ type HotDataReader interface {
 type SiteReadService interface {
 	ServerSettings(ctx context.Context) (domain.ServerSettings, error)
 	UploadPolicy(ctx context.Context, actor domain.AdminUser, site string) (domain.UploadPolicy, error)
-	ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest protocol.SiteManifest) error
+	ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest manifest.Manifest) error
 	CurrentSiteServingStatus(ctx context.Context, site string) (domain.SiteServingDecision, error)
 	CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
@@ -74,16 +73,14 @@ func (s siteReadService) UploadPolicy(ctx context.Context, actor domain.AdminUse
 	}, nil
 }
 
-func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest protocol.SiteManifest) error {
-	allowed, reason, err := databaseAllowed(ctx, s.hot, actor, site)
+func (s siteReadService) ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest manifest.Manifest) error {
+	policies, err := s.hot.LoadPolicies(ctx, policy.ScopesFor(actor, site))
 	if err != nil {
 		return err
 	}
-	if manifest.Features.Database.Enabled && !allowed {
-		if reason == "" {
-			reason = "database is disabled by administrator policy"
-		}
-		return ForbiddenPolicyError{err: fmt.Errorf("%s", reason)}
+	eval := policy.Evaluate(policies, policy.RequestsFromManifest(manifest))
+	if len(eval.Violations) > 0 {
+		return policy.ForbiddenError{Reason: eval.Violations[0].Reason}
 	}
 	return nil
 }
@@ -190,46 +187,6 @@ func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (domain.Polic
 	return policy, nil
 }
 
-func databaseAllowed(ctx context.Context, hot HotDataReader, actor domain.AdminUser, site string) (bool, string, error) {
-	scopes := []domain.PolicyScope{{Type: domain.ScopeSystem, ID: ""}}
-	if actor.ID > 0 {
-		scopes = append(scopes, domain.PolicyScope{Type: domain.ScopeUser, ID: strconv.FormatInt(actor.ID, 10)})
-	}
-	if site != "" {
-		scopes = append(scopes, domain.PolicyScope{Type: domain.ScopeSite, ID: site})
-	}
-	policies, err := hot.LoadPolicies(ctx, scopes)
-	if err != nil {
-		return false, "", err
-	}
-	allowed := appsettings.ParseBool(appsettings.Default(appsettings.SettingDatabaseFeature))
-	reason := ""
-	for _, policy := range policies {
-		if policy.Key != appsettings.SettingDatabaseFeature {
-			continue
-		}
-		switch policy.Mode {
-		case "deny", "force_off":
-			if policy.Reason != "" {
-				reason = policy.Reason
-			} else {
-				reason = "database is disabled by administrator policy"
-			}
-			return false, reason, nil
-		case "allow", "force_on":
-			allowed = true
-			if policy.Reason != "" {
-				reason = policy.Reason
-			}
-		}
-	}
-	return allowed, reason, nil
-}
-
-func DatabaseAllowed(ctx context.Context, hot HotDataReader, actor domain.AdminUser, site string) (bool, string, error) {
-	return databaseAllowed(ctx, hot, actor, site)
-}
-
 func servingDecisionFromViolations(violations []domain.PolicyViolation) domain.SiteServingDecision {
 	decision := domain.SiteServingDecision{Status: domain.SiteServingActive}
 	for _, violation := range violations {
@@ -256,16 +213,4 @@ func can(user domain.AdminUser, action string) bool {
 	default:
 		return false
 	}
-}
-
-type ForbiddenPolicyError struct {
-	err error
-}
-
-func (e ForbiddenPolicyError) Error() string {
-	return e.err.Error()
-}
-
-func (e ForbiddenPolicyError) Unwrap() error {
-	return e.err
 }

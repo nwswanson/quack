@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"quack/internal/domain"
-	"quack/internal/protocol"
+	"quack/internal/manifest"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 )
@@ -138,7 +138,7 @@ func (r uploadServiceRead) UploadPolicy(ctx context.Context, actor domain.AdminU
 	return domain.UploadPolicy{}, nil
 }
 
-func (r uploadServiceRead) ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest protocol.SiteManifest) error {
+func (r uploadServiceRead) ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, siteManifest manifest.Manifest) error {
 	return r.validateErr
 }
 
@@ -179,22 +179,6 @@ func (w *uploadServiceWrite) SaveUploadSettings(ctx context.Context, siteSHA str
 func (w *uploadServiceWrite) FinishUpload(ctx context.Context, upload domain.UploadRecord) error {
 	w.finished = true
 	return nil
-}
-
-func (w *uploadServiceWrite) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
-	return domain.RollbackRecord{}, nil
-}
-
-func (w *uploadServiceWrite) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
-	return domain.UnpublishRecord{}, nil
-}
-
-func (w *uploadServiceWrite) PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error) {
-	return domain.PublishRecord{}, nil
-}
-
-func (w *uploadServiceWrite) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
-	return false, nil
 }
 
 func (w *uploadServiceWrite) ReconcilePolicyViolations(ctx context.Context) error {

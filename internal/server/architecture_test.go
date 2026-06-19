@@ -48,6 +48,12 @@ func TestPackageDependencyBoundaries(t *testing.T) {
 		if pkg == "quack/internal/controlapi" && (imports["quack/internal/publichttp"] || imports["quack/internal/statichttp"]) {
 			t.Fatalf("%s imports public site HTTP package; control routes must not depend on public routing", pkg)
 		}
+		if pkg == "quack/internal/controlapi" && imports["quack/internal/uploads"] {
+			t.Fatalf("%s imports uploads directly; control deploy routes must go through publishing", pkg)
+		}
+		if pkg == "quack/internal/protocol" && imports["quack/internal/manifest"] {
+			t.Fatalf("%s imports manifest; protocol must stay limited to wire contracts", pkg)
+		}
 		if pkg == "quack/internal/statichttp" {
 			for imp := range imports {
 				if strings.HasPrefix(imp, "quack/internal/runtime") {
