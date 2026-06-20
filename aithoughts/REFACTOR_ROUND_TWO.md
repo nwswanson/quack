@@ -705,26 +705,26 @@ Wire the public route path for dynamic HTTP handlers while execution remains dis
 
 ## Tasks
 
-* [ ] Add `RouteHTTP` route kind.
-* [ ] Allow manifest to declare HTTP routes only behind a feature flag or experimental setting.
-* [ ] Add public route resolution for HTTP routes.
-* [ ] Route HTTP requests to `runtimehttp`.
-* [ ] Have `runtimehttp` return a controlled disabled response.
-* [ ] Add policy check for dynamic HTTP capability.
-* [ ] Add tests for:
+* [x] Add `RouteHTTP` route kind.
+* [x] Allow manifest to declare HTTP routes only behind a feature flag or experimental setting.
+* [x] Add public route resolution for HTTP routes.
+* [x] Route HTTP requests to `runtimehttp`.
+* [x] Have `runtimehttp` return a controlled disabled response.
+* [x] Add policy check for dynamic HTTP capability.
+* [x] Add tests for:
 
-  * [ ] Dynamic route disabled globally.
-  * [ ] Dynamic route denied by policy.
-  * [ ] Dynamic route declared but no executor configured.
-  * [ ] Static routes still work.
-  * [ ] Unknown routes still behave correctly.
+  * [x] Dynamic route disabled globally.
+  * [x] Dynamic route denied by policy.
+  * [x] Dynamic route declared but no executor configured.
+  * [x] Static routes still work.
+  * [x] Unknown routes still behave correctly.
 
 ## Acceptance Criteria
 
-* [ ] The public data plane can distinguish static and dynamic routes.
-* [ ] Runtime execution is still not enabled.
-* [ ] Failure modes are explicit and safe.
-* [ ] Existing static site behavior is unaffected.
+* [x] The public data plane can distinguish static and dynamic routes.
+* [x] Runtime execution is still not enabled.
+* [x] Failure modes are explicit and safe.
+* [x] Existing static site behavior is unaffected.
 
 ---
 
@@ -951,7 +951,7 @@ Make the new boundaries durable.
 * [x] Phase 8: Introduce runtime package skeleton.
 * [x] Phase 9: Add route table support.
 * [x] Phase 10: Prepare persistence for runtime metadata.
-* [ ] Phase 11: Introduce disabled dynamic HTTP path.
+* [x] Phase 11: Introduce disabled dynamic HTTP path.
 
 ## Feature PRs
 

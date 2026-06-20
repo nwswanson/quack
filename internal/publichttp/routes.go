@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"quack/internal/policy"
 	"quack/internal/protocol"
 	"quack/internal/releases"
 	appruntime "quack/internal/runtime"
@@ -21,10 +22,11 @@ const (
 )
 
 type PublicRouteDecision struct {
-	Site    string
-	Version int64
-	Kind    RouteKind
-	Path    string
+	Site         string
+	Version      int64
+	Kind         RouteKind
+	Path         string
+	DeniedReason string
 }
 
 type Handler struct {
@@ -79,6 +81,10 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if decision.DeniedReason != "" {
+		protocol.WriteError(w, http.StatusForbidden, decision.DeniedReason)
+		return
+	}
 
 	switch decision.Kind {
 	case RouteStatic:
@@ -118,12 +124,29 @@ func (h Handler) decide(r *http.Request) (PublicRouteDecision, error) {
 
 type ReleaseRouteReader struct {
 	Releases releases.Service
+	Policies policy.Loader
 }
 
 func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath string) (PublicRouteDecision, bool, error) {
 	decision, ok, err := r.Releases.LookupRoute(req.Context(), site, urlPath)
 	if err != nil || !ok {
 		return PublicRouteDecision{}, ok, err
+	}
+	if decision.Kind == releases.RouteHTTP {
+		if r.Policies == nil {
+			return PublicRouteDecision{
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, DeniedReason: "dynamic HTTP routes are disabled by administrator policy",
+			}, true, nil
+		}
+		allowed, reason, err := policy.RuntimeHTTPAllowed(req.Context(), r.Policies, site)
+		if err != nil {
+			return PublicRouteDecision{}, false, err
+		}
+		if !allowed {
+			return PublicRouteDecision{
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, DeniedReason: reason,
+			}, true, nil
+		}
 	}
 	return PublicRouteDecision{
 		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path,

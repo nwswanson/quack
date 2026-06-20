@@ -9,7 +9,10 @@ import (
 	appsettings "quack/internal/settings"
 )
 
-const CapabilityDatabase = "database"
+const (
+	CapabilityDatabase    = "database"
+	CapabilityRuntimeHTTP = "runtime.http"
+)
 
 type CapabilityRequest struct {
 	Key      string
@@ -32,15 +35,22 @@ type Loader interface {
 	LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error)
 }
 
-func RequestsFromManifest(manifest manifest.Manifest) []CapabilityRequest {
-	if !manifest.Features.Database.Enabled {
-		return nil
+func RequestsFromManifest(siteManifest manifest.Manifest) []CapabilityRequest {
+	var out []CapabilityRequest
+	if siteManifest.Features.Database.Enabled {
+		out = append(out, CapabilityRequest{
+			Key:      CapabilityDatabase,
+			Required: siteManifest.Features.Database.Required,
+			Value:    "true",
+		})
 	}
-	return []CapabilityRequest{{
-		Key:      CapabilityDatabase,
-		Required: manifest.Features.Database.Required,
-		Value:    "true",
-	}}
+	for _, route := range siteManifest.Routes {
+		if route.Kind == manifest.RouteHTTP {
+			out = append(out, CapabilityRequest{Key: CapabilityRuntimeHTTP, Required: true, Value: "true"})
+			break
+		}
+	}
+	return out
 }
 
 func DatabaseAllowed(ctx context.Context, loader Loader, actor domain.AdminUser, site string) (bool, string, error) {
@@ -63,10 +73,50 @@ func ScopesFor(actor domain.AdminUser, site string) []domain.PolicyScope {
 }
 
 func DatabaseAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
-	allowed := appsettings.ParseBool(appsettings.Default(appsettings.SettingDatabaseFeature))
+	return capabilityAllowedByRecords(policies, appsettings.SettingDatabaseFeature, "database is disabled by administrator policy")
+}
+
+func RuntimeHTTPAllowed(ctx context.Context, loader Loader, site string) (bool, string, error) {
+	policies, err := loader.LoadPolicies(ctx, ScopesFor(domain.AdminUser{}, site))
+	if err != nil {
+		return false, "", err
+	}
+	return RuntimeHTTPAllowedByRecords(policies)
+}
+
+func RuntimeHTTPAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
+	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeHTTPFeature, "dynamic HTTP routes are disabled by administrator policy")
+}
+
+func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Evaluation {
+	eval := Evaluation{Allowed: true}
+	for _, req := range requests {
+		var allowed bool
+		var reason string
+		switch req.Key {
+		case CapabilityDatabase:
+			allowed, reason, _ = DatabaseAllowedByRecords(policies)
+		case CapabilityRuntimeHTTP:
+			allowed, reason, _ = RuntimeHTTPAllowedByRecords(policies)
+		default:
+			continue
+		}
+		if allowed {
+			continue
+		}
+		eval.Violations = append(eval.Violations, Violation{Key: req.Key, Required: req.Required, Reason: reason})
+		if req.Required {
+			eval.Allowed = false
+		}
+	}
+	return eval
+}
+
+func capabilityAllowedByRecords(policies []domain.PolicyRecord, key string, defaultReason string) (bool, string, error) {
+	allowed := appsettings.ParseBool(appsettings.Default(key))
 	reason := ""
 	for _, policy := range policies {
-		if policy.Key != appsettings.SettingDatabaseFeature {
+		if policy.Key != key {
 			continue
 		}
 		switch policy.Mode {
@@ -74,7 +124,7 @@ func DatabaseAllowedByRecords(policies []domain.PolicyRecord) (bool, string, err
 			if policy.Reason != "" {
 				reason = policy.Reason
 			} else {
-				reason = "database is disabled by administrator policy"
+				reason = defaultReason
 			}
 			return false, reason, nil
 		case "allow", "force_on":
@@ -84,28 +134,10 @@ func DatabaseAllowedByRecords(policies []domain.PolicyRecord) (bool, string, err
 			}
 		}
 	}
-	return allowed, reason, nil
-}
-
-func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Evaluation {
-	eval := Evaluation{Allowed: true}
-	for _, req := range requests {
-		switch req.Key {
-		case CapabilityDatabase:
-			allowed, reason, _ := DatabaseAllowedByRecords(policies)
-			if allowed {
-				continue
-			}
-			if reason == "" {
-				reason = "database is disabled by administrator policy"
-			}
-			eval.Violations = append(eval.Violations, Violation{Key: req.Key, Required: req.Required, Reason: reason})
-			if req.Required {
-				eval.Allowed = false
-			}
-		}
+	if !allowed && reason == "" {
+		reason = defaultReason
 	}
-	return eval
+	return allowed, reason, nil
 }
 
 func DatabaseViolationFromSettings(settings map[string]string, allowed bool, reason string) (domain.PolicyViolation, bool) {

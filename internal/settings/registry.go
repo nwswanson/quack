@@ -49,6 +49,7 @@ const (
 	SettingLogLevel                = "log_level"
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
+	SettingRuntimeHTTPFeature      = "features.runtime.http.enabled"
 	SettingRoutes                  = "routes"
 )
 
@@ -80,6 +81,10 @@ var registry = map[string]SettingDefinition{
 	SettingDatabaseFeatureRequired: {
 		Key: SettingDatabaseFeatureRequired, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingRuntimeHTTPFeature: {
+		Key: SettingRuntimeHTTPFeature, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
 	SettingRoutes: {
 		Key: SettingRoutes, Type: SettingTypeString, DefaultValue: "",

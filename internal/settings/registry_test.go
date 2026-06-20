@@ -12,6 +12,7 @@ func TestValidateSettingValue(t *testing.T) {
 		"negative int":    {key: SettingMaxUploadBytes, value: "-1", wantErr: true},
 		"invalid int":     {key: SettingMaxUploadBytes, value: "large", wantErr: true},
 		"valid bool":      {key: SettingDatabaseFeature, value: "true"},
+		"valid runtime":   {key: SettingRuntimeHTTPFeature, value: "false"},
 		"invalid bool":    {key: SettingDatabaseFeature, value: "yes", wantErr: true},
 		"valid log level": {key: SettingLogLevel, value: "warning"},
 		"invalid enum":    {key: SettingLogLevel, value: "trace", wantErr: true},

@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"quack/internal/domain"
 	"quack/internal/releases"
+	appsettings "quack/internal/settings"
 	"quack/internal/statichttp"
 )
 
@@ -82,6 +84,25 @@ func TestHandlerRoutesDeclaredHTTPRouteToDisabledRuntime(t *testing.T) {
 	}
 }
 
+func TestHandlerReturnsForbiddenForDeniedDynamicRoute(t *testing.T) {
+	static := &recordingStaticHandler{}
+	h := New(static, WithRoutes(staticRouteReader{decision: PublicRouteDecision{Site: "foo", Version: 4, Kind: RouteHTTP, Path: "/api", DeniedReason: "dynamic HTTP disabled"}}))
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if static.called {
+		t.Fatal("static handler called for denied dynamic route")
+	}
+}
+
 func TestHandlerRoutesDeclaredWebSocketRouteToDisabledRuntime(t *testing.T) {
 	h := New(&recordingStaticHandler{}, WithRoutes(staticRouteReader{decision: PublicRouteDecision{Site: "foo", Version: 4, Kind: RouteWebSocket, Path: "/socket"}}))
 	mux := http.NewServeMux()
@@ -98,7 +119,14 @@ func TestHandlerRoutesDeclaredWebSocketRouteToDisabledRuntime(t *testing.T) {
 }
 
 func TestReleaseRouteReaderConvertsReleaseDecision(t *testing.T) {
-	reader := ReleaseRouteReader{Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteHTTP, Path: "/api"}}}
+	reader := ReleaseRouteReader{
+		Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteHTTP, Path: "/api"}},
+		Policies: fakePolicyLoader{policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeHTTPFeature,
+			Mode:      "allow",
+		}}},
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 
 	decision, ok, err := reader.LookupRoute(req, "foo", "/api")
@@ -107,6 +135,59 @@ func TestReleaseRouteReaderConvertsReleaseDecision(t *testing.T) {
 	}
 	if !ok || decision != (PublicRouteDecision{Site: "foo", Version: 9, Kind: RouteHTTP, Path: "/api"}) {
 		t.Fatalf("decision = %+v ok=%v, want converted release route", decision, ok)
+	}
+}
+
+func TestReleaseRouteReaderDeniesDynamicRouteWhenDisabledGlobally(t *testing.T) {
+	reader := ReleaseRouteReader{
+		Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteHTTP, Path: "/api"}},
+		Policies: fakePolicyLoader{},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+
+	decision, ok, err := reader.LookupRoute(req, "foo", "/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.DeniedReason != "dynamic HTTP routes are disabled by administrator policy" {
+		t.Fatalf("decision = %+v ok=%v, want globally disabled dynamic route", decision, ok)
+	}
+}
+
+func TestReleaseRouteReaderDeniesDynamicRouteByPolicy(t *testing.T) {
+	reader := ReleaseRouteReader{
+		Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteHTTP, Path: "/api"}},
+		Policies: fakePolicyLoader{policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeHTTPFeature,
+			Mode:      "deny",
+			Reason:    "runtime HTTP paused",
+		}}},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+
+	decision, ok, err := reader.LookupRoute(req, "foo", "/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.DeniedReason != "runtime HTTP paused" {
+		t.Fatalf("decision = %+v ok=%v, want policy denial", decision, ok)
+	}
+}
+
+func TestReleaseRouteReaderKeepsStaticAndUnknownRoutesUnaffected(t *testing.T) {
+	reader := ReleaseRouteReader{
+		Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteStatic, Path: "/missing"}},
+		Policies: fakePolicyLoader{},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+
+	decision, ok, err := reader.LookupRoute(req, "foo", "/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteStatic || decision.DeniedReason != "" {
+		t.Fatalf("decision = %+v ok=%v, want unaffected static route", decision, ok)
 	}
 }
 
@@ -130,6 +211,22 @@ type fakeReleaseRoutes struct {
 
 func (r fakeReleaseRoutes) LookupRoute(ctx context.Context, site string, path string) (releases.RouteDecision, bool, error) {
 	return r.decision, true, nil
+}
+
+type fakePolicyLoader struct {
+	policies []domain.PolicyRecord
+}
+
+func (l fakePolicyLoader) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
+	var out []domain.PolicyRecord
+	for _, p := range l.policies {
+		for _, scope := range scopes {
+			if p.ScopeType == scope.Type && p.ScopeID == scope.ID {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (h *recordingStaticHandler) ServeSiteFile(w http.ResponseWriter, r *http.Request, req statichttp.Request) {

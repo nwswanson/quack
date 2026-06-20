@@ -74,7 +74,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 
 	publicMux := http.NewServeMux()
 	staticHandler := statichttp.New(store, read)
-	publichttp.New(staticHandler, publichttp.WithRoutes(publichttp.ReleaseRouteReader{Releases: releaseService})).Register(publicMux)
+	publichttp.New(staticHandler, publichttp.WithRoutes(publichttp.ReleaseRouteReader{Releases: releaseService, Policies: hot})).Register(publicMux)
 
 	return Servers{
 		Admin: &http.Server{

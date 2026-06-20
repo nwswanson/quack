@@ -125,6 +125,39 @@ func TestSiteReadServiceValidateUploadManifestRejectsDeniedDatabaseFeature(t *te
 	}
 }
 
+func TestSiteReadServiceValidateUploadManifestRejectsHTTPRouteByDefault(t *testing.T) {
+	read := NewSiteReadService(&siteReadServiceDatabase{})
+
+	err := read.ValidateUploadManifest(context.Background(), domain.AdminUser{}, "example.com", manifest.Manifest{
+		Routes: []manifest.Route{{Path: "/api", Kind: manifest.RouteHTTP}},
+	})
+	var forbidden policy.ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("ValidateUploadManifest error = %v, want policy.ForbiddenError", err)
+	}
+	if err.Error() != "dynamic HTTP routes are disabled by administrator policy" {
+		t.Fatalf("ValidateUploadManifest error = %q, want runtime HTTP policy reason", err.Error())
+	}
+}
+
+func TestSiteReadServiceValidateUploadManifestAllowsHTTPRouteWithPolicy(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeHTTPFeature,
+			Mode:      "allow",
+		}},
+	}
+	read := NewSiteReadService(db)
+
+	err := read.ValidateUploadManifest(context.Background(), domain.AdminUser{}, "example.com", manifest.Manifest{
+		Routes: []manifest.Route{{Path: "/api", Kind: manifest.RouteHTTP}},
+	})
+	if err != nil {
+		t.Fatalf("ValidateUploadManifest error = %v, want allowed HTTP route", err)
+	}
+}
+
 func TestSiteReadServiceCurrentSiteFileUsesHotReader(t *testing.T) {
 	db := &siteReadServiceDatabase{
 		file: domain.UploadFileRecord{RelativePath: "index.html", BlobPath: "blob", FileSHA: "sha", Bytes: 42},

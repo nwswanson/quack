@@ -40,6 +40,29 @@ func TestEvaluateRequiredCapabilityViolationBlocks(t *testing.T) {
 	}
 }
 
+func TestEvaluateRuntimeHTTPDefaultsToDenied(t *testing.T) {
+	eval := Evaluate(nil, []CapabilityRequest{{Key: CapabilityRuntimeHTTP, Required: true, Value: "true"}})
+
+	if eval.Allowed {
+		t.Fatal("runtime HTTP should default to denied")
+	}
+	if len(eval.Violations) != 1 || eval.Violations[0].Key != CapabilityRuntimeHTTP {
+		t.Fatalf("violations = %+v, want runtime HTTP violation", eval.Violations)
+	}
+}
+
+func TestEvaluateRuntimeHTTPAllowsExplicitPolicy(t *testing.T) {
+	eval := Evaluate([]domain.PolicyRecord{{
+		ScopeType: domain.ScopeSystem,
+		Key:       appsettings.SettingRuntimeHTTPFeature,
+		Mode:      "allow",
+	}}, []CapabilityRequest{{Key: CapabilityRuntimeHTTP, Required: true, Value: "true"}})
+
+	if !eval.Allowed || len(eval.Violations) != 0 {
+		t.Fatalf("evaluation = %+v, want allowed runtime HTTP", eval)
+	}
+}
+
 func TestDatabaseAllowedUsesSystemPolicyAndDefault(t *testing.T) {
 	allowed, _, err := DatabaseAllowed(context.Background(), policyLoader{}, domain.AdminUser{}, "")
 	if err != nil {
@@ -81,6 +104,15 @@ func TestRequestsFromManifestConvertsDatabaseFeature(t *testing.T) {
 	})
 	if len(requests) != 1 || requests[0].Key != CapabilityDatabase || !requests[0].Required {
 		t.Fatalf("requests = %+v, want required database request", requests)
+	}
+}
+
+func TestRequestsFromManifestConvertsHTTPRoutes(t *testing.T) {
+	requests := RequestsFromManifest(manifest.Manifest{
+		Routes: []manifest.Route{{Path: "/api", Kind: manifest.RouteHTTP}},
+	})
+	if len(requests) != 1 || requests[0].Key != CapabilityRuntimeHTTP || !requests[0].Required {
+		t.Fatalf("requests = %+v, want required runtime HTTP request", requests)
 	}
 }
 
