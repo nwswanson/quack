@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
@@ -202,6 +204,21 @@ func (d *Database) init(ctx context.Context) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			resolved_at TEXT,
 			PRIMARY KEY (site_sha, upload_version, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS runtime_routes (
+			site_sha TEXT NOT NULL,
+			upload_version INTEGER NOT NULL,
+			route_path TEXT NOT NULL,
+			route_kind TEXT NOT NULL CHECK (route_kind IN ('http', 'websocket')),
+			runtime_kind TEXT NOT NULL DEFAULT 'disabled',
+			entrypoint TEXT NOT NULL DEFAULT '',
+			bundle_object_key TEXT NOT NULL DEFAULT '',
+			methods_json TEXT NOT NULL DEFAULT '[]',
+			required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+			resource_limits_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (site_sha, upload_version, route_path, route_kind),
+			FOREIGN KEY(site_sha, upload_version) REFERENCES uploads(site_sha, version) ON DELETE CASCADE
 		)`,
 	}
 
@@ -622,6 +639,12 @@ func (d *Database) PruneSiteVersions(ctx context.Context, siteSHA string, maxRet
 			return nil, fmt.Errorf("delete policy violations for pruned version %d: %w", version, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM runtime_routes
+			WHERE site_sha = ? AND upload_version = ?
+		`, siteSHA, version); err != nil {
+			return nil, fmt.Errorf("delete runtime routes for pruned version %d: %w", version, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM uploads
 			WHERE site_sha = ? AND version = ? AND state = ?
 		`, siteSHA, version, string(domain.UploadStateFinished)); err != nil {
@@ -743,6 +766,182 @@ func (d *Database) SaveUploadSettings(ctx context.Context, siteSHA string, versi
 		}
 	}
 	return nil
+}
+
+func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, version int64, routes []appruntime.RouteMetadata) error {
+	if siteSHA == "" || version <= 0 {
+		return fmt.Errorf("upload identity is required")
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin save runtime routes transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_routes WHERE site_sha = ? AND upload_version = ?`, siteSHA, version); err != nil {
+		return fmt.Errorf("clear runtime routes: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO runtime_routes (
+			site_sha, upload_version, route_path, route_kind, runtime_kind,
+			entrypoint, bundle_object_key, methods_json, required_capabilities_json, resource_limits_json
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare runtime route insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, route := range routes {
+		if route.RoutePath == "" {
+			return fmt.Errorf("runtime route path is required")
+		}
+		switch route.RouteKind {
+		case appruntime.RouteHTTP, appruntime.RouteWebSocket:
+		default:
+			return fmt.Errorf("unsupported runtime route kind: %s", route.RouteKind)
+		}
+		if route.RuntimeKind == "" {
+			route.RuntimeKind = appruntime.RuntimeDisabled
+		}
+		methodsJSON, err := json.Marshal(route.Methods)
+		if err != nil {
+			return fmt.Errorf("marshal runtime route methods: %w", err)
+		}
+		capabilitiesJSON, err := json.Marshal(route.RequiredCapabilities)
+		if err != nil {
+			return fmt.Errorf("marshal runtime route capabilities: %w", err)
+		}
+		limitsJSON, err := json.Marshal(route.ResourceLimits)
+		if err != nil {
+			return fmt.Errorf("marshal runtime route limits: %w", err)
+		}
+		if _, err := stmt.ExecContext(ctx,
+			siteSHA,
+			version,
+			route.RoutePath,
+			string(route.RouteKind),
+			string(route.RuntimeKind),
+			route.Entrypoint,
+			route.BundleObjectKey,
+			string(methodsJSON),
+			string(capabilitiesJSON),
+			string(limitsJSON),
+		); err != nil {
+			return fmt.Errorf("save runtime route %s: %w", route.RoutePath, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit save runtime routes: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT COALESCE(s.site, ''),
+			rr.site_sha,
+			rr.upload_version,
+			rr.route_path,
+			rr.route_kind,
+			rr.runtime_kind,
+			rr.entrypoint,
+			rr.bundle_object_key,
+			rr.methods_json,
+			rr.required_capabilities_json,
+			rr.resource_limits_json,
+			rr.created_at
+		FROM runtime_routes rr
+		LEFT JOIN sites s ON s.site_sha = rr.site_sha
+		WHERE rr.site_sha = ? AND rr.upload_version = ?
+		ORDER BY rr.route_path ASC, rr.route_kind ASC
+	`, siteSHA, version)
+	if err != nil {
+		return nil, fmt.Errorf("list runtime routes: %w", err)
+	}
+	defer rows.Close()
+	return scanRuntimeRoutes(rows)
+}
+
+func (d *Database) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT s.site,
+			rr.site_sha,
+			rr.upload_version,
+			rr.route_path,
+			rr.route_kind,
+			rr.runtime_kind,
+			rr.entrypoint,
+			rr.bundle_object_key,
+			rr.methods_json,
+			rr.required_capabilities_json,
+			rr.resource_limits_json,
+			rr.created_at
+		FROM sites s
+		JOIN runtime_routes rr
+			ON rr.site_sha = s.site_sha
+			AND rr.upload_version = s.current_version
+		JOIN uploads u
+			ON u.site_sha = rr.site_sha
+			AND u.version = rr.upload_version
+			AND u.state = ?
+		WHERE s.current_version > 0 AND s.live_state = 'live'
+		ORDER BY s.site ASC, rr.route_path ASC, rr.route_kind ASC
+	`, string(domain.UploadStateFinished))
+	if err != nil {
+		return nil, fmt.Errorf("list current runtime routes: %w", err)
+	}
+	defer rows.Close()
+	return scanRuntimeRoutes(rows)
+}
+
+func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
+	var out []appruntime.RouteMetadata
+	for rows.Next() {
+		var route appruntime.RouteMetadata
+		var routeKind string
+		var runtimeKind string
+		var methodsJSON string
+		var capabilitiesJSON string
+		var limitsJSON string
+		if err := rows.Scan(
+			&route.Site,
+			&route.SiteSHA,
+			&route.Version,
+			&route.RoutePath,
+			&routeKind,
+			&runtimeKind,
+			&route.Entrypoint,
+			&route.BundleObjectKey,
+			&methodsJSON,
+			&capabilitiesJSON,
+			&limitsJSON,
+			&route.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan runtime route: %w", err)
+		}
+		route.RouteKind = appruntime.RouteKind(routeKind)
+		route.RuntimeKind = appruntime.RuntimeKind(runtimeKind)
+		if err := json.Unmarshal([]byte(methodsJSON), &route.Methods); err != nil {
+			return nil, fmt.Errorf("decode runtime route methods: %w", err)
+		}
+		if err := json.Unmarshal([]byte(capabilitiesJSON), &route.RequiredCapabilities); err != nil {
+			return nil, fmt.Errorf("decode runtime route capabilities: %w", err)
+		}
+		if err := json.Unmarshal([]byte(limitsJSON), &route.ResourceLimits); err != nil {
+			return nil, fmt.Errorf("decode runtime route limits: %w", err)
+		}
+		out = append(out, route)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate runtime routes: %w", err)
+	}
+	return out, nil
 }
 
 func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
@@ -1479,6 +1678,9 @@ func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) 
 		if _, err := tx.ExecContext(ctx, `DELETE FROM upload_files WHERE upload_id = ?`, id); err != nil {
 			return false, fmt.Errorf("delete upload files: %w", err)
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM runtime_routes WHERE site_sha = ?`, siteSHA); err != nil {
+		return false, fmt.Errorf("delete runtime routes: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM uploads WHERE site_sha = ?`, siteSHA); err != nil {
 		return false, fmt.Errorf("delete uploads: %w", err)

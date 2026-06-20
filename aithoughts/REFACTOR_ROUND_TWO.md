@@ -667,33 +667,33 @@ Allow releases to include runtime bundles and route metadata without coupling ru
 
 ## Data to Model
 
-* [ ] Release ID or site/version pair.
-* [ ] Runtime kind.
-* [ ] Entrypoint.
-* [ ] Bundle object key.
-* [ ] Route path.
-* [ ] Route method constraints.
-* [ ] Required capabilities.
-* [ ] Resource limits.
-* [ ] Created timestamp.
-* [ ] Published status through existing release lifecycle.
+* [x] Release ID or site/version pair.
+* [x] Runtime kind.
+* [x] Entrypoint.
+* [x] Bundle object key.
+* [x] Route path.
+* [x] Route method constraints.
+* [x] Required capabilities.
+* [x] Resource limits.
+* [x] Created timestamp.
+* [x] Published status through existing release lifecycle.
 
 ## Tasks
 
-* [ ] Add repository interfaces in consumer packages.
-* [ ] Implement persistence in `sqlitedb`.
-* [ ] Add migrations or schema initialization updates.
-* [ ] Add tests for persistence round trips.
-* [ ] Keep runtime repository interfaces small and use-case-specific.
-* [ ] Avoid adding a massive catch-all database interface in `server`.
+* [x] Add repository interfaces in consumer packages.
+* [x] Implement persistence in `sqlitedb`.
+* [x] Add migrations or schema initialization updates.
+* [x] Add tests for persistence round trips.
+* [x] Keep runtime repository interfaces small and use-case-specific.
+* [x] Avoid adding a massive catch-all database interface in `server`.
 
 ## Acceptance Criteria
 
-* [ ] Runtime metadata can be saved with a release.
-* [ ] Runtime metadata can be read by public routing.
-* [ ] Runtime metadata can be evaluated by policy.
-* [ ] Runtime package does not import `sqlitedb`.
-* [ ] Public HTTP package does not depend on SQLite directly.
+* [x] Runtime metadata can be saved with a release.
+* [x] Runtime metadata can be read by public routing.
+* [x] Runtime metadata can be evaluated by policy.
+* [x] Runtime package does not import `sqlitedb`.
+* [x] Public HTTP package does not depend on SQLite directly.
 
 ---
 
@@ -950,7 +950,7 @@ Make the new boundaries durable.
 
 * [x] Phase 8: Introduce runtime package skeleton.
 * [x] Phase 9: Add route table support.
-* [ ] Phase 10: Prepare persistence for runtime metadata.
+* [x] Phase 10: Prepare persistence for runtime metadata.
 * [ ] Phase 11: Introduce disabled dynamic HTTP path.
 
 ## Feature PRs

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	"quack/internal/storage"
 	"strconv"
 	"strings"
@@ -55,6 +56,7 @@ type fakeDatabase struct {
 	settings             domain.ServerSettings
 	policies             []domain.PolicyRecord
 	uploadSettings       map[string]map[string]string
+	runtimeRoutes        map[string][]appruntime.RouteMetadata
 	violations           map[string][]domain.PolicyViolation
 	prunedVersions       []int64
 	revisions            []domain.RevisionRecord
@@ -271,6 +273,37 @@ func (db *fakeDatabase) SaveUploadSettings(ctx context.Context, siteSHA string, 
 	key := siteSHA + ":" + strconv.FormatInt(version, 10)
 	db.uploadSettings[key] = settings
 	return nil
+}
+
+func (db *fakeDatabase) SaveRuntimeRoutes(ctx context.Context, siteSHA string, version int64, routes []appruntime.RouteMetadata) error {
+	if db.runtimeRoutes == nil {
+		db.runtimeRoutes = map[string][]appruntime.RouteMetadata{}
+	}
+	key := siteSHA + ":" + strconv.FormatInt(version, 10)
+	db.runtimeRoutes[key] = append([]appruntime.RouteMetadata(nil), routes...)
+	return nil
+}
+
+func (db *fakeDatabase) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	if db.runtimeRoutes == nil {
+		return nil, nil
+	}
+	key := siteSHA + ":" + strconv.FormatInt(version, 10)
+	return append([]appruntime.RouteMetadata(nil), db.runtimeRoutes[key]...), nil
+}
+
+func (db *fakeDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	var out []appruntime.RouteMetadata
+	for _, site := range db.sites {
+		routes, _ := db.ListRuntimeRoutes(ctx, site.SiteSHA, site.CurrentVersion)
+		for _, route := range routes {
+			route.Site = site.Site
+			route.SiteSHA = site.SiteSHA
+			route.Version = site.CurrentVersion
+			out = append(out, route)
+		}
+	}
+	return out, nil
 }
 
 func (db *fakeDatabase) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {

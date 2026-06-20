@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 )
@@ -240,6 +241,14 @@ func (db *siteUpdateCacheDatabase) LoadUploadSettings(ctx context.Context, siteS
 }
 
 func (db *siteUpdateCacheDatabase) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
+	return nil, nil
+}
+
+func (db *siteUpdateCacheDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	return nil, nil
+}
+
+func (db *siteUpdateCacheDatabase) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
 	return nil, nil
 }
 

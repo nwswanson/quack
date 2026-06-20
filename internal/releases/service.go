@@ -34,9 +34,10 @@ type Service interface {
 }
 
 type service struct {
-	repo        Repository
-	routes      RouteSource
-	invalidator Invalidator
+	repo          Repository
+	routes        RouteSource
+	runtimeRoutes RuntimeRouteSource
+	invalidator   Invalidator
 }
 
 func NewService(repo Repository, invalidator Invalidator) Service {
@@ -44,7 +45,11 @@ func NewService(repo Repository, invalidator Invalidator) Service {
 	if routes == nil {
 		routes, _ = repo.(RouteSource)
 	}
-	return service{repo: repo, routes: routes, invalidator: invalidator}
+	runtimeRoutes, _ := invalidator.(RuntimeRouteSource)
+	if runtimeRoutes == nil {
+		runtimeRoutes, _ = repo.(RuntimeRouteSource)
+	}
+	return service{repo: repo, routes: routes, runtimeRoutes: runtimeRoutes, invalidator: invalidator}
 }
 
 func (s service) ListPublishedSites(ctx context.Context, userID int64, includeAll bool) ([]domain.PublishedSite, error) {

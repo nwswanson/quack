@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
@@ -113,6 +115,11 @@ func TestPruneSiteVersionsRemovesOldFinishedVersions(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		if err := db.SaveRuntimeRoutes(ctx, upload.SiteSHA, upload.Version, []appruntime.RouteMetadata{{
+			RoutePath: "/api", RouteKind: appruntime.RouteHTTP, RuntimeKind: appruntime.RuntimeDisabled,
+		}}); err != nil {
+			t.Fatal(err)
+		}
 		if err := db.FinishUpload(ctx, upload); err != nil {
 			t.Fatal(err)
 		}
@@ -156,6 +163,126 @@ func TestPruneSiteVersionsRemovesOldFinishedVersions(t *testing.T) {
 	}
 	if violations != 0 {
 		t.Fatalf("old violations count = %d, want 0", violations)
+	}
+	var runtimeRoutes int
+	if err := db.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_routes WHERE site_sha = ? AND upload_version IN (1, 2)`, "site-sha").Scan(&runtimeRoutes); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeRoutes != 0 {
+		t.Fatalf("old runtime route count = %d, want 0", runtimeRoutes)
+	}
+}
+
+func TestRuntimeRoutesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	upload, err := db.BeginUpload(ctx, "example", "site-sha", 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveRuntimeRoutes(ctx, upload.SiteSHA, upload.Version, []appruntime.RouteMetadata{{
+		RuntimeKind:          appruntime.RuntimeDisabled,
+		RouteKind:            appruntime.RouteHTTP,
+		RoutePath:            "/api",
+		Entrypoint:           "main.handler",
+		BundleObjectKey:      "bundles/site-sha/1/runtime.tar",
+		Methods:              []string{"GET", "POST"},
+		RequiredCapabilities: []string{"runtime.http", "database"},
+		ResourceLimits:       appruntime.ResourceLimits{MaxRequestBytes: 1024, MaxDurationMillis: 250},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	upload.Files = []domain.UploadFileRecord{{
+		RelativePath: "index.html",
+		BlobPath:     "blobs/site:site-sha/1/file:file-sha",
+		FileSHA:      "file-sha",
+		Bytes:        12,
+	}}
+	if err := db.FinishUpload(ctx, upload); err != nil {
+		t.Fatal(err)
+	}
+
+	routes, err := db.ListRuntimeRoutes(ctx, upload.SiteSHA, upload.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("routes = %#v, want one route", routes)
+	}
+	route := routes[0]
+	if route.Site != "example" || route.SiteSHA != upload.SiteSHA || route.Version != upload.Version {
+		t.Fatalf("route identity = %#v, want current upload identity", route)
+	}
+	if route.RouteKind != appruntime.RouteHTTP || route.RuntimeKind != appruntime.RuntimeDisabled || route.RoutePath != "/api" || route.Entrypoint != "main.handler" || route.BundleObjectKey == "" {
+		t.Fatalf("route metadata = %#v, want persisted runtime metadata", route)
+	}
+	if !reflect.DeepEqual(route.Methods, []string{"GET", "POST"}) || !reflect.DeepEqual(route.RequiredCapabilities, []string{"runtime.http", "database"}) {
+		t.Fatalf("route arrays = %#v, want methods and capabilities", route)
+	}
+	if route.ResourceLimits.MaxRequestBytes != 1024 || route.ResourceLimits.MaxDurationMillis != 250 || route.CreatedAt == "" {
+		t.Fatalf("route limits/timestamp = %#v, want persisted limits and created timestamp", route)
+	}
+
+	current, err := db.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(current, routes) {
+		t.Fatalf("current routes = %#v, want %#v", current, routes)
+	}
+}
+
+func TestListCurrentRuntimeRoutesUsesCurrentLiveVersion(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for _, path := range []string{"/old", "/current"} {
+		upload, err := db.BeginUpload(ctx, "example", "site-sha", 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SaveRuntimeRoutes(ctx, upload.SiteSHA, upload.Version, []appruntime.RouteMetadata{{
+			RoutePath: path, RouteKind: appruntime.RouteHTTP, RuntimeKind: appruntime.RuntimeDisabled,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		upload.Files = []domain.UploadFileRecord{{
+			RelativePath: "index.html",
+			BlobPath:     fmt.Sprintf("blobs/site:site-sha/%d/file:file-sha", upload.Version),
+			FileSHA:      fmt.Sprintf("file-sha-%d", upload.Version),
+			Bytes:        upload.Version,
+		}}
+		if err := db.FinishUpload(ctx, upload); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	routes, err := db.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].RoutePath != "/current" || routes[0].Version != 2 {
+		t.Fatalf("current runtime routes = %#v, want only current version", routes)
+	}
+
+	if _, err := db.UnpublishSite(ctx, domain.AdminUser{AdminPriv: "admin:*"}, "example", "site-sha"); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = db.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("current runtime routes after unpublish = %#v, want none", routes)
 	}
 }
 

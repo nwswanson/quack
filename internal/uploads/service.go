@@ -12,6 +12,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/manifest"
 	"quack/internal/protocol"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
@@ -22,6 +23,10 @@ type UploadRepository interface {
 	FailUpload(ctx context.Context, upload domain.UploadRecord, reason string) error
 	PruneSiteVersions(ctx context.Context, siteSHA string, maxRetainedVersions int64) ([]int64, error)
 	LinkUserSite(ctx context.Context, userID int64, siteSHA string) error
+}
+
+type RuntimeMetadataRepository interface {
+	SaveRuntimeRoutes(ctx context.Context, siteSHA string, version int64, routes []appruntime.RouteMetadata) error
 }
 
 type Service interface {
@@ -36,18 +41,21 @@ type Request struct {
 }
 
 type service struct {
-	db    UploadRepository
-	store appstorage.Storage
-	read  sites.SiteReadService
-	write sites.SiteWriteService
+	db              UploadRepository
+	store           appstorage.Storage
+	read            sites.SiteReadService
+	write           sites.SiteWriteService
+	runtimeMetadata RuntimeMetadataRepository
 }
 
 func NewService(db UploadRepository, store appstorage.Storage, read sites.SiteReadService, write sites.SiteWriteService) Service {
+	runtimeMetadata, _ := db.(RuntimeMetadataRepository)
 	return service{
-		db:    db,
-		store: store,
-		read:  read,
-		write: write,
+		db:              db,
+		store:           store,
+		read:            read,
+		write:           write,
+		runtimeMetadata: runtimeMetadata,
 	}
 }
 
@@ -75,6 +83,13 @@ func (s service) UploadArchive(ctx context.Context, req Request) (protocol.Uploa
 	if err := s.write.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, ManifestSettings(manifest)); err != nil {
 		s.markUploadFailed(ctx, upload, err)
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("save upload settings: %w", err)
+	}
+	if s.runtimeMetadata != nil {
+		routes := RuntimeRoutesFromManifest(upload, manifest)
+		if err := s.runtimeMetadata.SaveRuntimeRoutes(ctx, upload.SiteSHA, upload.Version, routes); err != nil {
+			s.markUploadFailed(ctx, upload, err)
+			return protocol.UploadArchiveResponse{}, fmt.Errorf("save runtime routes: %w", err)
+		}
 	}
 
 	if err := s.write.FinishUpload(ctx, upload); err != nil {
@@ -235,6 +250,40 @@ func ManifestSettings(manifest manifest.Manifest) map[string]string {
 		settings[appsettings.SettingRoutes] = string(data)
 	}
 	return settings
+}
+
+func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest.Manifest) []appruntime.RouteMetadata {
+	var out []appruntime.RouteMetadata
+	for _, route := range siteManifest.Routes {
+		switch route.Kind {
+		case manifest.RouteHTTP, manifest.RouteWebSocket:
+		default:
+			continue
+		}
+		out = append(out, appruntime.RouteMetadata{
+			Site:                 upload.Site,
+			SiteSHA:              upload.SiteSHA,
+			Version:              upload.Version,
+			RuntimeKind:          appruntime.RuntimeDisabled,
+			RouteKind:            appruntime.RouteKind(route.Kind),
+			RoutePath:            route.Path,
+			Entrypoint:           route.Entrypoint,
+			Methods:              append([]string(nil), route.Methods...),
+			RequiredCapabilities: runtimeCapabilities(route.Kind),
+		})
+	}
+	return out
+}
+
+func runtimeCapabilities(kind manifest.RouteKind) []string {
+	switch kind {
+	case manifest.RouteHTTP:
+		return []string{"runtime.http"}
+	case manifest.RouteWebSocket:
+		return []string{"runtime.websocket"}
+	default:
+		return nil
+	}
 }
 
 func boolSetting(v bool) string {

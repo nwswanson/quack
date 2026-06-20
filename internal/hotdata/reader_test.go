@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
@@ -25,6 +26,9 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 			SiteSHA:  "site-sha",
 			Version:  3,
 			Settings: map[string]string{appsettings.SettingDatabaseFeatureRequired: "true"},
+		}},
+		runtimeRoutes: []appruntime.RouteMetadata{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 3, RoutePath: "/api", RouteKind: appruntime.RouteHTTP, Methods: []string{"GET"},
 		}},
 		violations: []domain.PolicyViolation{{SiteSHA: "site-sha", UploadVersion: 3, Key: appsettings.SettingDatabaseFeature}},
 	}
@@ -68,6 +72,15 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 		t.Fatalf("ListCurrentSiteManifests leaked mutable result")
 	}
 
+	runtimeRoutes, err := reader.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		t.Fatalf("ListCurrentRuntimeRoutes error = %v", err)
+	}
+	runtimeRoutes[0].Methods[0] = "POST"
+	if db.runtimeRoutes[0].Methods[0] != "GET" {
+		t.Fatalf("ListCurrentRuntimeRoutes leaked mutable result")
+	}
+
 	violations, err := reader.ListPolicyViolations(ctx, "site-sha", 3)
 	if err != nil {
 		t.Fatalf("ListPolicyViolations error = %v", err)
@@ -98,6 +111,7 @@ type readerBackingDatabase struct {
 	policies       []domain.PolicyRecord
 	uploadSettings map[string]string
 	manifests      []domain.CurrentSiteManifest
+	runtimeRoutes  []appruntime.RouteMetadata
 	violations     []domain.PolicyViolation
 	file           domain.UploadFileRecord
 }
@@ -116,6 +130,14 @@ func (db *readerBackingDatabase) LoadUploadSettings(ctx context.Context, siteSHA
 
 func (db *readerBackingDatabase) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	return db.manifests, nil
+}
+
+func (db *readerBackingDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	return db.runtimeRoutes, nil
+}
+
+func (db *readerBackingDatabase) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	return db.runtimeRoutes, nil
 }
 
 func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

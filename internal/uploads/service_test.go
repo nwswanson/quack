@@ -12,6 +12,7 @@ import (
 
 	"quack/internal/domain"
 	"quack/internal/manifest"
+	appruntime "quack/internal/runtime"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 )
@@ -31,7 +32,7 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 		},
 		Body: tarArchive(t, map[string]string{
 			"index.html": "hello",
-			"site.yaml":  "features:\n  database:\n    enabled: true\nroutes:\n  - path: /api\n    kind: http\n    entrypoint: main\n",
+			"site.yaml":  "features:\n  database:\n    enabled: true\nroutes:\n  - path: /api\n    kind: http\n    entrypoint: main\n    methods: [GET, POST]\n",
 		}),
 	})
 	if err != nil {
@@ -46,8 +47,18 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	if got, want := write.settings["features.database.enabled"], "true"; got != want {
 		t.Fatalf("manifest setting = %q, want %q", got, want)
 	}
-	if got, want := write.settings["routes"], `[{"path":"/api","kind":"http","entrypoint":"main"}]`; got != want {
+	if got, want := write.settings["routes"], `[{"path":"/api","kind":"http","entrypoint":"main","methods":["GET","POST"]}]`; got != want {
 		t.Fatalf("routes setting = %q, want %q", got, want)
+	}
+	if len(db.runtimeRoutes) != 1 {
+		t.Fatalf("runtime routes = %#v, want one persisted dynamic route", db.runtimeRoutes)
+	}
+	route := db.runtimeRoutes[0]
+	if route.RoutePath != "/api" || route.RouteKind != appruntime.RouteHTTP || route.Entrypoint != "main" {
+		t.Fatalf("runtime route = %#v, want /api http main", route)
+	}
+	if !reflect.DeepEqual(route.Methods, []string{"GET", "POST"}) || !reflect.DeepEqual(route.RequiredCapabilities, []string{"runtime.http"}) {
+		t.Fatalf("runtime route policy fields = %#v, want methods and capability", route)
 	}
 	if db.linkedUserID != 7 || db.linkedSiteSHA == "" {
 		t.Fatalf("linked site = (%d, %q), want user 7 and site sha", db.linkedUserID, db.linkedSiteSHA)
@@ -83,6 +94,7 @@ type uploadServiceDB struct {
 	failedReason   string
 	linkedUserID   int64
 	linkedSiteSHA  string
+	runtimeRoutes  []appruntime.RouteMetadata
 }
 
 func (db *uploadServiceDB) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error) {
@@ -101,6 +113,11 @@ func (db *uploadServiceDB) PruneSiteVersions(ctx context.Context, siteSHA string
 func (db *uploadServiceDB) LinkUserSite(ctx context.Context, userID int64, siteSHA string) error {
 	db.linkedUserID = userID
 	db.linkedSiteSHA = siteSHA
+	return nil
+}
+
+func (db *uploadServiceDB) SaveRuntimeRoutes(ctx context.Context, siteSHA string, version int64, routes []appruntime.RouteMetadata) error {
+	db.runtimeRoutes = append([]appruntime.RouteMetadata(nil), routes...)
 	return nil
 }
 

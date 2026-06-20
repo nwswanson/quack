@@ -64,3 +64,14 @@ func TestParseRejectsInvalidRouteDeclaration(t *testing.T) {
 		t.Fatalf("error = %q, want route path detail", err.Error())
 	}
 }
+
+func TestParseRejectsEmptyRouteMethod(t *testing.T) {
+	body := "routes:\n  - path: /api\n    kind: http\n    methods: [GET, \"\"]\n"
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "route.methods cannot contain an empty method") {
+		t.Fatalf("error = %q, want route method detail", err.Error())
+	}
+}

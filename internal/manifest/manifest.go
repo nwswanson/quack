@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -36,6 +37,7 @@ type Route struct {
 	Path       string    `json:"path" yaml:"path"`
 	Kind       RouteKind `json:"kind" yaml:"kind"`
 	Entrypoint string    `json:"entrypoint" yaml:"entrypoint"`
+	Methods    []string  `json:"methods,omitempty" yaml:"methods,omitempty"`
 }
 
 func Default() Manifest {
@@ -82,6 +84,11 @@ func validateRoutes(routes []Route) error {
 		case "", RouteStatic, RouteHTTP, RouteWebSocket:
 		default:
 			return fmt.Errorf("unsupported route kind %q", route.Kind)
+		}
+		for _, method := range route.Methods {
+			if strings.TrimSpace(method) == "" {
+				return fmt.Errorf("route.methods cannot contain an empty method")
+			}
 		}
 	}
 	return nil

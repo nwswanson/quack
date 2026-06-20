@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 )
 
 type MemoryHotDataReaderOptions struct {
@@ -117,6 +118,27 @@ func (r *memoryHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]d
 	return cloneCurrentSiteManifests(value.([]domain.CurrentSiteManifest)), nil
 }
 
+func (r *memoryHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	value, err := r.load(ctx, "current_runtime_routes", r.ttl, func(ctx context.Context) (any, error) {
+		return r.source.ListCurrentRuntimeRoutes(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneRuntimeRoutes(value.([]appruntime.RouteMetadata)), nil
+}
+
+func (r *memoryHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	key := "runtime_routes:" + siteSHA + ":" + strconv.FormatInt(version, 10)
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		return r.source.ListRuntimeRoutes(ctx, siteSHA, version)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneRuntimeRoutes(value.([]appruntime.RouteMetadata)), nil
+}
+
 func (r *memoryHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	key := "policy_violations:" + siteSHA + ":" + strconv.FormatInt(version, 10)
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
@@ -169,13 +191,16 @@ func (r *memoryHotDataReader) InvalidateSite(ctx context.Context, site string) e
 	r.deletePrefix("current_site_file:" + site + ":")
 	r.deletePrefix("current_site_files:" + site)
 	r.deletePrefix("current_site_manifests")
+	r.deletePrefix("current_runtime_routes")
 	return nil
 }
 
 func (r *memoryHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA string, version int64) error {
 	r.deletePrefix("upload_settings:" + siteSHA + ":")
+	r.deletePrefix("runtime_routes:" + siteSHA + ":")
 	r.deletePrefix("policy_violations:" + siteSHA + ":")
 	r.deletePrefix("current_site_manifests")
+	r.deletePrefix("current_runtime_routes")
 	return nil
 }
 

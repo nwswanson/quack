@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
@@ -125,6 +126,9 @@ func TestMemoryHotDataReaderReturnsMutableCopies(t *testing.T) {
 			Version:  1,
 			Settings: map[string]string{appsettings.SettingDatabaseFeature: "true"},
 		}},
+		runtimeRoutes: []appruntime.RouteMetadata{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1, RoutePath: "/api", RouteKind: appruntime.RouteHTTP, Methods: []string{"GET"},
+		}},
 	}
 	hot := NewMemoryHotDataReader(source, MemoryHotDataReaderOptions{TTL: time.Second, NegativeTTL: time.Second})
 
@@ -152,6 +156,19 @@ func TestMemoryHotDataReaderReturnsMutableCopies(t *testing.T) {
 	}
 	if manifestsAgain[0].Settings[appsettings.SettingDatabaseFeature] != "true" {
 		t.Fatalf("cached manifest settings map was mutated")
+	}
+
+	runtimeRoutes, err := hot.ListCurrentRuntimeRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("ListCurrentRuntimeRoutes error = %v", err)
+	}
+	runtimeRoutes[0].Methods[0] = "POST"
+	runtimeRoutesAgain, err := hot.ListCurrentRuntimeRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("second ListCurrentRuntimeRoutes error = %v", err)
+	}
+	if runtimeRoutesAgain[0].Methods[0] != "GET" {
+		t.Fatalf("cached runtime route methods were mutated")
 	}
 }
 
@@ -193,17 +210,19 @@ func TestMemoryHotDataReaderInvalidation(t *testing.T) {
 type countingHotDataReader struct {
 	mu sync.Mutex
 
-	settings   domain.ServerSettings
-	manifests  []domain.CurrentSiteManifest
-	file       domain.UploadFileRecord
-	fileOK     bool
-	siteExists bool
-	files      []domain.UploadFileRecord
-	err        error
-	block      chan struct{}
+	settings      domain.ServerSettings
+	manifests     []domain.CurrentSiteManifest
+	file          domain.UploadFileRecord
+	fileOK        bool
+	siteExists    bool
+	files         []domain.UploadFileRecord
+	runtimeRoutes []appruntime.RouteMetadata
+	err           error
+	block         chan struct{}
 
 	serverSettingsCalls int
 	manifestCalls       int
+	runtimeRouteCalls   int
 	fileCalls           int
 	filesCalls          int
 }
@@ -241,6 +260,26 @@ func (r *countingHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([
 		return nil, r.err
 	}
 	return r.manifests, nil
+}
+
+func (r *countingHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	r.mu.Lock()
+	r.runtimeRouteCalls++
+	r.mu.Unlock()
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.runtimeRoutes, nil
+}
+
+func (r *countingHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	r.mu.Lock()
+	r.runtimeRouteCalls++
+	r.mu.Unlock()
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.runtimeRoutes, nil
 }
 
 func (r *countingHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

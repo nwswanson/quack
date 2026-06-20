@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
@@ -90,6 +91,28 @@ func TestServiceLookupRouteUsesLongestRoutePrecedence(t *testing.T) {
 	}
 }
 
+func TestServiceLookupRouteUsesRuntimeMetadata(t *testing.T) {
+	invalidator := &releaseInvalidator{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "foo", SiteSHA: "foo-sha", Version: 3, Settings: map[string]string{
+				appsettings.SettingRoutes: `[{"path":"/","kind":"static"}]`,
+			},
+		}},
+		runtimeRoutes: []appruntime.RouteMetadata{{
+			Site: "foo", SiteSHA: "foo-sha", Version: 3, RoutePath: "/api", RouteKind: appruntime.RouteHTTP, Methods: []string{"GET"},
+		}},
+	}
+	service := NewService(&releaseRepo{}, invalidator)
+
+	decision, ok, err := service.LookupRoute(context.Background(), "foo", "/api/users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteHTTP || decision.Path != "/api/users" || !reflect.DeepEqual(decision.Methods, []string{"GET"}) {
+		t.Fatalf("decision = %+v ok=%v, want runtime HTTP route with methods", decision, ok)
+	}
+}
+
 func TestServiceLookupRouteUnknownPathFallsBackToStatic(t *testing.T) {
 	invalidator := &releaseInvalidator{manifests: []domain.CurrentSiteManifest{{
 		Site: "foo", Version: 3, Settings: map[string]string{
@@ -141,12 +164,17 @@ func (r *releaseRepo) DeleteSite(ctx context.Context, site string, siteSHA strin
 }
 
 type releaseInvalidator struct {
-	calls     []string
-	manifests []domain.CurrentSiteManifest
+	calls         []string
+	manifests     []domain.CurrentSiteManifest
+	runtimeRoutes []appruntime.RouteMetadata
 }
 
 func (i *releaseInvalidator) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	return i.manifests, nil
+}
+
+func (i *releaseInvalidator) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	return i.runtimeRoutes, nil
 }
 
 func (i *releaseInvalidator) InvalidateSite(ctx context.Context, site string) error {

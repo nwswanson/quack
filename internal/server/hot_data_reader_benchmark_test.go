@@ -9,6 +9,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/hotdata"
 	"quack/internal/publichttp"
+	appruntime "quack/internal/runtime"
 	"quack/internal/settings"
 	"quack/internal/storage"
 	"testing"
@@ -94,6 +95,14 @@ func (r staticHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA str
 
 func (r staticHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	return r.manifests, nil
+}
+
+func (r staticHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	return nil, nil
+}
+
+func (r staticHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	return nil, nil
 }
 
 func (r staticHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
 )
 
 type HotDataReader interface {
@@ -11,6 +12,8 @@ type HotDataReader interface {
 	LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error)
 	LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error)
 	ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error)
+	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
+	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
@@ -21,6 +24,8 @@ type Source interface {
 	LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error)
 	LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error)
 	ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error)
+	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
+	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
@@ -79,6 +84,22 @@ func (r passthroughHotDataReader) ListCurrentSiteManifests(ctx context.Context) 
 	return cloneCurrentSiteManifests(manifests), nil
 }
 
+func (r passthroughHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+	routes, err := r.db.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return cloneRuntimeRoutes(routes), nil
+}
+
+func (r passthroughHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+	routes, err := r.db.ListRuntimeRoutes(ctx, siteSHA, version)
+	if err != nil {
+		return nil, err
+	}
+	return cloneRuntimeRoutes(routes), nil
+}
+
 func (r passthroughHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	violations, err := r.db.ListPolicyViolations(ctx, siteSHA, version)
 	if err != nil {
@@ -125,6 +146,15 @@ func cloneCurrentSiteManifests(in []domain.CurrentSiteManifest) []domain.Current
 	out := append([]domain.CurrentSiteManifest(nil), in...)
 	for i := range out {
 		out[i].Settings = cloneStringMap(out[i].Settings)
+	}
+	return out
+}
+
+func cloneRuntimeRoutes(in []appruntime.RouteMetadata) []appruntime.RouteMetadata {
+	out := append([]appruntime.RouteMetadata(nil), in...)
+	for i := range out {
+		out[i].Methods = append([]string(nil), out[i].Methods...)
+		out[i].RequiredCapabilities = append([]string(nil), out[i].RequiredCapabilities...)
 	}
 	return out
 }

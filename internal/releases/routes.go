@@ -8,6 +8,7 @@ import (
 
 	"quack/internal/domain"
 	"quack/internal/manifest"
+	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
@@ -24,10 +25,15 @@ type RouteDecision struct {
 	Version int64
 	Kind    RouteKind
 	Path    string
+	Methods []string
 }
 
 type RouteSource interface {
 	ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error)
+}
+
+type RuntimeRouteSource interface {
+	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
 }
 
 func (s service) LookupRoute(ctx context.Context, site string, urlPath string) (RouteDecision, bool, error) {
@@ -42,8 +48,16 @@ func (s service) LookupRoute(ctx context.Context, site string, urlPath string) (
 		if current.Site != site {
 			continue
 		}
-		route := chooseRoute(urlPath, routesFromSettings(current.Settings))
-		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath}, true, nil
+		routes := routesFromSettings(current.Settings)
+		if s.runtimeRoutes != nil {
+			runtimeRoutes, err := s.runtimeRoutes.ListCurrentRuntimeRoutes(ctx)
+			if err != nil {
+				return RouteDecision{}, false, err
+			}
+			routes = append(routes, routesFromRuntimeMetadata(site, current.SiteSHA, current.Version, runtimeRoutes)...)
+		}
+		route := chooseRoute(urlPath, routes)
+		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, Methods: append([]string(nil), route.Methods...)}, true, nil
 	}
 	return RouteDecision{Site: site, Kind: RouteStatic, Path: urlPath}, true, nil
 }
@@ -60,6 +74,30 @@ func routesFromSettings(settings map[string]string) []RouteDecision {
 			kind = RouteStatic
 		}
 		out = append(out, RouteDecision{Kind: kind, Path: cleanRoutePath(route.Path)})
+	}
+	return out
+}
+
+func routesFromRuntimeMetadata(site string, siteSHA string, version int64, routes []appruntime.RouteMetadata) []RouteDecision {
+	out := make([]RouteDecision, 0, len(routes))
+	for _, route := range routes {
+		if route.Site != "" && route.Site != site {
+			continue
+		}
+		if route.SiteSHA != siteSHA || route.Version != version {
+			continue
+		}
+		kind := RouteKind(route.RouteKind)
+		if kind != RouteHTTP && kind != RouteWebSocket {
+			continue
+		}
+		out = append(out, RouteDecision{
+			Site:    site,
+			Version: version,
+			Kind:    kind,
+			Path:    cleanRoutePath(route.RoutePath),
+			Methods: append([]string(nil), route.Methods...),
+		})
 	}
 	return out
 }
