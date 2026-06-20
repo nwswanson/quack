@@ -25,6 +25,8 @@ type RouteDecision struct {
 	Version        int64
 	Kind           RouteKind
 	Path           string
+	RoutePath      string
+	StaticRoot     string
 	Methods        []string
 	ResourceLimits appruntime.ResourceLimits
 }
@@ -61,7 +63,7 @@ func (s service) LookupRoute(ctx context.Context, site string, urlPath string) (
 			routes = append(routes, routesFromRuntimeMetadata(site, current.SiteSHA, current.Version, runtimeRoutes)...)
 		}
 		route := chooseRoute(urlPath, routes)
-		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, Methods: append([]string(nil), route.Methods...)}, true, nil
+		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, RoutePath: route.RoutePath, StaticRoot: route.StaticRoot, Methods: append([]string(nil), route.Methods...)}, true, nil
 	}
 	return RouteDecision{Site: site, Kind: RouteStatic, Path: urlPath}, true, nil
 }
@@ -77,7 +79,7 @@ func routesFromSettings(settings map[string]string) []RouteDecision {
 		if kind == "" {
 			kind = RouteStatic
 		}
-		out = append(out, RouteDecision{Kind: kind, Path: cleanRoutePath(route.Path)})
+		out = append(out, RouteDecision{Kind: kind, Path: cleanRoutePath(route.Path), StaticRoot: route.Root})
 	}
 	return out
 }
@@ -124,6 +126,7 @@ func chooseRoute(urlPath string, routes []RouteDecision) RouteDecision {
 	if best.Path == "" {
 		return RouteDecision{Kind: RouteStatic, Path: urlPath}
 	}
+	best.RoutePath = best.Path
 	best.Path = urlPath
 	return best
 }

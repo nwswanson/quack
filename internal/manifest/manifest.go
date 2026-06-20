@@ -44,6 +44,7 @@ const (
 type Route struct {
 	Path       string    `json:"path" yaml:"path"`
 	Kind       RouteKind `json:"kind" yaml:"kind"`
+	Root       string    `json:"root,omitempty" yaml:"root,omitempty"`
 	Runtime    string    `json:"runtime,omitempty" yaml:"runtime,omitempty"`
 	Entrypoint string    `json:"entrypoint" yaml:"entrypoint"`
 	Methods    []string  `json:"methods,omitempty" yaml:"methods,omitempty"`
@@ -113,7 +114,7 @@ func SanitizeStaticRoot(root string) (string, error) {
 }
 
 func validateRoutes(routes []Route) error {
-	for _, route := range routes {
+	for i, route := range routes {
 		if route.Path == "" {
 			return fmt.Errorf("route.path is required")
 		}
@@ -126,6 +127,16 @@ func validateRoutes(routes []Route) error {
 		case "", "starlark":
 		default:
 			return fmt.Errorf("unsupported route runtime %q", route.Runtime)
+		}
+		if strings.TrimSpace(route.Root) != "" && route.Kind != "" && route.Kind != RouteStatic {
+			return fmt.Errorf("route.root is only supported for static routes")
+		}
+		if strings.TrimSpace(route.Root) != "" {
+			root, err := SanitizeStaticRoot(route.Root)
+			if err != nil {
+				return fmt.Errorf("invalid route.root: %w", err)
+			}
+			routes[i].Root = root
 		}
 		if strings.TrimSpace(route.Runtime) != "" && route.Kind != RouteHTTP {
 			return fmt.Errorf("route.runtime is only supported for http routes")

@@ -177,7 +177,7 @@ func (db *siteWriteServiceDatabase) ListCurrentSiteFiles(ctx context.Context, si
 	return nil, false, db.err
 }
 
-func (db *siteWriteServiceDatabase) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+func (db *siteWriteServiceDatabase) ServeSiteFile(ctx context.Context, site string, urlPath string, routePath string, staticRoot string) (ServeSiteFileDecision, error) {
 	return ServeSiteFileDecision{}, db.err
 }
 

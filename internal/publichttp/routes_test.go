@@ -35,6 +35,27 @@ func TestHandlerRoutesHostSiteToStaticHandler(t *testing.T) {
 	}
 }
 
+func TestHandlerPassesStaticRouteRootToStaticHandler(t *testing.T) {
+	static := &recordingStaticHandler{}
+	h := New(static, WithRoutes(staticRouteReader{decision: PublicRouteDecision{
+		Site: "foo", Kind: RouteStatic, Path: "/assets/app.css", RoutePath: "/assets", StaticRoot: "public/assets",
+	}}))
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if static.request.Site != "foo" || static.request.URLPath != "/assets/app.css" || static.request.RoutePath != "/assets" || static.request.StaticRoot != "public/assets" {
+		t.Fatalf("static request = %+v, want route-root static request", static.request)
+	}
+}
+
 func TestHandlerRejectsUnknownPublicHostBeforeStaticServing(t *testing.T) {
 	static := &recordingStaticHandler{}
 	h := New(static)

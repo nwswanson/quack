@@ -85,7 +85,7 @@ func (r testReadService) CurrentSiteFile(ctx context.Context, site string, relat
 	return domain.UploadFileRecord{}, false, false, nil
 }
 
-func (r testReadService) ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error) {
+func (r testReadService) ServeSiteFile(ctx context.Context, site string, urlPath string, routePath string, staticRoot string) (sites.ServeSiteFileDecision, error) {
 	return r.decision, nil
 }
 

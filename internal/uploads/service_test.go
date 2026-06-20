@@ -239,7 +239,7 @@ func (r uploadServiceRead) CurrentSiteFile(ctx context.Context, site string, rel
 	return domain.UploadFileRecord{}, false, false, nil
 }
 
-func (r uploadServiceRead) ServeSiteFile(ctx context.Context, site string, urlPath string) (sites.ServeSiteFileDecision, error) {
+func (r uploadServiceRead) ServeSiteFile(ctx context.Context, site string, urlPath string, routePath string, staticRoot string) (sites.ServeSiteFileDecision, error) {
 	return sites.ServeSiteFileDecision{}, nil
 }
 

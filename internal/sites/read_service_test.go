@@ -180,7 +180,7 @@ func TestSiteReadServiceServeSiteFileResolvesFromReadModels(t *testing.T) {
 	}
 	read := NewSiteReadService(db)
 
-	decision, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	decision, err := read.ServeSiteFile(context.Background(), "example.com", "/", "", "")
 	if err != nil {
 		t.Fatalf("ServeSiteFile error = %v", err)
 	}
@@ -203,7 +203,7 @@ func TestSiteReadServiceServeSiteFileUsesConfiguredStaticRoot(t *testing.T) {
 	}
 	read := NewSiteReadService(db)
 
-	rootDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	rootDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/", "", "")
 	if err != nil {
 		t.Fatalf("ServeSiteFile root error = %v", err)
 	}
@@ -211,7 +211,7 @@ func TestSiteReadServiceServeSiteFileUsesConfiguredStaticRoot(t *testing.T) {
 		t.Fatalf("root decision = %+v, want public index served as URL root", rootDecision)
 	}
 
-	appDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/app.js")
+	appDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/app.js", "", "")
 	if err != nil {
 		t.Fatalf("ServeSiteFile app error = %v", err)
 	}
@@ -235,13 +235,65 @@ func TestSiteReadServiceServeSiteFileDoesNotServeFilesAboveStaticRoot(t *testing
 	read := NewSiteReadService(db)
 
 	for _, urlPath := range []string{"/private.html", "/scripts/build.sh"} {
-		decision, err := read.ServeSiteFile(context.Background(), "example.com", urlPath)
+		decision, err := read.ServeSiteFile(context.Background(), "example.com", urlPath, "", "")
 		if err != nil {
 			t.Fatalf("ServeSiteFile %s error = %v", urlPath, err)
 		}
 		if decision.Status != ServeSiteFileNotFound {
 			t.Fatalf("ServeSiteFile %s = %+v, want not found above static root", urlPath, decision)
 		}
+	}
+}
+
+func TestSiteReadServiceServeSiteFileUsesRouteStaticRoot(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1,
+			Settings: map[string]string{appsettings.SettingStaticRoot: "legacy"},
+		}},
+		files: []domain.UploadFileRecord{
+			{RelativePath: "legacy/index.html", BlobPath: "legacy-index"},
+			{RelativePath: "public/index.html", BlobPath: "public-index"},
+			{RelativePath: "public/app.js", BlobPath: "public-app"},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	rootDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/", "/", "public")
+	if err != nil {
+		t.Fatalf("ServeSiteFile root error = %v", err)
+	}
+	if rootDecision.Status != ServeSiteFileFound || rootDecision.File.BlobPath != "public-index" {
+		t.Fatalf("root decision = %+v, want route static root over legacy static.root", rootDecision)
+	}
+
+	appDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/app.js", "/", "public")
+	if err != nil {
+		t.Fatalf("ServeSiteFile app error = %v", err)
+	}
+	if appDecision.Status != ServeSiteFileFound || appDecision.RelativePath != "app.js" || appDecision.File.BlobPath != "public-app" {
+		t.Fatalf("app decision = %+v, want public app served from route root", appDecision)
+	}
+}
+
+func TestSiteReadServiceServeSiteFileStripsStaticRoutePathBeforeRootLookup(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1,
+		}},
+		files: []domain.UploadFileRecord{
+			{RelativePath: "public/assets/app.js", BlobPath: "asset-app"},
+			{RelativePath: "public/assets/assets/app.js", BlobPath: "double-prefixed-app"},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	decision, err := read.ServeSiteFile(context.Background(), "example.com", "/assets/app.js", "/assets", "public/assets")
+	if err != nil {
+		t.Fatalf("ServeSiteFile error = %v", err)
+	}
+	if decision.Status != ServeSiteFileFound || decision.RelativePath != "app.js" || decision.File.BlobPath != "asset-app" {
+		t.Fatalf("decision = %+v, want route path stripped before static root lookup", decision)
 	}
 }
 
@@ -258,7 +310,7 @@ func TestSiteReadServiceServeSiteFileDirectoryRedirectUsesStaticRoot(t *testing.
 	}
 	read := NewSiteReadService(db)
 
-	decision, err := read.ServeSiteFile(context.Background(), "example.com", "/docs")
+	decision, err := read.ServeSiteFile(context.Background(), "example.com", "/docs", "", "")
 	if err != nil {
 		t.Fatalf("ServeSiteFile error = %v", err)
 	}
@@ -283,7 +335,7 @@ func TestSiteReadServiceServeSiteFileStaticRootWithDefaultSiteFallback(t *testin
 	}
 	read := NewSiteReadService(db)
 
-	decision, err := read.ServeSiteFile(context.Background(), "missing", "/")
+	decision, err := read.ServeSiteFile(context.Background(), "missing", "/", "", "")
 	if err != nil {
 		t.Fatalf("ServeSiteFile error = %v", err)
 	}
@@ -304,7 +356,7 @@ func TestSiteReadServiceServeSiteFileRejectsMalformedStoredStaticRoot(t *testing
 	}
 	read := NewSiteReadService(db)
 
-	_, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	_, err := read.ServeSiteFile(context.Background(), "example.com", "/", "", "")
 	if err == nil {
 		t.Fatal("ServeSiteFile error = nil, want malformed static root error")
 	}

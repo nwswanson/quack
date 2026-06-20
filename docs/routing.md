@@ -110,13 +110,10 @@ files are sanitized and stored as upload files.
 
 The manifest schema currently relevant to routing is:
 
-```yaml
-static:
-  root: public
-
 routes:
   - path: /
     kind: static
+    root: public
 
   - path: /api
     kind: http
@@ -129,10 +126,10 @@ routes:
 the upload. Keep this in mind when adding new YAML fields: they must be added to
 `internal/manifest.Manifest` before users can deploy them.
 
-### `static.root`
+### Static route `root`
 
-`static.root` is optional. The empty value means uploaded files are served from
-the upload root, which is the historical behavior.
+`routes[].root` is optional on static routes. The empty value means uploaded
+files are served from the upload root, which is the historical behavior.
 
 When set, it is a relative archive path. It is normalized by
 `manifest.SanitizeStaticRoot`:
@@ -144,12 +141,25 @@ When set, it is a relative archive path. It is normalized by
 - any `..` component is rejected
 - path components are sanitized like uploaded serving paths
 
-At upload time, the sanitized value is persisted as upload setting
-`static.root`.
+`root` is only valid on static routes. HTTP and WebSocket routes cannot set it.
 
-At serve time, static resolution validates the stored value again before using
-it. This makes malformed stored rows fail closed instead of accidentally serving
-from the wrong subtree.
+The legacy top-level `static.root` setting is still accepted as a compatibility
+fallback, but new manifests should prefer:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+```
+
+At upload time, the sanitized value is persisted as upload setting
+`routes` JSON with the route declaration. Legacy `static.root` is still
+persisted when present.
+
+At serve time, static resolution validates stored route roots and legacy
+`static.root` values again before using them. This makes malformed stored rows
+fail closed instead of accidentally serving from the wrong subtree.
 
 ### `routes`
 
@@ -157,6 +167,7 @@ Each route has:
 
 - `path`: required
 - `kind`: optional, defaults to `static` when route settings are interpreted
+- `root`: optional static-route archive subtree to expose at this route path
 - `runtime`: currently only `starlark`, and only on `http` routes
 - `entrypoint`: required when `runtime` is set
 - `methods`: optional list; empty means all methods are allowed at the routing
@@ -175,7 +186,7 @@ First, `uploads.ManifestSettings` stores manifest-derived settings in
 
 - `features.database.enabled`
 - `features.database.required`
-- `static.root`
+- legacy `static.root`
 - `routes` as JSON, when the manifest declared routes
 
 Second, `uploads.RuntimeRoutesFromManifest` stores executable dynamic route
@@ -211,7 +222,8 @@ type CurrentSiteManifest struct {
 }
 ```
 
-The settings map is where public routing sees `routes` and `static.root`.
+The settings map is where public routing sees `routes` and the legacy
+`static.root` fallback.
 
 `sqlitedb.ListCurrentRuntimeRoutes` reads `runtime_routes` joined to the current
 live site version. It only returns runtime rows for finished uploads and live
@@ -355,11 +367,12 @@ That loads server settings first so it can pass the configured default site to
 4. If the site does not exist and a different default site is configured, rerun
    resolution for the default site with the same URL path.
 5. Build an in-memory map from uploaded file relative path to upload file record.
-6. Convert the request path into a URL-facing relative path.
-7. Validate and apply `static.root`.
+6. Convert the request path into a route-relative URL-facing path.
+7. Validate and apply the selected static route root, or legacy `static.root`
+   when no route root was selected.
 8. Look for the exact file under the static root.
 9. If not found and directory-index rules apply, look for
-   `<static.root>/<relativePath>/index.html`.
+   `<static-root>/<relativePath>/index.html`.
 10. Return one of the static serving decisions.
 
 ### URL Path To Relative Path
@@ -377,7 +390,8 @@ Examples:
 /assets/app.js    -> assets/app.js
 ```
 
-The returned relative path is URL-facing. It does not include `static.root`.
+The returned relative path is URL-facing. It does not include the static route
+root or legacy `static.root`.
 
 ### Static Root Application
 
@@ -387,7 +401,7 @@ Static root is applied after URL path normalization:
 staticPath := path.Join(staticRoot, relativePath)
 ```
 
-If `static.root` is `public`, then:
+If the selected static route has `root: public`, then:
 
 ```text
 request /              looks for public/index.html
@@ -412,8 +426,8 @@ The static resolver follows Nginx-style directory behavior:
 - `statichttp` turns that decision into `301 /docs/`, preserving the query
   string.
 
-When `static.root` is set, the lookup path includes the root, but the redirect
-does not. For `static.root: public`, `/docs` redirects to `/docs/`, not
+When a static route root is set, the lookup path includes the root, but the
+redirect does not. For `root: public`, `/docs` redirects to `/docs/`, not
 `/public/docs/`.
 
 ### Empty Index
@@ -436,8 +450,8 @@ http.ServeContent(w, r, relativePath, time.Time{}, blob)
 ```
 
 The `relativePath` passed to `ServeContent` is URL-facing and excludes
-`static.root`. That keeps content-type behavior aligned with the public URL path
-rather than the archive-internal storage path.
+the static route root or legacy `static.root`. That keeps content-type behavior
+aligned with the public URL path rather than the archive-internal storage path.
 
 Blob bytes and file descriptors are not cached by the hot data cache.
 
@@ -455,7 +469,8 @@ Important constraints:
 - Fallback happens only when the requested site does not exist.
 - Fallback does not happen for a missing file on an existing site.
 - The same URL path is used against the default site.
-- The default site's own `static.root` applies.
+- The default site's own static route root applies, with legacy `static.root`
+  as fallback.
 - Dynamic route lookup does not currently fallback to the default site. If an
   unknown host requests `/api`, release lookup will return a static route for
   the unknown site; static serving may then fallback to default-site static
@@ -570,9 +585,9 @@ current_site_files:<site>
 ```
 
 Static root serving currently uses `ListCurrentSiteFiles(site)`, because it
-needs to map URL-facing paths through `static.root` before choosing a blob. That
-means a static request can cache the file list for the current site rather than
-one file lookup per URL path.
+needs to map URL-facing paths through the selected static route root or legacy
+`static.root` before choosing a blob. That means a static request can cache the
+file list for the current site rather than one file lookup per URL path.
 
 ### TTL And Negative Caching
 
@@ -648,8 +663,10 @@ data/source.json
 Manifest:
 
 ```yaml
-static:
-  root: public
+routes:
+  - path: /
+    kind: static
+    root: public
 ```
 
 Requests for `foo.example.com`:
@@ -670,12 +687,10 @@ Requests for `foo.example.com`:
 Manifest:
 
 ```yaml
-static:
-  root: public
-
 routes:
   - path: /
     kind: static
+    root: public
   - path: /api
     kind: http
     runtime: starlark
@@ -693,8 +708,9 @@ Request behavior:
 /apiary        -> route "/" static, because "/api" does not match "/apiary"
 ```
 
-The runtime entrypoint `api/app.star` can live outside `static.root`. It is not
-served as a static file unless the static root includes it and a URL maps to it.
+The runtime entrypoint `api/app.star` can live outside the static route root. It
+is not served as a static file unless the static root includes it and a URL maps
+to it.
 
 ## Where To Change Behavior
 
@@ -777,7 +793,7 @@ Release layer:
   current release metadata -> static/http/websocket decision
 
 Serving layer:
-  static decision -> blob-backed file lookup under static.root
+  static decision -> blob-backed file lookup under static route root
   runtime decision -> executable metadata lookup + policy + executor
 ```
 

@@ -2,6 +2,7 @@ package sites
 
 import (
 	"context"
+	"encoding/json"
 	"path"
 	"strings"
 
@@ -27,7 +28,7 @@ type SiteReadService interface {
 	ValidateUploadManifest(ctx context.Context, actor domain.AdminUser, site string, manifest manifest.Manifest) error
 	CurrentSiteServingStatus(ctx context.Context, site string) (domain.SiteServingDecision, error)
 	CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
-	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
+	ServeSiteFile(ctx context.Context, site string, urlPath string, routePath string, staticRoot string) (ServeSiteFileDecision, error)
 	SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error)
 	SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error)
 }
@@ -94,12 +95,12 @@ func (s siteReadService) CurrentSiteFile(ctx context.Context, site string, relat
 	return s.hot.FindCurrentSiteFile(ctx, site, relativePath)
 }
 
-func (s siteReadService) ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error) {
+func (s siteReadService) ServeSiteFile(ctx context.Context, site string, urlPath string, routePath string, staticRoot string) (ServeSiteFileDecision, error) {
 	settings, err := s.hot.GetServerSettings(ctx)
 	if err != nil {
 		return ServeSiteFileDecision{}, err
 	}
-	return ResolveSiteFile(ctx, s.hot, site, urlPath, strings.TrimSpace(settings.DefaultSite), false)
+	return ResolveSiteFile(ctx, s.hot, site, urlPath, routePath, staticRoot, strings.TrimSpace(settings.DefaultSite), false)
 }
 
 type SiteFileResolver interface {
@@ -108,7 +109,7 @@ type SiteFileResolver interface {
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
 }
 
-func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, urlPath string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
+func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, urlPath string, routePath string, routeStaticRoot string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
 	current, hasCurrent, decision, err := currentSiteManifestAndServingStatus(ctx, hot, site)
 	if err != nil {
 		return ServeSiteFileDecision{}, err
@@ -122,7 +123,7 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 		return ServeSiteFileDecision{}, err
 	}
 	if !siteExists && !usingDefault && defaultSite != "" && defaultSite != site {
-		return ResolveSiteFile(ctx, hot, defaultSite, urlPath, defaultSite, true)
+		return ResolveSiteFile(ctx, hot, defaultSite, urlPath, "", "", defaultSite, true)
 	}
 
 	fileByPath := make(map[string]domain.UploadFileRecord, len(files))
@@ -130,12 +131,26 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 		fileByPath[file.RelativePath] = file
 	}
 
-	relativePath, wantsIndex := RequestedRelativePath(urlPath)
-	staticRoot := ""
+	resolvedURLPath := staticURLPathForRoute(urlPath, routePath)
+	relativePath, wantsIndex := RequestedRelativePath(resolvedURLPath)
+	staticRoot := strings.TrimSpace(routeStaticRoot)
 	if hasCurrent {
-		staticRoot, err = manifest.SanitizeStaticRoot(current.Settings[appsettings.SettingStaticRoot])
-		if err != nil {
+		if staticRoot != "" {
+			staticRoot, err = manifest.SanitizeStaticRoot(staticRoot)
+			if err != nil {
+				return ServeSiteFileDecision{}, err
+			}
+		} else if routeRoot, matchedRoutePath, ok, err := staticRouteRootFromSettings(current.Settings, urlPath); err != nil {
 			return ServeSiteFileDecision{}, err
+		} else if ok {
+			staticRoot = routeRoot
+			resolvedURLPath = staticURLPathForRoute(urlPath, matchedRoutePath)
+			relativePath, wantsIndex = RequestedRelativePath(resolvedURLPath)
+		} else {
+			staticRoot, err = manifest.SanitizeStaticRoot(current.Settings[appsettings.SettingStaticRoot])
+			if err != nil {
+				return ServeSiteFileDecision{}, err
+			}
 		}
 	}
 	staticPath := path.Join(staticRoot, relativePath)
@@ -149,7 +164,7 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 		}, nil
 	}
 
-	if ShouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
+	if ShouldTryDirectoryIndex(resolvedURLPath, relativePath, wantsIndex) {
 		indexPath := path.Join(staticRoot, relativePath, "index.html")
 		if _, ok := fileByPath[indexPath]; ok {
 			return ServeSiteFileDecision{
@@ -165,6 +180,72 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 		return ServeSiteFileDecision{Status: ServeSiteFileEmptyIndex, Site: site, RelativePath: relativePath, Serving: decision}, nil
 	}
 	return ServeSiteFileDecision{Status: ServeSiteFileNotFound, Site: site, RelativePath: relativePath, Serving: decision}, nil
+}
+
+func staticRouteRootFromSettings(settings map[string]string, urlPath string) (string, string, bool, error) {
+	var declared []manifest.Route
+	if raw := strings.TrimSpace(settings[appsettings.SettingRoutes]); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &declared); err != nil {
+			return "", "", false, nil
+		}
+	}
+	cleanURLPath := cleanRoutePath(urlPath)
+	var best manifest.Route
+	for _, route := range declared {
+		kind := route.Kind
+		if kind == "" {
+			kind = manifest.RouteStatic
+		}
+		if kind != manifest.RouteStatic {
+			continue
+		}
+		routePath := cleanRoutePath(route.Path)
+		if !routeMatches(cleanURLPath, routePath) {
+			continue
+		}
+		if best.Path == "" || len(routePath) > len(cleanRoutePath(best.Path)) {
+			best = route
+		}
+	}
+	if best.Path == "" || strings.TrimSpace(best.Root) == "" {
+		return "", "", false, nil
+	}
+	root, err := manifest.SanitizeStaticRoot(best.Root)
+	if err != nil {
+		return "", "", false, err
+	}
+	return root, cleanRoutePath(best.Path), true, nil
+}
+
+func staticURLPathForRoute(urlPath string, routePath string) string {
+	routePath = cleanRoutePath(routePath)
+	if routePath == "/" {
+		return urlPath
+	}
+	cleanURLPath := cleanRoutePath(urlPath)
+	if cleanURLPath == routePath {
+		return "/"
+	}
+	prefix := strings.TrimRight(routePath, "/") + "/"
+	if strings.HasPrefix(cleanURLPath, prefix) {
+		return "/" + strings.TrimPrefix(cleanURLPath, prefix)
+	}
+	return urlPath
+}
+
+func routeMatches(urlPath string, routePath string) bool {
+	if routePath == "/" {
+		return true
+	}
+	return urlPath == routePath || strings.HasPrefix(urlPath, strings.TrimRight(routePath, "/")+"/")
+}
+
+func cleanRoutePath(value string) string {
+	clean := path.Clean("/" + strings.TrimPrefix(value, "/"))
+	if clean == "." {
+		return "/"
+	}
+	return clean
 }
 
 func currentSiteServingStatus(ctx context.Context, hot SiteFileResolver, site string) (domain.SiteServingDecision, error) {

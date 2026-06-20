@@ -91,6 +91,23 @@ func TestServiceLookupRouteUsesLongestRoutePrecedence(t *testing.T) {
 	}
 }
 
+func TestServiceLookupRouteIncludesStaticRootAndMatchedRoutePath(t *testing.T) {
+	invalidator := &releaseInvalidator{manifests: []domain.CurrentSiteManifest{{
+		Site: "foo", Version: 3, Settings: map[string]string{
+			appsettings.SettingRoutes: `[{"path":"/","kind":"static","root":"public"},{"path":"/assets","kind":"static","root":"dist/assets"}]`,
+		},
+	}}}
+	service := NewService(&releaseRepo{}, invalidator)
+
+	decision, ok, err := service.LookupRoute(context.Background(), "foo", "/assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteStatic || decision.Path != "/assets/app.css" || decision.RoutePath != "/assets" || decision.StaticRoot != "dist/assets" {
+		t.Fatalf("decision = %+v ok=%v, want static route root from longest matching route", decision, ok)
+	}
+}
+
 func TestServiceLookupRouteUsesRuntimeMetadata(t *testing.T) {
 	invalidator := &releaseInvalidator{
 		manifests: []domain.CurrentSiteManifest{{

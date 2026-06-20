@@ -14,8 +14,10 @@ import (
 )
 
 type Request struct {
-	Site    string
-	URLPath string
+	Site       string
+	URLPath    string
+	RoutePath  string
+	StaticRoot string
 }
 
 type Handler interface {
@@ -32,7 +34,7 @@ func New(store appstorage.Storage, read sites.SiteReadService) Handler {
 }
 
 func (h handler) ServeSiteFile(w http.ResponseWriter, r *http.Request, req Request) {
-	decision, err := h.read.ServeSiteFile(r.Context(), req.Site, req.URLPath)
+	decision, err := h.read.ServeSiteFile(r.Context(), req.Site, req.URLPath, req.RoutePath, req.StaticRoot)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "resolve site file failed", "site", req.Site, "path", req.URLPath, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
