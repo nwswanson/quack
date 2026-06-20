@@ -13,6 +13,7 @@ def handle(req):
         "method": method,
         "path": path,
         "query": query,
+        "uuid": uuid.uuid4(),
         "body_size": len(body),
         "user_agent": _header(headers, "user-agent"),
     }, indent = "  ") + "\n"
