@@ -260,6 +260,14 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 		default:
 			continue
 		}
+		// Phase 12 TODO: attach the actual runtime bundle object key once upload
+		// accepts runtime artifacts. Static site uploads currently have no bundle,
+		// so BundleObjectKey intentionally remains empty and RuntimeKind remains
+		// disabled.
+		//
+		// Phase 12 TODO: parse manifest-declared resource limits and capabilities
+		// here. The persisted RequiredCapabilities should represent what this route
+		// needs at invocation time, not just the coarse route kind.
 		out = append(out, appruntime.RouteMetadata{
 			Site:                 upload.Site,
 			SiteSHA:              upload.SiteSHA,
@@ -280,6 +288,9 @@ func runtimeCapabilities(kind manifest.RouteKind) []string {
 	case manifest.RouteHTTP:
 		return []string{"runtime.http"}
 	case manifest.RouteWebSocket:
+		// Phase 13 TODO: keep websocket separate from runtime.http. Socket routes
+		// have different resource risks: long-lived connections, message limits,
+		// idle timeouts, and cleanup behavior.
 		return []string{"runtime.websocket"}
 	default:
 		return nil
