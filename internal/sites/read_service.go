@@ -109,7 +109,7 @@ type SiteFileResolver interface {
 }
 
 func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, urlPath string, defaultSite string, usingDefault bool) (ServeSiteFileDecision, error) {
-	decision, err := currentSiteServingStatus(ctx, hot, site)
+	current, hasCurrent, decision, err := currentSiteManifestAndServingStatus(ctx, hot, site)
 	if err != nil {
 		return ServeSiteFileDecision{}, err
 	}
@@ -131,7 +131,15 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 	}
 
 	relativePath, wantsIndex := RequestedRelativePath(urlPath)
-	if file, ok := fileByPath[relativePath]; ok {
+	staticRoot := ""
+	if hasCurrent {
+		staticRoot, err = manifest.SanitizeStaticRoot(current.Settings[appsettings.SettingStaticRoot])
+		if err != nil {
+			return ServeSiteFileDecision{}, err
+		}
+	}
+	staticPath := path.Join(staticRoot, relativePath)
+	if file, ok := fileByPath[staticPath]; ok {
 		return ServeSiteFileDecision{
 			Status:       ServeSiteFileFound,
 			Site:         site,
@@ -142,12 +150,12 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 	}
 
 	if ShouldTryDirectoryIndex(urlPath, relativePath, wantsIndex) {
-		indexPath := path.Join(relativePath, "index.html")
+		indexPath := path.Join(staticRoot, relativePath, "index.html")
 		if _, ok := fileByPath[indexPath]; ok {
 			return ServeSiteFileDecision{
 				Status:       ServeSiteFileDirectoryRedirect,
 				Site:         site,
-				RelativePath: indexPath,
+				RelativePath: path.Join(relativePath, "index.html"),
 				Serving:      decision,
 			}, nil
 		}
@@ -160,21 +168,26 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 }
 
 func currentSiteServingStatus(ctx context.Context, hot SiteFileResolver, site string) (domain.SiteServingDecision, error) {
+	_, _, decision, err := currentSiteManifestAndServingStatus(ctx, hot, site)
+	return decision, err
+}
+
+func currentSiteManifestAndServingStatus(ctx context.Context, hot SiteFileResolver, site string) (domain.CurrentSiteManifest, bool, domain.SiteServingDecision, error) {
 	manifests, err := hot.ListCurrentSiteManifests(ctx)
 	if err != nil {
-		return domain.SiteServingDecision{}, err
+		return domain.CurrentSiteManifest{}, false, domain.SiteServingDecision{}, err
 	}
-	for _, manifest := range manifests {
-		if manifest.Site != site {
+	for _, current := range manifests {
+		if current.Site != site {
 			continue
 		}
-		violations, err := hot.ListPolicyViolations(ctx, manifest.SiteSHA, manifest.Version)
+		violations, err := hot.ListPolicyViolations(ctx, current.SiteSHA, current.Version)
 		if err != nil {
-			return domain.SiteServingDecision{}, err
+			return domain.CurrentSiteManifest{}, false, domain.SiteServingDecision{}, err
 		}
-		return servingDecisionFromViolations(violations), nil
+		return current, true, servingDecisionFromViolations(violations), nil
 	}
-	return domain.SiteServingDecision{Status: domain.SiteServingActive}, nil
+	return domain.CurrentSiteManifest{}, false, domain.SiteServingDecision{Status: domain.SiteServingActive}, nil
 }
 
 func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error) {

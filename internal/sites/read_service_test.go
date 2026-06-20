@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"quack/internal/domain"
@@ -188,6 +189,130 @@ func TestSiteReadServiceServeSiteFileResolvesFromReadModels(t *testing.T) {
 	}
 }
 
+func TestSiteReadServiceServeSiteFileUsesConfiguredStaticRoot(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1,
+			Settings: map[string]string{appsettings.SettingStaticRoot: "public"},
+		}},
+		files: []domain.UploadFileRecord{
+			{RelativePath: "index.html", BlobPath: "private-index"},
+			{RelativePath: "public/index.html", BlobPath: "public-index"},
+			{RelativePath: "public/app.js", BlobPath: "public-app"},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	rootDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile root error = %v", err)
+	}
+	if rootDecision.Status != ServeSiteFileFound || rootDecision.RelativePath != "index.html" || rootDecision.File.BlobPath != "public-index" {
+		t.Fatalf("root decision = %+v, want public index served as URL root", rootDecision)
+	}
+
+	appDecision, err := read.ServeSiteFile(context.Background(), "example.com", "/app.js")
+	if err != nil {
+		t.Fatalf("ServeSiteFile app error = %v", err)
+	}
+	if appDecision.Status != ServeSiteFileFound || appDecision.RelativePath != "app.js" || appDecision.File.BlobPath != "public-app" {
+		t.Fatalf("app decision = %+v, want public app served as URL app.js", appDecision)
+	}
+}
+
+func TestSiteReadServiceServeSiteFileDoesNotServeFilesAboveStaticRoot(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1,
+			Settings: map[string]string{appsettings.SettingStaticRoot: "public"},
+		}},
+		files: []domain.UploadFileRecord{
+			{RelativePath: "private.html", BlobPath: "private"},
+			{RelativePath: "scripts/build.sh", BlobPath: "script"},
+			{RelativePath: "public/index.html", BlobPath: "public-index"},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	for _, urlPath := range []string{"/private.html", "/scripts/build.sh"} {
+		decision, err := read.ServeSiteFile(context.Background(), "example.com", urlPath)
+		if err != nil {
+			t.Fatalf("ServeSiteFile %s error = %v", urlPath, err)
+		}
+		if decision.Status != ServeSiteFileNotFound {
+			t.Fatalf("ServeSiteFile %s = %+v, want not found above static root", urlPath, decision)
+		}
+	}
+}
+
+func TestSiteReadServiceServeSiteFileDirectoryRedirectUsesStaticRoot(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1,
+			Settings: map[string]string{appsettings.SettingStaticRoot: "public"},
+		}},
+		files: []domain.UploadFileRecord{
+			{RelativePath: "docs/index.html", BlobPath: "private-docs"},
+			{RelativePath: "public/docs/index.html", BlobPath: "public-docs"},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	decision, err := read.ServeSiteFile(context.Background(), "example.com", "/docs")
+	if err != nil {
+		t.Fatalf("ServeSiteFile error = %v", err)
+	}
+	if decision.Status != ServeSiteFileDirectoryRedirect || decision.RelativePath != "docs/index.html" {
+		t.Fatalf("decision = %+v, want URL-facing docs directory redirect", decision)
+	}
+}
+
+func TestSiteReadServiceServeSiteFileStaticRootWithDefaultSiteFallback(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		settings: domain.ServerSettings{DefaultSite: "home"},
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "home", SiteSHA: "home-sha", Version: 1,
+			Settings: map[string]string{appsettings.SettingStaticRoot: "public"},
+		}},
+		filesBySite: map[string][]domain.UploadFileRecord{
+			"home": {
+				{RelativePath: "index.html", BlobPath: "private-home"},
+				{RelativePath: "public/index.html", BlobPath: "public-home"},
+			},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	decision, err := read.ServeSiteFile(context.Background(), "missing", "/")
+	if err != nil {
+		t.Fatalf("ServeSiteFile error = %v", err)
+	}
+	if decision.Site != "home" || decision.Status != ServeSiteFileFound || decision.File.BlobPath != "public-home" {
+		t.Fatalf("decision = %+v, want default site public root", decision)
+	}
+}
+
+func TestSiteReadServiceServeSiteFileRejectsMalformedStoredStaticRoot(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		manifests: []domain.CurrentSiteManifest{{
+			Site: "example.com", SiteSHA: "site-sha", Version: 1,
+			Settings: map[string]string{appsettings.SettingStaticRoot: "public/../private"},
+		}},
+		files: []domain.UploadFileRecord{
+			{RelativePath: "private/index.html", BlobPath: "private-index"},
+		},
+	}
+	read := NewSiteReadService(db)
+
+	_, err := read.ServeSiteFile(context.Background(), "example.com", "/")
+	if err == nil {
+		t.Fatal("ServeSiteFile error = nil, want malformed static root error")
+	}
+	if !strings.Contains(err.Error(), "static.root cannot contain ..") {
+		t.Fatalf("ServeSiteFile error = %v, want static root validation error", err)
+	}
+}
+
 func TestSiteReadServiceSystemDatabasePolicy(t *testing.T) {
 	db := &siteReadServiceDatabase{
 		policies: []domain.PolicyRecord{{
@@ -253,12 +378,13 @@ func TestSiteReadServiceSystemRuntimeHTTPPolicyDefaultsToInherit(t *testing.T) {
 }
 
 type siteReadServiceDatabase struct {
-	settings   domain.ServerSettings
-	policies   []domain.PolicyRecord
-	manifests  []domain.CurrentSiteManifest
-	violations map[string][]domain.PolicyViolation
-	file       domain.UploadFileRecord
-	files      []domain.UploadFileRecord
+	settings    domain.ServerSettings
+	policies    []domain.PolicyRecord
+	manifests   []domain.CurrentSiteManifest
+	violations  map[string][]domain.PolicyViolation
+	file        domain.UploadFileRecord
+	files       []domain.UploadFileRecord
+	filesBySite map[string][]domain.UploadFileRecord
 }
 
 func (db *siteReadServiceDatabase) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
@@ -297,6 +423,10 @@ func (db *siteReadServiceDatabase) FindCurrentSiteFile(ctx context.Context, site
 }
 
 func (db *siteReadServiceDatabase) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
+	if db.filesBySite != nil {
+		files, ok := db.filesBySite[site]
+		return files, ok, nil
+	}
 	if db.files != nil {
 		return db.files, true, nil
 	}

@@ -14,6 +14,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
+	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 )
@@ -33,7 +34,7 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 		},
 		Body: tarArchive(t, map[string]string{
 			"index.html": "hello",
-			"site.yaml":  "features:\n  database:\n    enabled: true\nroutes:\n  - path: /api\n    kind: http\n    entrypoint: main\n    methods: [GET, POST]\n",
+			"site.yaml":  "static:\n  root: public\nfeatures:\n  database:\n    enabled: true\nroutes:\n  - path: /api\n    kind: http\n    entrypoint: main\n    methods: [GET, POST]\n",
 		}),
 	})
 	if err != nil {
@@ -47,6 +48,9 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	}
 	if got, want := write.settings["features.database.enabled"], "true"; got != want {
 		t.Fatalf("manifest setting = %q, want %q", got, want)
+	}
+	if got, want := write.settings[appsettings.SettingStaticRoot], "public"; got != want {
+		t.Fatalf("static root setting = %q, want %q", got, want)
 	}
 	if got, want := write.settings["routes"], `[{"path":"/api","kind":"http","entrypoint":"main","methods":["GET","POST"]}]`; got != want {
 		t.Fatalf("routes setting = %q, want %q", got, want)

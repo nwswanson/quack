@@ -10,8 +10,52 @@ func TestParseEmptyManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
-	if got.Features.Database.Enabled || got.Features.Database.Required || len(got.Routes) != 0 {
+	if got.Features.Database.Enabled || got.Features.Database.Required || got.Static.Root != "" || len(got.Routes) != 0 {
 		t.Fatalf("Parse = %+v, want default manifest", got)
+	}
+}
+
+func TestParseStaticRoot(t *testing.T) {
+	body := "static:\n  root: public\n"
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	if got.Static.Root != "public" {
+		t.Fatalf("static.root = %q, want public", got.Static.Root)
+	}
+}
+
+func TestParseStaticRootSanitizesLikeUploadedPaths(t *testing.T) {
+	body := "static:\n  root: public assets\\dist/\n"
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	if got.Static.Root != "public_assets/dist" {
+		t.Fatalf("static.root = %q, want sanitized path", got.Static.Root)
+	}
+}
+
+func TestParseRejectsStaticRootTraversal(t *testing.T) {
+	body := "static:\n  root: ../private\n"
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "static.root cannot contain ..") {
+		t.Fatalf("error = %q, want static.root traversal detail", err.Error())
+	}
+}
+
+func TestParseRejectsAbsoluteStaticRoot(t *testing.T) {
+	body := "static:\n  root: /public\n"
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "static.root must be relative") {
+		t.Fatalf("error = %q, want relative path detail", err.Error())
 	}
 }
 

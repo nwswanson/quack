@@ -50,6 +50,7 @@ const (
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
 	SettingRuntimeHTTPFeature      = "features.runtime.http.enabled"
+	SettingStaticRoot              = "static.root"
 	SettingRoutes                  = "routes"
 )
 
@@ -85,6 +86,10 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeHTTPFeature: {
 		Key: SettingRuntimeHTTPFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingStaticRoot: {
+		Key: SettingStaticRoot, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
 	},
 	SettingRoutes: {
 		Key: SettingRoutes, Type: SettingTypeString, DefaultValue: "",

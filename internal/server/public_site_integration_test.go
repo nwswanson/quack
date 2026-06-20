@@ -78,6 +78,88 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	}
 }
 
+func TestConfiguredStaticRootServesSubtreeAsURLRoot(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "private-index", "private index")
+	writeTestBlob(t, root, "public-index", "public index")
+	writeTestBlob(t, root, "public-docs", "public docs")
+
+	db := &fakeDatabase{
+		files: map[string]domain.UploadFileRecord{
+			fileKey("foo", "index.html"): {
+				RelativePath: "index.html",
+				BlobPath:     "private-index",
+			},
+			fileKey("foo", "public/index.html"): {
+				RelativePath: "public/index.html",
+				BlobPath:     "public-index",
+			},
+			fileKey("foo", "docs/index.html"): {
+				RelativePath: "docs/index.html",
+				BlobPath:     "private-docs",
+			},
+			fileKey("foo", "public/docs/index.html"): {
+				RelativePath: "public/docs/index.html",
+				BlobPath:     "public-docs",
+			},
+		},
+		sites: []domain.PublishedSite{{Site: "foo", SiteSHA: "foo-sha", CurrentVersion: 2}},
+		uploadSettings: map[string]map[string]string{
+			"foo-sha:2": {appsettings.SettingStaticRoot: "public"},
+		},
+	}
+	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+
+	tests := map[string]struct {
+		path     string
+		status   int
+		location string
+		body     string
+	}{
+		"root maps to public index": {
+			path:   "/",
+			status: http.StatusOK,
+			body:   "public index",
+		},
+		"directory maps below public": {
+			path:   "/docs/",
+			status: http.StatusOK,
+			body:   "public docs",
+		},
+		"directory redirect hides public prefix": {
+			path:     "/docs",
+			status:   http.StatusMovedPermanently,
+			location: "/docs/",
+		},
+		"upload root file is above static root": {
+			path:   "/index.html",
+			status: http.StatusOK,
+			body:   "public index",
+		},
+		"static root prefix is not an alternate route": {
+			path:   "/public/index.html",
+			status: http.StatusNotFound,
+		},
+	}
+
+	for name, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Host = "foo.example.com"
+		rec := httptest.NewRecorder()
+		srv.Public.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != tc.status {
+			t.Fatalf("%s: status = %d, want %d; body=%s", name, rec.Code, tc.status, rec.Body.String())
+		}
+		if got := rec.Header().Get("Location"); got != tc.location {
+			t.Fatalf("%s: location = %q, want %q", name, got, tc.location)
+		}
+		if tc.body != "" && rec.Body.String() != tc.body {
+			t.Fatalf("%s: body = %q, want %q", name, rec.Body.String(), tc.body)
+		}
+	}
+}
+
 func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "site-index", "site index")
