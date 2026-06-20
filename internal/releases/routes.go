@@ -27,6 +27,7 @@ type RouteDecision struct {
 	Path           string
 	RoutePath      string
 	StaticRoot     string
+	StaticFile     string
 	Methods        []string
 	ResourceLimits appruntime.ResourceLimits
 }
@@ -63,7 +64,7 @@ func (s service) LookupRoute(ctx context.Context, site string, urlPath string) (
 			routes = append(routes, routesFromRuntimeMetadata(site, current.SiteSHA, current.Version, runtimeRoutes)...)
 		}
 		route := chooseRoute(urlPath, routes)
-		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, RoutePath: route.RoutePath, StaticRoot: route.StaticRoot, Methods: append([]string(nil), route.Methods...)}, true, nil
+		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, RoutePath: route.RoutePath, StaticRoot: route.StaticRoot, StaticFile: route.StaticFile, Methods: append([]string(nil), route.Methods...)}, true, nil
 	}
 	return RouteDecision{Site: site, Kind: RouteStatic, Path: urlPath}, true, nil
 }
@@ -79,7 +80,7 @@ func routesFromSettings(settings map[string]string) []RouteDecision {
 		if kind == "" {
 			kind = RouteStatic
 		}
-		out = append(out, RouteDecision{Kind: kind, Path: cleanRoutePath(route.Path), StaticRoot: route.Root})
+		out = append(out, RouteDecision{Kind: kind, Path: cleanRoutePath(route.Path), StaticRoot: route.Root, StaticFile: route.File})
 	}
 	return out
 }
@@ -116,7 +117,7 @@ func chooseRoute(urlPath string, routes []RouteDecision) RouteDecision {
 	clean := cleanRoutePath(urlPath)
 	var best RouteDecision
 	for _, route := range routes {
-		if !routeMatches(clean, route.Path) {
+		if !routeMatchesDecision(clean, route) {
 			continue
 		}
 		if best.Path == "" || len(route.Path) > len(best.Path) {
@@ -129,6 +130,13 @@ func chooseRoute(urlPath string, routes []RouteDecision) RouteDecision {
 	best.RoutePath = best.Path
 	best.Path = urlPath
 	return best
+}
+
+func routeMatchesDecision(urlPath string, route RouteDecision) bool {
+	if route.Kind == RouteStatic && route.StaticFile != "" {
+		return urlPath == route.Path
+	}
+	return routeMatches(urlPath, route.Path)
 }
 
 func routeMatches(urlPath string, routePath string) bool {

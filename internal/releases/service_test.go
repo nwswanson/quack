@@ -108,6 +108,31 @@ func TestServiceLookupRouteIncludesStaticRootAndMatchedRoutePath(t *testing.T) {
 	}
 }
 
+func TestServiceLookupRouteIncludesStaticFileAndRequiresExactPath(t *testing.T) {
+	invalidator := &releaseInvalidator{manifests: []domain.CurrentSiteManifest{{
+		Site: "foo", Version: 3, Settings: map[string]string{
+			appsettings.SettingRoutes: `[{"path":"/","kind":"static","root":"public"},{"path":"/favicon.ico","kind":"static","file":"media/favicon.ico"}]`,
+		},
+	}}}
+	service := NewService(&releaseRepo{}, invalidator)
+
+	decision, ok, err := service.LookupRoute(context.Background(), "foo", "/favicon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteStatic || decision.RoutePath != "/favicon.ico" || decision.StaticFile != "media/favicon.ico" {
+		t.Fatalf("decision = %+v ok=%v, want exact static file route", decision, ok)
+	}
+
+	child, ok, err := service.LookupRoute(context.Background(), "foo", "/favicon.ico/details")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || child.Kind != RouteStatic || child.RoutePath != "/" || child.StaticRoot != "public" || child.StaticFile != "" {
+		t.Fatalf("child decision = %+v ok=%v, want file route not to prefix-match", child, ok)
+	}
+}
+
 func TestServiceLookupRouteUsesRuntimeMetadata(t *testing.T) {
 	invalidator := &releaseInvalidator{
 		manifests: []domain.CurrentSiteManifest{{

@@ -40,6 +40,7 @@ type Route struct {
 	Path       string    `json:"path" yaml:"path"`
 	Kind       RouteKind `json:"kind" yaml:"kind"`
 	Root       string    `json:"root,omitempty" yaml:"root,omitempty"`
+	File       string    `json:"file,omitempty" yaml:"file,omitempty"`
 	Runtime    string    `json:"runtime,omitempty" yaml:"runtime,omitempty"`
 	Entrypoint string    `json:"entrypoint" yaml:"entrypoint"`
 	Methods    []string  `json:"methods,omitempty" yaml:"methods,omitempty"`
@@ -103,6 +104,18 @@ func SanitizeStaticRoot(root string) (string, error) {
 	return sanitized, nil
 }
 
+func SanitizeStaticFile(file string) (string, error) {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return "", nil
+	}
+	sanitized, err := protocol.SanitizeServingPath(file)
+	if err != nil {
+		return "", fmt.Errorf("invalid static file: %w", err)
+	}
+	return sanitized, nil
+}
+
 func validateRoutes(routes []Route) error {
 	for i, route := range routes {
 		if route.Path == "" {
@@ -121,12 +134,25 @@ func validateRoutes(routes []Route) error {
 		if strings.TrimSpace(route.Root) != "" && route.Kind != "" && route.Kind != RouteStatic {
 			return fmt.Errorf("route.root is only supported for static routes")
 		}
+		if strings.TrimSpace(route.File) != "" && route.Kind != "" && route.Kind != RouteStatic {
+			return fmt.Errorf("route.file is only supported for static routes")
+		}
+		if strings.TrimSpace(route.Root) != "" && strings.TrimSpace(route.File) != "" {
+			return fmt.Errorf("route.root and route.file cannot both be set")
+		}
 		if strings.TrimSpace(route.Root) != "" {
 			root, err := SanitizeStaticRoot(route.Root)
 			if err != nil {
 				return fmt.Errorf("invalid route.root: %w", err)
 			}
 			routes[i].Root = root
+		}
+		if strings.TrimSpace(route.File) != "" {
+			file, err := SanitizeStaticFile(route.File)
+			if err != nil {
+				return fmt.Errorf("invalid route.file: %w", err)
+			}
+			routes[i].File = file
 		}
 		if strings.TrimSpace(route.Runtime) != "" && route.Kind != RouteHTTP {
 			return fmt.Errorf("route.runtime is only supported for http routes")

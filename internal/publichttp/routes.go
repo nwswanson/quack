@@ -29,6 +29,7 @@ type PublicRouteDecision struct {
 	Path           string
 	RoutePath      string
 	StaticRoot     string
+	StaticFile     string
 	Methods        []string
 	ResourceLimits appruntime.ResourceLimits
 	DeniedReason   string
@@ -101,6 +102,7 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 			URLPath:    decision.Path,
 			RoutePath:  decision.RoutePath,
 			StaticRoot: decision.StaticRoot,
+			StaticFile: decision.StaticFile,
 		})
 	case RouteHTTP:
 		if !methodAllowed(r.Method, decision.Methods) {
@@ -156,7 +158,7 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 			// dependency must never be interpreted as permission to execute dynamic
 			// code.
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: "dynamic HTTP routes are disabled by administrator policy",
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: "dynamic HTTP routes are disabled by administrator policy",
 			}, true, nil
 		}
 		// This is the route-level gate before runtimehttp. The runtime service
@@ -168,12 +170,12 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 		}
 		if !allowed {
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: reason,
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: reason,
 			}, true, nil
 		}
 	}
 	return PublicRouteDecision{
-		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits,
+		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits,
 	}, true, nil
 }
 

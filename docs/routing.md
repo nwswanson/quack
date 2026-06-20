@@ -126,12 +126,12 @@ routes:
 the upload. Keep this in mind when adding new YAML fields: they must be added to
 `internal/manifest.Manifest` before users can deploy them.
 
-### Static route `root`
+### Static route targets
 
 `routes[].root` is optional on static routes. The empty value means uploaded
 files are served from the upload root, which is the historical behavior.
 
-When set, it is a relative archive path. It is normalized by
+When set, `root` is a relative archive path. It is normalized by
 `manifest.SanitizeStaticRoot`:
 
 - backslashes become slashes
@@ -141,9 +141,23 @@ When set, it is a relative archive path. It is normalized by
 - any `..` component is rejected
 - path components are sanitized like uploaded serving paths
 
-`root` is only valid on static routes. HTTP and WebSocket routes cannot set it.
-Top-level `static.root` is no longer part of the manifest schema; uploads that
-declare `static:` fail unknown-field validation.
+Static routes can also use `file` for exact file aliases:
+
+```yaml
+routes:
+  - path: /favicon.ico
+    kind: static
+    file: media/favicon.ico
+```
+
+`file` is a relative archive file path sanitized like uploaded serving paths.
+It matches only the exact route path. `GET /favicon.ico` serves
+`media/favicon.ico`; `GET /favicon.ico/details` does not match that file route.
+
+`root` and `file` are only valid on static routes, and a route cannot set both.
+HTTP and WebSocket routes cannot set either static target. Top-level
+`static.root` is no longer part of the manifest schema; uploads that declare
+`static:` fail unknown-field validation.
 
 Use route-level static roots instead:
 
@@ -169,6 +183,7 @@ Each route has:
 - `path`: required
 - `kind`: optional, defaults to `static` when route settings are interpreted
 - `root`: optional static-route archive subtree to expose at this route path
+- `file`: optional static-route archive file to serve for an exact route path
 - `runtime`: currently only `starlark`, and only on `http` routes
 - `entrypoint`: required when `runtime` is set
 - `methods`: optional list; empty means all methods are allowed at the routing
@@ -297,6 +312,9 @@ A route matches when:
 - request path starts with `routePath + "/"`, after trimming trailing slash from
   the route path
 
+Static routes with `file` are the exception: they match only when the request
+path equals the route path.
+
 When several routes match, the longest route path wins.
 
 Examples:
@@ -414,6 +432,23 @@ request /public/app.css looks for public/public/app.css
 That last example is important. The static root is not a public URL prefix; it
 is the archive subtree that becomes the public URL root. Files above it are not
 reachable through an alternate URL.
+
+### Static File Application
+
+Static `file` routes do not apply directory-index behavior and do not strip a
+path prefix. The route path is a public alias for one stored archive file:
+
+```yaml
+routes:
+  - path: /favicon.ico
+    kind: static
+    file: media/favicon.ico
+```
+
+```text
+request /favicon.ico         looks for media/favicon.ico
+request /favicon.ico/details does not match this file route
+```
 
 ### Directory Indexes And Redirects
 

@@ -248,6 +248,68 @@ func TestStaticRouteRootServesSubtreeAsURLRoot(t *testing.T) {
 	}
 }
 
+func TestStaticRouteFileServesExactArchiveFile(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "public-index", "public index")
+	writeTestBlob(t, root, "public-favicon", "public favicon")
+	writeTestBlob(t, root, "media-favicon", "media favicon")
+	writeTestBlob(t, root, "fallback-details", "fallback details")
+
+	db := &fakeDatabase{
+		files: map[string]domain.UploadFileRecord{
+			fileKey("foo", "public/index.html"): {
+				RelativePath: "public/index.html",
+				BlobPath:     "public-index",
+			},
+			fileKey("foo", "public/favicon.ico"): {
+				RelativePath: "public/favicon.ico",
+				BlobPath:     "public-favicon",
+			},
+			fileKey("foo", "public/favicon.ico/details"): {
+				RelativePath: "public/favicon.ico/details",
+				BlobPath:     "fallback-details",
+			},
+			fileKey("foo", "media/favicon.ico"): {
+				RelativePath: "media/favicon.ico",
+				BlobPath:     "media-favicon",
+			},
+		},
+		sites: []domain.PublishedSite{{Site: "foo", SiteSHA: "foo-sha", CurrentVersion: 2}},
+		uploadSettings: map[string]map[string]string{
+			"foo-sha:2": {appsettings.SettingRoutes: `[{"path":"/","kind":"static","root":"public"},{"path":"/favicon.ico","kind":"static","file":"media/favicon.ico"}]`},
+		},
+	}
+	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+
+	tests := map[string]struct {
+		path string
+		body string
+	}{
+		"exact file route uses static file target": {
+			path: "/favicon.ico",
+			body: "media favicon",
+		},
+		"child path falls back to root route": {
+			path: "/favicon.ico/details",
+			body: "fallback details",
+		},
+	}
+
+	for name, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Host = "foo.example.com"
+		rec := httptest.NewRecorder()
+		srv.Public.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%s", name, rec.Code, rec.Body.String())
+		}
+		if rec.Body.String() != tc.body {
+			t.Fatalf("%s: body = %q, want %q", name, rec.Body.String(), tc.body)
+		}
+	}
+}
+
 func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "site-index", "site index")
