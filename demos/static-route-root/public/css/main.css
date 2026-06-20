@@ -1,0 +1,13 @@
+body {
+  background: #ffebee;
+  color: #7f1d1d;
+  font-family: serif;
+}
+
+body::before {
+  content: "Wrong shadow CSS loaded from public/css/main.css";
+  display: block;
+  padding: 1rem;
+  background: #991b1b;
+  color: white;
+}

@@ -1,0 +1,13 @@
+routes:
+  - path: /
+    kind: static
+    root: public
+  - path: /css
+    kind: static
+    root: media/css
+  - path: /docs
+    kind: static
+    root: content/docs
+  - path: /shared
+    kind: static
+    root: alternate/shared

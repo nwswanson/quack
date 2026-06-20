@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Static Route Root Demo</title>
+    <link rel="stylesheet" href="/css/main.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Quack route-root demo</p>
+        <h1>Static routes can mount different archive folders at public URL paths.</h1>
+        <p>
+          This page is served by <code>path: /</code> with <code>root: public</code>.
+          The stylesheet is not inside <code>public/</code>; it is mounted from
+          <code>media/css</code> through the <code>/css</code> route.
+        </p>
+      </section>
+
+      <section>
+        <h2>Routes Under Test</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>URL route</th>
+              <th>Archive root</th>
+              <th>Example link</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>/</code></td>
+              <td><code>public</code></td>
+              <td><a href="/">Home index</a></td>
+            </tr>
+            <tr>
+              <td><code>/css</code></td>
+              <td><code>media/css</code></td>
+              <td><a href="/css/main.css">Mounted stylesheet</a></td>
+            </tr>
+            <tr>
+              <td><code>/docs</code></td>
+              <td><code>content/docs</code></td>
+              <td><a href="/docs/">Docs index</a></td>
+            </tr>
+            <tr>
+              <td><code>/shared</code></td>
+              <td><code>alternate/shared</code></td>
+              <td><a href="/shared/about.html">Shared about page</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Path Shadowing Checks</h2>
+        <p>
+          Longer matching static routes win. These links prove that files under
+          <code>public/</code> do not accidentally win when a more specific
+          route exists.
+        </p>
+        <nav class="links" aria-label="Demo links">
+          <a href="/docs/shadow.html">/docs/shadow.html uses content/docs</a>
+          <a href="/shared/about.html">/shared/about.html uses alternate/shared</a>
+          <a href="/css/main.css">/css/main.css uses media/css</a>
+          <a href="/css/">/css/ directory index</a>
+        </nav>
+      </section>
+
+      <section>
+        <h2>Archive Layout</h2>
+        <pre><code>demos/static-route-root/
+  site.yml
+  public/
+    index.html
+    css/main.css              # shadow file: not served at /css/main.css
+    docs/index.html           # shadow file: not served at /docs/
+    docs/shadow.html          # shadow file: not served at /docs/shadow.html
+    shared/about.html         # shadow file: not served at /shared/about.html
+  media/
+    css/
+      index.html
+      main.css                # served at /css/main.css
+  content/
+    docs/
+      index.html              # served at /docs/
+      shadow.html             # served at /docs/shadow.html
+  alternate/
+    shared/
+      about.html              # served at /shared/about.html</code></pre>
+      </section>
+    </main>
+  </body>
+</html>
