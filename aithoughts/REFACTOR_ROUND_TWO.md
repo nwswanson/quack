@@ -736,58 +736,67 @@ Add actual user-script execution only after routing, policy, persistence, and pa
 
 ## Requirements Before Starting
 
-* [ ] Runtime package exists.
-* [ ] Runtime HTTP adapter exists.
-* [ ] Route table exists.
-* [ ] Capability policy exists.
-* [ ] Release metadata supports runtime bundles.
-* [ ] Execution is disabled by default.
-* [ ] Tests prove static behavior is unaffected.
+* [x] Runtime package exists.
+* [x] Runtime HTTP adapter exists.
+* [x] Route table exists.
+* [x] Capability policy exists.
+* [x] Release metadata supports runtime bundles.
+* [x] Execution is disabled by default.
+* [x] Tests prove static behavior is unaffected.
 
 ## Tasks
 
-* [ ] Choose executor strategy:
+* [x] Choose executor strategy:
 
+  * [x] Starlark embedded interpreter.
   * [ ] Process sandbox.
   * [ ] WASM runtime.
   * [ ] Container isolation.
   * [ ] External worker service.
-* [ ] Define runtime limits:
+* [x] Define runtime limits:
 
-  * [ ] Max request body size.
-  * [ ] Max response body size.
-  * [ ] Max execution duration.
-  * [ ] Max memory.
-  * [ ] Max concurrent invocations.
-* [ ] Define filesystem behavior:
+  * [x] Max request body size.
+  * [x] Max response body size.
+  * [x] Max execution duration.
+  * [x] Max memory.
+  * [x] Max concurrent invocations.
 
-  * [ ] Read-only bundle.
-  * [ ] No arbitrary host filesystem access.
-  * [ ] Temporary directory policy.
-* [ ] Define network behavior:
+  Note: memory is explicitly denoted in persisted runtime limits for later
+  admin configuration, but Starlark-Go does not provide a hard memory limiter.
+  Phase 12 enforces bounded script/input/output sizes, execution steps,
+  duration, and concurrency.
+* [x] Define filesystem behavior:
 
-  * [ ] Disabled by default.
-  * [ ] Policy-gated if enabled.
-* [ ] Define secrets behavior:
+  * [x] Read-only bundle.
+  * [x] No arbitrary host filesystem access.
+  * [x] Temporary directory policy.
 
-  * [ ] No secrets by default.
-  * [ ] Explicit capability required.
-* [ ] Implement executor.
-* [ ] Add invocation logging.
-* [ ] Add structured errors.
-* [ ] Add metrics hooks.
-* [ ] Add integration tests for successful invocation.
-* [ ] Add integration tests for timeout, panic/error, oversized body, oversized response, and denied capability.
-* [ ] Add load/concurrency tests.
+  Note: the Phase 12 temporary directory policy is no temp directory exposed to
+  user code.
+* [x] Define network behavior:
+
+  * [x] Disabled by default.
+  * [x] Policy-gated if enabled.
+* [x] Define secrets behavior:
+
+  * [x] No secrets by default.
+  * [x] Explicit capability required.
+* [x] Implement executor.
+* [x] Add invocation logging.
+* [x] Add structured errors.
+* [x] Add metrics hooks.
+* [x] Add integration tests for successful invocation.
+* [x] Add integration tests for timeout, panic/error, oversized body, oversized response, and denied capability.
+* [x] Add load/concurrency tests.
 
 ## Acceptance Criteria
 
-* [ ] Runtime execution is opt-in.
-* [ ] Runtime execution is policy-gated.
-* [ ] Runtime execution has resource limits.
-* [ ] Runtime execution failures do not affect static serving.
-* [ ] Runtime execution does not require control API package changes except deployment metadata.
-* [ ] Runtime execution does not require static HTTP package changes.
+* [x] Runtime execution is opt-in.
+* [x] Runtime execution is policy-gated.
+* [x] Runtime execution has resource limits.
+* [x] Runtime execution failures do not affect static serving.
+* [x] Runtime execution does not require control API package changes except deployment metadata.
+* [x] Runtime execution does not require static HTTP package changes.
 
 ---
 
@@ -955,7 +964,7 @@ Make the new boundaries durable.
 
 ## Feature PRs
 
-* [ ] Phase 12: Add real runtime execution.
+* [x] Phase 12: Add real runtime execution.
 * [ ] Phase 13: Add WebSocket support.
 * [ ] Phase 14: Clean up composition root.
 * [ ] Phase 15: Documentation and architecture tests.

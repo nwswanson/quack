@@ -21,11 +21,12 @@ const (
 )
 
 type RouteDecision struct {
-	Site    string
-	Version int64
-	Kind    RouteKind
-	Path    string
-	Methods []string
+	Site           string
+	Version        int64
+	Kind           RouteKind
+	Path           string
+	Methods        []string
+	ResourceLimits appruntime.ResourceLimits
 }
 
 type RouteSource interface {
@@ -50,10 +51,9 @@ func (s service) LookupRoute(ctx context.Context, site string, urlPath string) (
 		}
 		routes := routesFromSettings(current.Settings)
 		if s.runtimeRoutes != nil {
-			// Phase 12 TODO: this intentionally reads metadata, not executable
-			// bundles. Keep release route lookup as a routing decision only; the
-			// runtime service should load and validate the bundle immediately before
-			// invocation.
+			// This intentionally reads metadata, not executable bundles. Keep
+			// release route lookup as a routing decision only; the runtime service
+			// loads and validates the bundle immediately before invocation.
 			runtimeRoutes, err := s.runtimeRoutes.ListCurrentRuntimeRoutes(ctx)
 			if err != nil {
 				return RouteDecision{}, false, err
@@ -95,15 +95,13 @@ func routesFromRuntimeMetadata(site string, siteSHA string, version int64, route
 		if kind != RouteHTTP && kind != RouteWebSocket {
 			continue
 		}
-		// Phase 12 TODO: enforce method constraints before invoking runtime code.
-		// Today method constraints are carried forward as metadata only; publichttp
-		// still allows GET/HEAD at the outer router and runtimehttp is disabled.
 		out = append(out, RouteDecision{
-			Site:    site,
-			Version: version,
-			Kind:    kind,
-			Path:    cleanRoutePath(route.RoutePath),
-			Methods: append([]string(nil), route.Methods...),
+			Site:           site,
+			Version:        version,
+			Kind:           kind,
+			Path:           cleanRoutePath(route.RoutePath),
+			Methods:        append([]string(nil), route.Methods...),
+			ResourceLimits: route.ResourceLimits,
 		})
 	}
 	return out

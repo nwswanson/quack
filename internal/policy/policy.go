@@ -13,10 +13,10 @@ const (
 	CapabilityDatabase = "database"
 	// CapabilityRuntimeHTTP gates dynamic HTTP route declaration and invocation.
 	//
-	// Phase 12 TODO: add separate capability keys for network access, secrets,
-	// writable temp storage, and any database/runtime-specific privileges. Do not
-	// let "runtime.http" become a broad permission to do everything user code
-	// might eventually request.
+	// Future runtime capabilities should use separate keys for network access,
+	// secrets, writable temp storage, and database privileges. Do not let
+	// "runtime.http" become a broad permission to do everything user code might
+	// eventually request.
 	CapabilityRuntimeHTTP = "runtime.http"
 )
 
@@ -52,10 +52,9 @@ func RequestsFromManifest(siteManifest manifest.Manifest) []CapabilityRequest {
 	}
 	for _, route := range siteManifest.Routes {
 		if route.Kind == manifest.RouteHTTP {
-			// Phase 12 TODO: this currently gates only the ability to declare HTTP
-			// runtime routes. When execution exists, route-specific capabilities
-			// from the manifest should be converted here too, then persisted in
-			// RouteMetadata.RequiredCapabilities.
+			// This gates declaration and invocation of HTTP runtime routes. Future
+			// route-specific capabilities should be converted here too, then
+			// persisted in RouteMetadata.RequiredCapabilities.
 			out = append(out, CapabilityRequest{Key: CapabilityRuntimeHTTP, Required: true, Value: "true"})
 			break
 		}
@@ -87,9 +86,9 @@ func DatabaseAllowedByRecords(policies []domain.PolicyRecord) (bool, string, err
 }
 
 func RuntimeHTTPAllowed(ctx context.Context, loader Loader, site string) (bool, string, error) {
-	// Phase 12 TODO: invocation-time checks may need actor/request context in
-	// addition to site. For public unauthenticated requests, keep the current
-	// system+site scopes unless a specific user identity model is introduced.
+	// Invocation-time checks may eventually need actor/request context in addition
+	// to site. For public unauthenticated requests, keep the current system+site
+	// scopes unless a specific user identity model is introduced.
 	policies, err := loader.LoadPolicies(ctx, ScopesFor(domain.AdminUser{}, site))
 	if err != nil {
 		return false, "", err

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"io"
 	"net/http"
 
 	"quack/internal/adminui"
@@ -9,6 +11,8 @@ import (
 	"quack/internal/publichttp"
 	"quack/internal/publishing"
 	"quack/internal/releases"
+	appruntime "quack/internal/runtime"
+	"quack/internal/runtimehttp"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	"quack/internal/statichttp"
@@ -74,11 +78,23 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 
 	publicMux := http.NewServeMux()
 	staticHandler := statichttp.New(store, read)
-	// Phase 12 TODO: construct the real runtime service here after choosing the
-	// executor strategy and pass it through publichttp.WithRuntime. The composition
-	// root should be the only place that knows about concrete executors, storage,
-	// repositories, loggers, and metrics sinks.
-	publichttp.New(staticHandler, publichttp.WithRoutes(publichttp.ReleaseRouteReader{Releases: releaseService, Policies: hot})).Register(publicMux)
+	starlarkExecutor, err := appruntime.NewStarlarkExecutor(appruntime.ScriptLoaderFunc(func(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+		return store.OpenBlob(ctx, objectKey)
+	}), appruntime.ResourceLimits{})
+	if err != nil {
+		starlarkExecutor = nil
+	}
+	runtimeService := appruntime.NewService(appruntime.ServiceOptions{
+		Repository:      hot,
+		Policies:        hot,
+		Executor:        starlarkExecutor,
+		EnableExecution: true,
+	})
+	publichttp.New(
+		staticHandler,
+		publichttp.WithRoutes(publichttp.ReleaseRouteReader{Releases: releaseService, Policies: hot}),
+		publichttp.WithRuntime(runtimehttp.New(runtimeService)),
+	).Register(publicMux)
 
 	return Servers{
 		Admin: &http.Server{

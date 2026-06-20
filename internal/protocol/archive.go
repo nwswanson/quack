@@ -118,7 +118,8 @@ func SanitizeServingPath(name string) (string, error) {
 }
 
 func IsSiteManifestArchiveEntry(header *tar.Header) bool {
-	return path.Clean(header.Name) == "site.yaml" && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA)
+	name := path.Clean(header.Name)
+	return (name == "site.yaml" || name == "site.yml") && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA)
 }
 
 func validateDirectory(directory string) error {

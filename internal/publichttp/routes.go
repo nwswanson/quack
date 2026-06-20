@@ -3,6 +3,7 @@ package publichttp
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"quack/internal/policy"
 	"quack/internal/protocol"
@@ -22,11 +23,13 @@ const (
 )
 
 type PublicRouteDecision struct {
-	Site         string
-	Version      int64
-	Kind         RouteKind
-	Path         string
-	DeniedReason string
+	Site           string
+	Version        int64
+	Kind           RouteKind
+	Path           string
+	Methods        []string
+	ResourceLimits appruntime.ResourceLimits
+	DeniedReason   string
 }
 
 type Handler struct {
@@ -49,10 +52,10 @@ func WithRoutes(routes RouteReader) Option {
 
 func WithRuntime(runtime runtimehttp.Handler) Option {
 	return func(h *Handler) {
-		// Phase 12 TODO: real execution should be introduced by passing an
-		// explicitly constructed runtimehttp.Handler here from server.New. Do not
-		// make publichttp instantiate an executor; this package should stay a
-		// transport router, not an execution composition root.
+		// Real execution is introduced by passing an explicitly constructed
+		// runtimehttp.Handler from server.New. Do not make publichttp instantiate
+		// an executor; this package should stay a transport router, not an
+		// execution composition root.
 		h.runtime = runtime
 	}
 }
@@ -70,11 +73,6 @@ func (h Handler) Register(mux *http.ServeMux) {
 }
 
 func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
 	decision, err := h.decide(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "public route lookup failed", "host", r.Host, "path", r.URL.Path, "error", err)
@@ -92,17 +90,25 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 
 	switch decision.Kind {
 	case RouteStatic:
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
 		h.static.ServeSiteFile(w, r, statichttp.Request{
 			Site:    decision.Site,
 			URLPath: decision.Path,
 		})
-	case RouteHTTP, RouteWebSocket:
-		// Phase 12 TODO: WebSocket and HTTP runtime paths need different adapter
-		// behavior before WebSocket execution is enabled. This shared branch is
-		// acceptable while everything is disabled, but real sockets should go
-		// through an upgrade-aware method with separate limits and lifecycle tests.
+	case RouteHTTP:
+		if !methodAllowed(r.Method, decision.Methods) {
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
 		h.runtime.ServeHTTPRoute(w, r, appruntime.InvocationRequest{
-			Site: decision.Site, Version: decision.Version, Route: decision.Path, Method: r.Method, Headers: r.Header,
+			Site: decision.Site, Version: decision.Version, Route: decision.Path, Method: r.Method, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
+		})
+	case RouteWebSocket:
+		h.runtime.ServeHTTPRoute(w, r, appruntime.InvocationRequest{
+			Site: decision.Site, Version: decision.Version, Route: decision.Path, Method: r.Method, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
 		})
 	default:
 		http.NotFound(w, r)
@@ -142,28 +148,39 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 	}
 	if decision.Kind == releases.RouteHTTP {
 		if r.Policies == nil {
-			// Phase 12 TODO: keep nil policy loader as deny-by-default. A missing
-			// policy dependency must never be interpreted as permission to execute
-			// dynamic code.
+			// Keep nil policy loader as deny-by-default. A missing policy
+			// dependency must never be interpreted as permission to execute dynamic
+			// code.
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, DeniedReason: "dynamic HTTP routes are disabled by administrator policy",
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: "dynamic HTTP routes are disabled by administrator policy",
 			}, true, nil
 		}
-		// Phase 12 TODO: this is the route-level gate before runtimehttp. The
-		// runtime service must repeat capability evaluation immediately before
-		// invoking the executor so cached route decisions cannot outlive a policy
-		// change.
+		// This is the route-level gate before runtimehttp. The runtime service
+		// repeats capability evaluation immediately before invoking the executor so
+		// cached route decisions cannot outlive a policy change.
 		allowed, reason, err := policy.RuntimeHTTPAllowed(req.Context(), r.Policies, site)
 		if err != nil {
 			return PublicRouteDecision{}, false, err
 		}
 		if !allowed {
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, DeniedReason: reason,
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: reason,
 			}, true, nil
 		}
 	}
 	return PublicRouteDecision{
-		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path,
+		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits,
 	}, true, nil
+}
+
+func methodAllowed(method string, methods []string) bool {
+	if len(methods) == 0 {
+		return true
+	}
+	for _, candidate := range methods {
+		if strings.EqualFold(method, candidate) {
+			return true
+		}
+	}
+	return false
 }

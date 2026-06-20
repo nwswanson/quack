@@ -75,3 +75,30 @@ func TestParseRejectsEmptyRouteMethod(t *testing.T) {
 		t.Fatalf("error = %q, want route method detail", err.Error())
 	}
 }
+
+func TestParseAllowsStarlarkHTTPRoute(t *testing.T) {
+	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n"
+	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Routes) != 1 || manifest.Routes[0].Runtime != "starlark" {
+		t.Fatalf("routes = %#v, want starlark runtime", manifest.Routes)
+	}
+}
+
+func TestParseRejectsRuntimeWithoutEntrypoint(t *testing.T) {
+	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n"
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "route.entrypoint") {
+		t.Fatalf("Parse error = %v, want entrypoint error", err)
+	}
+}
+
+func TestParseRejectsRuntimeOnStaticRoute(t *testing.T) {
+	body := "routes:\n  - path: /\n    kind: static\n    runtime: starlark\n    entrypoint: app.star\n"
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "route.runtime is only supported") {
+		t.Fatalf("Parse error = %v, want static runtime error", err)
+	}
+}

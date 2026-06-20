@@ -85,7 +85,11 @@ func (s service) UploadArchive(ctx context.Context, req Request) (protocol.Uploa
 		return protocol.UploadArchiveResponse{}, fmt.Errorf("save upload settings: %w", err)
 	}
 	if s.runtimeMetadata != nil {
-		routes := RuntimeRoutesFromManifest(upload, manifest)
+		routes, err := RuntimeRoutesFromManifest(upload, manifest)
+		if err != nil {
+			s.markUploadFailed(ctx, upload, err)
+			return protocol.UploadArchiveResponse{}, err
+		}
 		if err := s.runtimeMetadata.SaveRuntimeRoutes(ctx, upload.SiteSHA, upload.Version, routes); err != nil {
 			s.markUploadFailed(ctx, upload, err)
 			return protocol.UploadArchiveResponse{}, fmt.Errorf("save runtime routes: %w", err)
@@ -252,7 +256,7 @@ func ManifestSettings(manifest manifest.Manifest) map[string]string {
 	return settings
 }
 
-func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest.Manifest) []appruntime.RouteMetadata {
+func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest.Manifest) ([]appruntime.RouteMetadata, error) {
 	var out []appruntime.RouteMetadata
 	for _, route := range siteManifest.Routes {
 		switch route.Kind {
@@ -260,27 +264,52 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 		default:
 			continue
 		}
-		// Phase 12 TODO: attach the actual runtime bundle object key once upload
-		// accepts runtime artifacts. Static site uploads currently have no bundle,
-		// so BundleObjectKey intentionally remains empty and RuntimeKind remains
-		// disabled.
-		//
-		// Phase 12 TODO: parse manifest-declared resource limits and capabilities
-		// here. The persisted RequiredCapabilities should represent what this route
-		// needs at invocation time, not just the coarse route kind.
+		runtimeKind := appruntime.RuntimeDisabled
+		bundleObjectKey := ""
+		if route.Runtime == string(appruntime.RuntimeStarlark) {
+			runtimeKind = appruntime.RuntimeStarlark
+			entrypointPath, err := sanitizeServingPath(route.Entrypoint)
+			if err != nil {
+				return nil, err
+			}
+			file, ok := uploadedFileByPath(upload.Files, entrypointPath)
+			if !ok {
+				return nil, BadArchiveError{err: fmt.Errorf("runtime entrypoint %q was not found in upload", route.Entrypoint)}
+			}
+			bundleObjectKey = file.BlobPath
+		}
 		out = append(out, appruntime.RouteMetadata{
 			Site:                 upload.Site,
 			SiteSHA:              upload.SiteSHA,
 			Version:              upload.Version,
-			RuntimeKind:          appruntime.RuntimeDisabled,
+			RuntimeKind:          runtimeKind,
 			RouteKind:            appruntime.RouteKind(route.Kind),
 			RoutePath:            route.Path,
 			Entrypoint:           route.Entrypoint,
+			BundleObjectKey:      bundleObjectKey,
 			Methods:              append([]string(nil), route.Methods...),
 			RequiredCapabilities: runtimeCapabilities(route.Kind),
+			ResourceLimits: appruntime.ResourceLimits{
+				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,
+				MaxResponseBytes:  appruntime.DefaultMaxResponseBytes,
+				MaxDurationMillis: appruntime.DefaultMaxDuration.Milliseconds(),
+				MaxMemoryBytes:    appruntime.DefaultMaxMemoryBytes,
+				MaxConcurrency:    appruntime.DefaultMaxConcurrentInvocations,
+				MaxExecutionSteps: appruntime.DefaultMaxExecutionSteps,
+				MaxScriptBytes:    appruntime.DefaultMaxScriptBytes,
+			},
 		})
 	}
-	return out
+	return out, nil
+}
+
+func uploadedFileByPath(files []domain.UploadFileRecord, path string) (domain.UploadFileRecord, bool) {
+	for _, file := range files {
+		if file.RelativePath == path {
+			return file, true
+		}
+	}
+	return domain.UploadFileRecord{}, false
 }
 
 func runtimeCapabilities(kind manifest.RouteKind) []string {

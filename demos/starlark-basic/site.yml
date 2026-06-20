@@ -1,0 +1,6 @@
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]

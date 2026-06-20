@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"quack/internal/domain"
+	appruntime "quack/internal/runtime"
+	appsettings "quack/internal/settings"
+	"strings"
 	"testing"
 )
 
@@ -202,5 +205,67 @@ func TestSiteHostRootStillServesSite(t *testing.T) {
 	}
 	if rec.Body.String() != "site index" {
 		t.Fatalf("body = %q, want site index", rec.Body.String())
+	}
+}
+
+func TestPublicRuntimeStarlarkRouteExecutesBehindPolicyGate(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "app.star", `
+def handle(req):
+    method, path, query, headers, body = req
+    return (
+        202,
+        {"content-type": "text/plain", "x-runtime": "starlark"},
+        "%s %s %s %s" % (method, path, query, body),
+    )
+`)
+	writeTestBlob(t, root, "index", "static index")
+	db := &fakeDatabase{
+		files: map[string]domain.UploadFileRecord{
+			fileKey("foo", "index.html"): {RelativePath: "index.html", BlobPath: "index"},
+		},
+		sites: []domain.PublishedSite{{Site: "foo", SiteSHA: "foo-sha", CurrentVersion: 7}},
+		runtimeRoutes: map[string][]appruntime.RouteMetadata{
+			"foo-sha:7": {{
+				Site:                 "foo",
+				SiteSHA:              "foo-sha",
+				Version:              7,
+				RoutePath:            "/api",
+				RouteKind:            appruntime.RouteHTTP,
+				RuntimeKind:          appruntime.RuntimeStarlark,
+				BundleObjectKey:      "app.star",
+				Methods:              []string{http.MethodPost},
+				RequiredCapabilities: []string{"runtime.http"},
+			}},
+		},
+		policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeHTTPFeature,
+			Mode:      "allow",
+		}},
+	}
+	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/echo?x=1", strings.NewReader("hello"))
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	srv.Public.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if rec.Header().Get("X-Runtime") != "starlark" {
+		t.Fatalf("x-runtime = %q, want starlark", rec.Header().Get("X-Runtime"))
+	}
+	if rec.Body.String() != `POST /echo x=1 b"hello"` {
+		t.Fatalf("body = %q, want starlark response", rec.Body.String())
+	}
+
+	staticReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	staticReq.Host = "foo.example.com"
+	staticRec := httptest.NewRecorder()
+	srv.Public.Handler.ServeHTTP(staticRec, staticReq)
+	if staticRec.Code != http.StatusOK || staticRec.Body.String() != "static index" {
+		t.Fatalf("static response = %d %q, want unaffected static index", staticRec.Code, staticRec.Body.String())
 	}
 }

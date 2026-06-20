@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"quack/internal/domain"
@@ -57,6 +58,9 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	if route.RoutePath != "/api" || route.RouteKind != appruntime.RouteHTTP || route.Entrypoint != "main" {
 		t.Fatalf("runtime route = %#v, want /api http main", route)
 	}
+	if route.RuntimeKind != appruntime.RuntimeDisabled || route.BundleObjectKey != "" {
+		t.Fatalf("runtime route executable fields = %#v, want disabled route without bundle", route)
+	}
 	if !reflect.DeepEqual(route.Methods, []string{"GET", "POST"}) || !reflect.DeepEqual(route.RequiredCapabilities, []string{"runtime.http"}) {
 		t.Fatalf("runtime route policy fields = %#v, want methods and capability", route)
 	}
@@ -65,6 +69,62 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	}
 	if got, want := store.deletedVersions, []int64{1, 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("deleted versions = %#v, want %#v", got, want)
+	}
+}
+
+func TestServiceUploadArchivePersistsStarlarkRuntimeBundleMetadata(t *testing.T) {
+	db := &uploadServiceDB{}
+	store := &uploadServiceStore{blobPaths: map[string]string{"api/app.star": "blob:app"}}
+	service := NewService(db, store, uploadServiceRead{}, &uploadServiceWrite{})
+
+	_, err := service.UploadArchive(context.Background(), Request{
+		Site: "example.com",
+		Policy: domain.UploadPolicy{
+			MaxUploadFiles: domain.EffectiveValue[int64]{Value: 10},
+		},
+		Body: tarArchive(t, map[string]string{
+			"site.yaml":    "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: api/app.star\n    methods: [GET]\n",
+			"api/app.star": "def handle(req): return (200, {}, 'ok')\n",
+		}),
+	})
+	if err != nil {
+		t.Fatalf("UploadArchive returned error: %v", err)
+	}
+	if len(db.runtimeRoutes) != 1 {
+		t.Fatalf("runtime routes = %#v, want one route", db.runtimeRoutes)
+	}
+	route := db.runtimeRoutes[0]
+	if route.RuntimeKind != appruntime.RuntimeStarlark || route.BundleObjectKey != "blob:app" {
+		t.Fatalf("runtime route = %#v, want starlark blob metadata", route)
+	}
+	if route.ResourceLimits.MaxRequestBytes != appruntime.DefaultMaxRequestBytes ||
+		route.ResourceLimits.MaxResponseBytes != appruntime.DefaultMaxResponseBytes ||
+		route.ResourceLimits.MaxDurationMillis != appruntime.DefaultMaxDuration.Milliseconds() ||
+		route.ResourceLimits.MaxMemoryBytes != appruntime.DefaultMaxMemoryBytes ||
+		route.ResourceLimits.MaxConcurrency != appruntime.DefaultMaxConcurrentInvocations ||
+		route.ResourceLimits.MaxExecutionSteps != appruntime.DefaultMaxExecutionSteps {
+		t.Fatalf("resource limits = %#v, want runtime defaults", route.ResourceLimits)
+	}
+}
+
+func TestServiceUploadArchiveRejectsMissingStarlarkEntrypoint(t *testing.T) {
+	db := &uploadServiceDB{}
+	service := NewService(db, &uploadServiceStore{}, uploadServiceRead{}, &uploadServiceWrite{})
+
+	_, err := service.UploadArchive(context.Background(), Request{
+		Site: "example.com",
+		Policy: domain.UploadPolicy{
+			MaxUploadFiles: domain.EffectiveValue[int64]{Value: 10},
+		},
+		Body: tarArchive(t, map[string]string{
+			"site.yaml": "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: missing.star\n",
+		}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "runtime entrypoint") {
+		t.Fatalf("UploadArchive error = %v, want missing runtime entrypoint error", err)
+	}
+	if db.failedReason == "" {
+		t.Fatal("failed upload was not marked failed")
 	}
 }
 
@@ -123,6 +183,7 @@ func (db *uploadServiceDB) SaveRuntimeRoutes(ctx context.Context, siteSHA string
 
 type uploadServiceStore struct {
 	deletedVersions []int64
+	blobPaths       map[string]string
 }
 
 func (s *uploadServiceStore) AcceptFile(ctx context.Context, file appstorage.StoredFile) (appstorage.StoredFileResult, error) {
@@ -130,7 +191,11 @@ func (s *uploadServiceStore) AcceptFile(ctx context.Context, file appstorage.Sto
 	if err != nil {
 		return appstorage.StoredFileResult{}, err
 	}
-	return appstorage.StoredFileResult{BlobPath: "blob", FileSHA: "sha", Bytes: n}, nil
+	blobPath := "blob"
+	if s.blobPaths != nil && s.blobPaths[file.RelativePath] != "" {
+		blobPath = s.blobPaths[file.RelativePath]
+	}
+	return appstorage.StoredFileResult{BlobPath: blobPath, FileSHA: "sha", Bytes: n}, nil
 }
 
 func (s *uploadServiceStore) OpenBlob(ctx context.Context, blobPath string) (file *os.File, err error) {

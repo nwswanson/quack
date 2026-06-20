@@ -36,6 +36,7 @@ const (
 type Route struct {
 	Path       string    `json:"path" yaml:"path"`
 	Kind       RouteKind `json:"kind" yaml:"kind"`
+	Runtime    string    `json:"runtime,omitempty" yaml:"runtime,omitempty"`
 	Entrypoint string    `json:"entrypoint" yaml:"entrypoint"`
 	Methods    []string  `json:"methods,omitempty" yaml:"methods,omitempty"`
 }
@@ -84,6 +85,17 @@ func validateRoutes(routes []Route) error {
 		case "", RouteStatic, RouteHTTP, RouteWebSocket:
 		default:
 			return fmt.Errorf("unsupported route kind %q", route.Kind)
+		}
+		switch strings.TrimSpace(route.Runtime) {
+		case "", "starlark":
+		default:
+			return fmt.Errorf("unsupported route runtime %q", route.Runtime)
+		}
+		if strings.TrimSpace(route.Runtime) != "" && route.Kind != RouteHTTP {
+			return fmt.Errorf("route.runtime is only supported for http routes")
+		}
+		if strings.TrimSpace(route.Runtime) != "" && strings.TrimSpace(route.Entrypoint) == "" {
+			return fmt.Errorf("route.entrypoint is required when route.runtime is set")
 		}
 		for _, method := range route.Methods {
 			if strings.TrimSpace(method) == "" {

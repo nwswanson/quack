@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"archive/tar"
 	"io"
 	"net/http"
 	"strings"
@@ -58,6 +59,17 @@ func TestSanitizeServingPath(t *testing.T) {
 
 	if err := ValidateArchivePath("../index.html"); err == nil {
 		t.Fatal("expected invalid archive path")
+	}
+}
+
+func TestIsSiteManifestArchiveEntryAcceptsYamlAndYml(t *testing.T) {
+	for _, name := range []string{"site.yaml", "site.yml"} {
+		if !IsSiteManifestArchiveEntry(&tar.Header{Name: name, Typeflag: tar.TypeReg}) {
+			t.Fatalf("%s was not accepted as site manifest", name)
+		}
+	}
+	if IsSiteManifestArchiveEntry(&tar.Header{Name: "site.yml", Typeflag: tar.TypeDir}) {
+		t.Fatal("directory site.yml should not be accepted as site manifest")
 	}
 }
 

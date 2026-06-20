@@ -809,10 +809,9 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 		if route.RuntimeKind == "" {
 			route.RuntimeKind = appruntime.RuntimeDisabled
 		}
-		// Phase 12 TODO: validate BundleObjectKey, RuntimeKind, ResourceLimits,
-		// Methods, and RequiredCapabilities before persistence. The current schema
-		// stores future metadata, but execution must not trust malformed rows from
-		// older releases or manual database edits.
+		// Validate the basic executable metadata before persistence. Runtime
+		// service still fails closed at invocation time because older releases or
+		// manual database edits may contain malformed rows.
 		methodsJSON, err := json.Marshal(route.Methods)
 		if err != nil {
 			return fmt.Errorf("marshal runtime route methods: %w", err)
@@ -847,10 +846,9 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 }
 
 func (d *Database) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
-	// Phase 12 TODO: this is the likely lookup for runtime.Service before
-	// invocation. Keep it narrow: route metadata by release identity. If execution
-	// needs blob contents, secrets, or environment, add separate interfaces instead
-	// of growing this into a catch-all runtime database API.
+	// Keep this narrow: route metadata by release identity. If execution needs
+	// blob contents, secrets, or environment, add separate interfaces instead of
+	// growing this into a catch-all runtime database API.
 	rows, err := d.readDB.QueryContext(ctx, `
 		SELECT COALESCE(s.site, ''),
 			rr.site_sha,
@@ -877,9 +875,9 @@ func (d *Database) ListRuntimeRoutes(ctx context.Context, siteSHA string, versio
 }
 
 func (d *Database) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
-	// Phase 12 TODO: public routing can cache this current-release view, but the
-	// executor path should re-check the specific route metadata and policy at
-	// invocation time so publish/rollback/policy changes fail closed.
+	// Public routing can cache this current-release view, but the executor path
+	// re-checks route metadata and policy at invocation time so
+	// publish/rollback/policy changes fail closed.
 	rows, err := d.readDB.QueryContext(ctx, `
 		SELECT s.site,
 			rr.site_sha,
