@@ -17,15 +17,10 @@ const MaxBytes int64 = 64 << 10
 type Manifest struct {
 	Features Features `json:"features" yaml:"features"`
 	Routes   []Route  `json:"routes" yaml:"routes"`
-	Static   Static   `json:"static" yaml:"static"`
 }
 
 type Features struct {
 	Database FeatureFlag `json:"database" yaml:"database"`
-}
-
-type Static struct {
-	Root string `json:"root" yaml:"root"`
 }
 
 type FeatureFlag struct {
@@ -79,11 +74,6 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 	if manifest.Features.Database.Required && !manifest.Features.Database.Enabled {
 		return Manifest{}, fmt.Errorf("database.required cannot be true when database.enabled is false")
 	}
-	staticRoot, err := SanitizeStaticRoot(manifest.Static.Root)
-	if err != nil {
-		return Manifest{}, err
-	}
-	manifest.Static.Root = staticRoot
 	if err := validateRoutes(manifest.Routes); err != nil {
 		return Manifest{}, err
 	}

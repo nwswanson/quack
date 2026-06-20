@@ -147,6 +147,8 @@ func ResolveSiteFile(ctx context.Context, hot SiteFileResolver, site string, url
 			resolvedURLPath = staticURLPathForRoute(urlPath, matchedRoutePath)
 			relativePath, wantsIndex = RequestedRelativePath(resolvedURLPath)
 		} else {
+			// Deprecated: legacy upload setting fallback for releases uploaded
+			// before static route roots existed. Remove with SettingStaticRoot.
 			staticRoot, err = manifest.SanitizeStaticRoot(current.Settings[appsettings.SettingStaticRoot])
 			if err != nil {
 				return ServeSiteFileDecision{}, err

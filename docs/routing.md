@@ -142,9 +142,10 @@ When set, it is a relative archive path. It is normalized by
 - path components are sanitized like uploaded serving paths
 
 `root` is only valid on static routes. HTTP and WebSocket routes cannot set it.
+Top-level `static.root` is no longer part of the manifest schema; uploads that
+declare `static:` fail unknown-field validation.
 
-The legacy top-level `static.root` setting is still accepted as a compatibility
-fallback, but new manifests should prefer:
+Use route-level static roots instead:
 
 ```yaml
 routes:
@@ -153,13 +154,13 @@ routes:
     root: public
 ```
 
-At upload time, the sanitized value is persisted as upload setting
-`routes` JSON with the route declaration. Legacy `static.root` is still
-persisted when present.
+At upload time, the sanitized value is persisted in the `routes` JSON upload
+setting with the route declaration.
 
 At serve time, static resolution validates stored route roots and legacy
-`static.root` values again before using them. This makes malformed stored rows
-fail closed instead of accidentally serving from the wrong subtree.
+`static.root` values from older releases again before using them. This makes
+malformed stored rows fail closed instead of accidentally serving from the wrong
+subtree.
 
 ### `routes`
 
@@ -186,7 +187,6 @@ First, `uploads.ManifestSettings` stores manifest-derived settings in
 
 - `features.database.enabled`
 - `features.database.required`
-- legacy `static.root`
 - `routes` as JSON, when the manifest declared routes
 
 Second, `uploads.RuntimeRoutesFromManifest` stores executable dynamic route

@@ -50,8 +50,10 @@ const (
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
 	SettingRuntimeHTTPFeature      = "features.runtime.http.enabled"
-	SettingStaticRoot              = "static.root"
-	SettingRoutes                  = "routes"
+	// Deprecated: static.root is kept only for current releases uploaded before
+	// static route roots existed. New manifests must use routes[].root.
+	SettingStaticRoot = "static.root"
+	SettingRoutes     = "routes"
 )
 
 var registry = map[string]SettingDefinition{
@@ -87,6 +89,8 @@ var registry = map[string]SettingDefinition{
 		Key: SettingRuntimeHTTPFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
+	// Deprecated: legacy upload setting retained for old release compatibility.
+	// Remove this once stored static.root releases no longer need to serve.
 	SettingStaticRoot: {
 		Key: SettingStaticRoot, Type: SettingTypeString, DefaultValue: "",
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,

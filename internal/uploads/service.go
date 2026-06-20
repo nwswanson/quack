@@ -248,7 +248,6 @@ func ManifestSettings(manifest manifest.Manifest) map[string]string {
 	settings := map[string]string{
 		appsettings.SettingDatabaseFeature:         boolSetting(manifest.Features.Database.Enabled),
 		appsettings.SettingDatabaseFeatureRequired: boolSetting(manifest.Features.Database.Required),
-		appsettings.SettingStaticRoot:              manifest.Static.Root,
 	}
 	if len(manifest.Routes) > 0 {
 		data, _ := json.Marshal(manifest.Routes)

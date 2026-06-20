@@ -34,7 +34,7 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 		},
 		Body: tarArchive(t, map[string]string{
 			"index.html": "hello",
-			"site.yaml":  "static:\n  root: public\nfeatures:\n  database:\n    enabled: true\nroutes:\n  - path: /api\n    kind: http\n    entrypoint: main\n    methods: [GET, POST]\n",
+			"site.yaml":  "features:\n  database:\n    enabled: true\nroutes:\n  - path: /\n    kind: static\n    root: public\n  - path: /api\n    kind: http\n    entrypoint: main\n    methods: [GET, POST]\n",
 		}),
 	})
 	if err != nil {
@@ -49,10 +49,10 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	if got, want := write.settings["features.database.enabled"], "true"; got != want {
 		t.Fatalf("manifest setting = %q, want %q", got, want)
 	}
-	if got, want := write.settings[appsettings.SettingStaticRoot], "public"; got != want {
-		t.Fatalf("static root setting = %q, want %q", got, want)
+	if _, ok := write.settings[appsettings.SettingStaticRoot]; ok {
+		t.Fatalf("static root setting was persisted from manifest: %#v", write.settings)
 	}
-	if got, want := write.settings["routes"], `[{"path":"/api","kind":"http","entrypoint":"main","methods":["GET","POST"]}]`; got != want {
+	if got, want := write.settings["routes"], `[{"path":"/","kind":"static","root":"public","entrypoint":""},{"path":"/api","kind":"http","entrypoint":"main","methods":["GET","POST"]}]`; got != want {
 		t.Fatalf("routes setting = %q, want %q", got, want)
 	}
 	if len(db.runtimeRoutes) != 1 {
