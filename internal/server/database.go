@@ -2,8 +2,8 @@ package server
 
 import (
 	"quack/internal/adminui"
+	"quack/internal/cache"
 	"quack/internal/controlapi"
-	"quack/internal/hotdata"
 	"quack/internal/releases"
 	"quack/internal/sites"
 	"quack/internal/uploads"
@@ -11,7 +11,7 @@ import (
 
 type Database interface {
 	uploads.UploadRepository
-	hotdata.Source
+	cache.Source
 	sites.SiteWriteRepository
 	adminui.UserRepository
 	adminui.SessionRepository

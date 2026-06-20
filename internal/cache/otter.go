@@ -1,4 +1,4 @@
-package hotdata
+package cache
 
 import (
 	"context"
@@ -8,75 +8,68 @@ import (
 	"sync"
 	"time"
 
+	"github.com/maypok86/otter"
+
 	"quack/internal/domain"
 	appruntime "quack/internal/runtime"
 )
 
-type MemoryHotDataReaderOptions struct {
+type OtterHotDataReaderOptions struct {
+	Capacity    int
 	TTL         time.Duration
 	NegativeTTL time.Duration
 	Jitter      time.Duration
-	Now         func() time.Time
 }
 
-type memoryHotDataReader struct {
+type otterHotDataReader struct {
 	source      HotDataReader
+	cache       otter.CacheWithVariableTTL[string, any]
 	ttl         time.Duration
 	negativeTTL time.Duration
 	jitter      time.Duration
-	now         func() time.Time
 
-	mu      sync.Mutex
-	entries map[string]memoryEntry
-	calls   map[string]*memoryCall
+	mu    sync.Mutex
+	calls map[string]*otterCall
 }
 
-type memoryEntry struct {
-	value  any
-	expiry time.Time
-}
-
-type memoryCall struct {
+type otterCall struct {
 	done  chan struct{}
 	value any
 	err   error
 }
 
-type cachedCurrentSiteFile struct {
-	file       domain.UploadFileRecord
-	ok         bool
-	siteExists bool
-}
-
-type cachedCurrentSiteFiles struct {
-	files      []domain.UploadFileRecord
-	siteExists bool
-}
-
-func NewMemoryHotDataReader(source HotDataReader, opts MemoryHotDataReaderOptions) MutableHotDataReader {
+func NewOtterHotDataReader(source HotDataReader, opts OtterHotDataReaderOptions) MutableHotDataReader {
+	if opts.Capacity <= 0 {
+		opts.Capacity = 10_000
+	}
 	if opts.TTL <= 0 {
 		opts.TTL = 5 * time.Second
 	}
 	if opts.NegativeTTL <= 0 {
 		opts.NegativeTTL = time.Second
 	}
-	if opts.Now == nil {
-		opts.Now = time.Now
+	cache, err := otter.MustBuilder[string, any](opts.Capacity).WithVariableTTL().Build()
+	if err != nil {
+		panic(err)
 	}
-	return &memoryHotDataReader{
+	return &otterHotDataReader{
 		source:      source,
+		cache:       cache,
 		ttl:         opts.TTL,
 		negativeTTL: opts.NegativeTTL,
 		jitter:      opts.Jitter,
-		now:         opts.Now,
-		entries:     map[string]memoryEntry{},
-		calls:       map[string]*memoryCall{},
+		calls:       map[string]*otterCall{},
 	}
 }
 
-func (r *memoryHotDataReader) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
+func (r *otterHotDataReader) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	value, err := r.load(ctx, "server_settings", r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.GetServerSettings(ctx)
+		settings, err := r.source.GetServerSettings(ctx)
+		if err != nil {
+			return domain.ServerSettings{}, err
+		}
+		settings.Locked = cloneBoolMap(settings.Locked)
+		return settings, nil
 	})
 	if err != nil {
 		return domain.ServerSettings{}, err
@@ -86,10 +79,14 @@ func (r *memoryHotDataReader) GetServerSettings(ctx context.Context) (domain.Ser
 	return settings, nil
 }
 
-func (r *memoryHotDataReader) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
+func (r *otterHotDataReader) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {
 	key := "policies:" + policyScopesKey(scopes)
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.LoadPolicies(ctx, scopes)
+		policies, err := r.source.LoadPolicies(ctx, scopes)
+		if err != nil {
+			return nil, err
+		}
+		return append([]domain.PolicyRecord(nil), policies...), nil
 	})
 	if err != nil {
 		return nil, err
@@ -97,10 +94,14 @@ func (r *memoryHotDataReader) LoadPolicies(ctx context.Context, scopes []domain.
 	return append([]domain.PolicyRecord(nil), value.([]domain.PolicyRecord)...), nil
 }
 
-func (r *memoryHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
+func (r *otterHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {
 	key := "upload_settings:" + siteSHA + ":" + strconv.FormatInt(version, 10)
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.LoadUploadSettings(ctx, siteSHA, version)
+		settings, err := r.source.LoadUploadSettings(ctx, siteSHA, version)
+		if err != nil {
+			return nil, err
+		}
+		return cloneStringMap(settings), nil
 	})
 	if err != nil {
 		return nil, err
@@ -108,9 +109,13 @@ func (r *memoryHotDataReader) LoadUploadSettings(ctx context.Context, siteSHA st
 	return cloneStringMap(value.(map[string]string)), nil
 }
 
-func (r *memoryHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
+func (r *otterHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	value, err := r.load(ctx, "current_site_manifests", r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.ListCurrentSiteManifests(ctx)
+		manifests, err := r.source.ListCurrentSiteManifests(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return cloneCurrentSiteManifests(manifests), nil
 	})
 	if err != nil {
 		return nil, err
@@ -118,9 +123,13 @@ func (r *memoryHotDataReader) ListCurrentSiteManifests(ctx context.Context) ([]d
 	return cloneCurrentSiteManifests(value.([]domain.CurrentSiteManifest)), nil
 }
 
-func (r *memoryHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
+func (r *otterHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
 	value, err := r.load(ctx, "current_runtime_routes", r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.ListCurrentRuntimeRoutes(ctx)
+		routes, err := r.source.ListCurrentRuntimeRoutes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return cloneRuntimeRoutes(routes), nil
 	})
 	if err != nil {
 		return nil, err
@@ -128,10 +137,14 @@ func (r *memoryHotDataReader) ListCurrentRuntimeRoutes(ctx context.Context) ([]a
 	return cloneRuntimeRoutes(value.([]appruntime.RouteMetadata)), nil
 }
 
-func (r *memoryHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
+func (r *otterHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
 	key := "runtime_routes:" + siteSHA + ":" + strconv.FormatInt(version, 10)
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.ListRuntimeRoutes(ctx, siteSHA, version)
+		routes, err := r.source.ListRuntimeRoutes(ctx, siteSHA, version)
+		if err != nil {
+			return nil, err
+		}
+		return cloneRuntimeRoutes(routes), nil
 	})
 	if err != nil {
 		return nil, err
@@ -139,10 +152,14 @@ func (r *memoryHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA str
 	return cloneRuntimeRoutes(value.([]appruntime.RouteMetadata)), nil
 }
 
-func (r *memoryHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
+func (r *otterHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	key := "policy_violations:" + siteSHA + ":" + strconv.FormatInt(version, 10)
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
-		return r.source.ListPolicyViolations(ctx, siteSHA, version)
+		violations, err := r.source.ListPolicyViolations(ctx, siteSHA, version)
+		if err != nil {
+			return nil, err
+		}
+		return append([]domain.PolicyViolation(nil), violations...), nil
 	})
 	if err != nil {
 		return nil, err
@@ -150,7 +167,7 @@ func (r *memoryHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA 
 	return append([]domain.PolicyViolation(nil), value.([]domain.PolicyViolation)...), nil
 }
 
-func (r *memoryHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
+func (r *otterHotDataReader) FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error) {
 	key := "current_site_file:" + site + ":" + relativePath
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
 		file, ok, siteExists, err := r.source.FindCurrentSiteFile(ctx, site, relativePath)
@@ -166,7 +183,7 @@ func (r *memoryHotDataReader) FindCurrentSiteFile(ctx context.Context, site stri
 	return cached.file, cached.ok, cached.siteExists, nil
 }
 
-func (r *memoryHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
+func (r *otterHotDataReader) ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error) {
 	key := "current_site_files:" + site
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
 		files, siteExists, err := r.source.ListCurrentSiteFiles(ctx, site)
@@ -182,12 +199,12 @@ func (r *memoryHotDataReader) ListCurrentSiteFiles(ctx context.Context, site str
 	return append([]domain.UploadFileRecord(nil), cached.files...), cached.siteExists, nil
 }
 
-func (r *memoryHotDataReader) InvalidateServerSettings(ctx context.Context) error {
+func (r *otterHotDataReader) InvalidateServerSettings(ctx context.Context) error {
 	r.deletePrefix("server_settings")
 	return nil
 }
 
-func (r *memoryHotDataReader) InvalidateSite(ctx context.Context, site string) error {
+func (r *otterHotDataReader) InvalidateSite(ctx context.Context, site string) error {
 	r.deletePrefix("current_site_file:" + site + ":")
 	r.deletePrefix("current_site_files:" + site)
 	r.deletePrefix("current_site_manifests")
@@ -195,7 +212,7 @@ func (r *memoryHotDataReader) InvalidateSite(ctx context.Context, site string) e
 	return nil
 }
 
-func (r *memoryHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA string, version int64) error {
+func (r *otterHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA string, version int64) error {
 	r.deletePrefix("upload_settings:" + siteSHA + ":")
 	r.deletePrefix("runtime_routes:" + siteSHA + ":")
 	r.deletePrefix("policy_violations:" + siteSHA + ":")
@@ -204,20 +221,18 @@ func (r *memoryHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA
 	return nil
 }
 
-func (r *memoryHotDataReader) InvalidatePolicies(ctx context.Context) error {
+func (r *otterHotDataReader) InvalidatePolicies(ctx context.Context) error {
 	r.deletePrefix("policies:")
 	r.deletePrefix("policy_violations:")
 	return nil
 }
 
-func (r *memoryHotDataReader) load(ctx context.Context, key string, ttl time.Duration, load func(context.Context) (any, error)) (any, error) {
-	now := r.now()
-	r.mu.Lock()
-	if entry, ok := r.entries[key]; ok && now.Before(entry.expiry) {
-		value := entry.value
-		r.mu.Unlock()
+func (r *otterHotDataReader) load(ctx context.Context, key string, ttl time.Duration, load func(context.Context) (any, error)) (any, error) {
+	if value, ok := r.cache.Get(key); ok {
 		return value, nil
 	}
+
+	r.mu.Lock()
 	if call := r.calls[key]; call != nil {
 		done := call.done
 		r.mu.Unlock()
@@ -228,7 +243,7 @@ func (r *memoryHotDataReader) load(ctx context.Context, key string, ttl time.Dur
 			return nil, ctx.Err()
 		}
 	}
-	call := &memoryCall{done: make(chan struct{})}
+	call := &otterCall{done: make(chan struct{})}
 	r.calls[key] = call
 	r.mu.Unlock()
 
@@ -244,7 +259,7 @@ func (r *memoryHotDataReader) load(ctx context.Context, key string, ttl time.Dur
 		if files, ok := value.(cachedCurrentSiteFiles); ok && !files.siteExists {
 			ttl = r.negativeTTL
 		}
-		r.entries[key] = memoryEntry{value: value, expiry: now.Add(r.ttlWithJitter(key, ttl))}
+		r.cache.Set(key, value, r.ttlWithJitter(key, ttl))
 	}
 	delete(r.calls, key)
 	close(call.done)
@@ -252,7 +267,7 @@ func (r *memoryHotDataReader) load(ctx context.Context, key string, ttl time.Dur
 	return value, err
 }
 
-func (r *memoryHotDataReader) ttlWithJitter(key string, ttl time.Duration) time.Duration {
+func (r *otterHotDataReader) ttlWithJitter(key string, ttl time.Duration) time.Duration {
 	if r.jitter <= 0 {
 		return ttl
 	}
@@ -265,25 +280,8 @@ func (r *memoryHotDataReader) ttlWithJitter(key string, ttl time.Duration) time.
 	return ttl + offset
 }
 
-func (r *memoryHotDataReader) deletePrefix(prefix string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for key := range r.entries {
-		if key == prefix || strings.HasPrefix(key, prefix) {
-			delete(r.entries, key)
-		}
-	}
-}
-
-func policyScopesKey(scopes []domain.PolicyScope) string {
-	var b strings.Builder
-	for i, scope := range scopes {
-		if i > 0 {
-			b.WriteByte('|')
-		}
-		b.WriteString(string(scope.Type))
-		b.WriteByte(':')
-		b.WriteString(scope.ID)
-	}
-	return b.String()
+func (r *otterHotDataReader) deletePrefix(prefix string) {
+	r.cache.DeleteByFunc(func(key string, value any) bool {
+		return key == prefix || strings.HasPrefix(key, prefix)
+	})
 }

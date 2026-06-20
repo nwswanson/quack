@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"quack/internal/adminui"
+	"quack/internal/cache"
 	"quack/internal/controlapi"
-	"quack/internal/hotdata"
 	"quack/internal/publichttp"
 	"quack/internal/publishing"
 	"quack/internal/releases"
@@ -47,9 +47,9 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	}
 
 	adminMux := http.NewServeMux()
-	source := hotdata.NewPassthroughHotDataReader(db)
+	source := cache.NewPassthroughHotDataReader(db)
 	//hot := hotdata.NewMemoryHotDataReader(source, hotdata.MemoryHotDataReaderOptions{})
-	hot := hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{})
+	hot := cache.NewOtterHotDataReader(source, cache.OtterHotDataReaderOptions{})
 	read := sites.NewSiteReadService(hot)
 	write := sites.NewSiteWriteService(db, hot, hot)
 	uploadService := uploads.NewService(db, store, read, write)

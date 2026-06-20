@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"quack/internal/cache"
 	"quack/internal/domain"
-	"quack/internal/hotdata"
 	"quack/internal/publichttp"
 	appruntime "quack/internal/runtime"
 	"quack/internal/settings"
@@ -47,11 +47,11 @@ func BenchmarkServeFileWithBlob(b *testing.B) {
 		fileOK:     true,
 		siteExists: true,
 	}
-	benchServeFile(b, "passthrough", hotdata.NewPassthroughHotDataReader(source))
-	benchServeFile(b, "otter", hotdata.NewOtterHotDataReader(source, hotdata.OtterHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute}))
+	benchServeFile(b, "passthrough", cache.NewPassthroughHotDataReader(source))
+	benchServeFile(b, "otter", cache.NewOtterHotDataReader(source, cache.OtterHotDataReaderOptions{TTL: time.Minute, NegativeTTL: time.Minute}))
 }
 
-func benchServeFile(b *testing.B, name string, reader hotdata.HotDataReader) {
+func benchServeFile(b *testing.B, name string, reader cache.HotDataReader) {
 	staticHandler := statichttp.New(staticStore{}, sites.NewSiteReadService(reader))
 	h := publichttp.New(staticHandler)
 	mux := http.NewServeMux()
