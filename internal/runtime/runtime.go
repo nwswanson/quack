@@ -14,6 +14,7 @@ import (
 	"quack/internal/policy"
 
 	"go.starlark.net/starlark"
+	"go.starlark.net/starlarkjson"
 )
 
 var ErrDisabled = errors.New("runtime execution is disabled")
@@ -446,7 +447,10 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	}()
 	defer close(done)
 
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, nil)
+	predeclared := starlark.StringDict{
+		"json": starlarkjson.Module,
+	}
+	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, predeclared)
 	if err != nil {
 		return InvocationResponse{}, wrapStarlarkError(err)
 	}
