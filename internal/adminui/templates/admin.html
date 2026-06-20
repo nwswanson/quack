@@ -194,14 +194,26 @@
             <label>
               Database feature policy
               <select name="database_policy_mode">
-                <option value="inherit" {{if eq .Policy.Mode "inherit"}}selected{{end}}>inherit</option>
-                <option value="allow" {{if eq .Policy.Mode "allow"}}selected{{end}}>allow</option>
-                <option value="deny" {{if eq .Policy.Mode "deny"}}selected{{end}}>deny</option>
+                <option value="inherit" {{if eq .DatabasePolicy.Mode "inherit"}}selected{{end}}>inherit</option>
+                <option value="allow" {{if eq .DatabasePolicy.Mode "allow"}}selected{{end}}>allow</option>
+                <option value="deny" {{if eq .DatabasePolicy.Mode "deny"}}selected{{end}}>deny</option>
               </select>
             </label>
             <label>
-              Reason
-              <input name="database_policy_reason" value="{{.Policy.Reason}}">
+              Database policy reason
+              <input name="database_policy_reason" value="{{.DatabasePolicy.Reason}}">
+            </label>
+            <label>
+              Dynamic HTTP routes policy
+              <select name="runtime_http_policy_mode">
+                <option value="inherit" {{if eq .RuntimeHTTPPolicy.Mode "inherit"}}selected{{end}}>inherit</option>
+                <option value="allow" {{if eq .RuntimeHTTPPolicy.Mode "allow"}}selected{{end}}>allow</option>
+                <option value="deny" {{if eq .RuntimeHTTPPolicy.Mode "deny"}}selected{{end}}>deny</option>
+              </select>
+            </label>
+            <label>
+              Dynamic HTTP routes policy reason
+              <input name="runtime_http_policy_reason" value="{{.RuntimeHTTPPolicy.Reason}}">
             </label>
             <button type="submit">Save policy</button>
           </form>

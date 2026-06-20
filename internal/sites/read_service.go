@@ -29,6 +29,7 @@ type SiteReadService interface {
 	CurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ServeSiteFile(ctx context.Context, site string, urlPath string) (ServeSiteFileDecision, error)
 	SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error)
+	SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error)
 }
 
 type ServeSiteFileStatus string
@@ -177,13 +178,21 @@ func currentSiteServingStatus(ctx context.Context, hot SiteFileResolver, site st
 }
 
 func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return s.systemPolicy(ctx, appsettings.SettingDatabaseFeature)
+}
+
+func (s siteReadService) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return s.systemPolicy(ctx, appsettings.SettingRuntimeHTTPFeature)
+}
+
+func (s siteReadService) systemPolicy(ctx context.Context, key string) (domain.PolicyRecord, error) {
 	policies, err := s.hot.LoadPolicies(ctx, []domain.PolicyScope{{Type: domain.ScopeSystem, ID: ""}})
 	if err != nil {
 		return domain.PolicyRecord{}, err
 	}
-	policy := domain.PolicyRecord{ScopeType: domain.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: "inherit"}
+	policy := domain.PolicyRecord{ScopeType: domain.ScopeSystem, Key: key, Mode: "inherit"}
 	for _, p := range policies {
-		if p.Key == appsettings.SettingDatabaseFeature {
+		if p.Key == key {
 			policy = p
 			break
 		}

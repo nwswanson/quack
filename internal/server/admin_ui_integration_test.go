@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"quack/internal/adminui"
 	"quack/internal/domain"
+	appsettings "quack/internal/settings"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,9 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if !strings.Contains(rootRec.Body.String(), "Server Settings") {
 		t.Fatalf("body = %q, want server settings section", rootRec.Body.String())
 	}
+	if !strings.Contains(rootRec.Body.String(), "Dynamic HTTP routes policy") {
+		t.Fatalf("body = %q, want dynamic HTTP routes policy control", rootRec.Body.String())
+	}
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	logoutReq.Host = "quack.example.com"
@@ -102,6 +106,37 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	}
 	if _, ok := db.sessions[cookie.Value]; ok {
 		t.Fatal("session still exists after logout")
+	}
+}
+
+func TestAdminPolicyUpdateSavesDatabaseAndRuntimeHTTPPolicies(t *testing.T) {
+	db := &fakeDatabase{
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+	}
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+
+	form := "database_policy_mode=deny&database_policy_reason=db+off&runtime_http_policy_mode=allow&runtime_http_policy_reason=runtime+ok"
+	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(form))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://quack.example.com")
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	got := map[string]domain.PolicyRecord{}
+	for _, policy := range db.policies {
+		got[policy.Key] = policy
+	}
+	if policy := got[appsettings.SettingDatabaseFeature]; policy.Mode != "deny" || policy.Reason != "db off" {
+		t.Fatalf("database policy = %+v, want deny db off", policy)
+	}
+	if policy := got[appsettings.SettingRuntimeHTTPFeature]; policy.Mode != "allow" || policy.Reason != "runtime ok" {
+		t.Fatalf("runtime HTTP policy = %+v, want allow runtime ok", policy)
 	}
 }
 

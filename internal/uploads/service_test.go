@@ -243,6 +243,10 @@ func (r uploadServiceRead) SystemDatabasePolicy(ctx context.Context) (domain.Pol
 	return domain.PolicyRecord{}, nil
 }
 
+func (r uploadServiceRead) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
 type uploadServiceWrite struct {
 	finished bool
 	settings map[string]string

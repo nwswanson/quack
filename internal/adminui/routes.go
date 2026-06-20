@@ -271,20 +271,22 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "error", "Unable to read policy form.")
 		return
 	}
-	mode := strings.TrimSpace(r.Form.Get("database_policy_mode"))
-	switch mode {
-	case "inherit", "allow", "deny":
-	default:
+	databasePolicy, ok := policyFromForm(r, appsettings.SettingDatabaseFeature, "database_policy", user.ID)
+	if !ok {
 		redirectAdminMessage(w, r, "error", "Database policy must be inherit, allow, or deny.")
 		return
 	}
-	if err := h.write.SavePolicy(r.Context(), domain.PolicyRecord{
-		ScopeType: domain.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: mode,
-		Reason: strings.TrimSpace(r.Form.Get("database_policy_reason")), UpdatedByUserID: user.ID,
-	}); err != nil {
-		slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "error", err)
-		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+	runtimeHTTPPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPFeature, "runtime_http_policy", user.ID)
+	if !ok {
+		redirectAdminMessage(w, r, "error", "Dynamic HTTP routes policy must be inherit, allow, or deny.")
 		return
+	}
+	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy} {
+		if err := h.write.SavePolicy(r.Context(), record); err != nil {
+			slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "key", record.Key, "error", err)
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
 	}
 	if err := h.write.ReconcilePolicyViolations(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "reconcile policy violations failed", "username", user.Username, "error", err)
@@ -294,14 +296,31 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 	redirectAdminMessage(w, r, "message", "Policy saved.")
 }
 
+func policyFromForm(r *http.Request, key string, prefix string, userID int64) (domain.PolicyRecord, bool) {
+	mode := strings.TrimSpace(r.Form.Get(prefix + "_mode"))
+	switch mode {
+	case "inherit", "allow", "deny":
+	default:
+		return domain.PolicyRecord{}, false
+	}
+	return domain.PolicyRecord{
+		ScopeType:       domain.ScopeSystem,
+		Key:             key,
+		Mode:            mode,
+		Reason:          strings.TrimSpace(r.Form.Get(prefix + "_reason")),
+		UpdatedByUserID: userID,
+	}, true
+}
+
 type adminPageData struct {
-	User        domain.AdminUser
-	Error       string
-	Message     string
-	Sites       []domain.PublishedSite
-	Settings    domain.ServerSettings
-	Policy      domain.PolicyRecord
-	CreatedUser domain.CreatedUser
+	User              domain.AdminUser
+	Error             string
+	Message           string
+	Sites             []domain.PublishedSite
+	Settings          domain.ServerSettings
+	DatabasePolicy    domain.PolicyRecord
+	RuntimeHTTPPolicy domain.PolicyRecord
+	CreatedUser       domain.CreatedUser
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -336,15 +355,20 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser) (adminPag
 		}
 		siteList[i].PolicyReason = decision.Reason
 	}
-	policy, err := h.read.SystemDatabasePolicy(r.Context())
+	databasePolicy, err := h.read.SystemDatabasePolicy(r.Context())
+	if err != nil {
+		return adminPageData{}, err
+	}
+	runtimeHTTPPolicy, err := h.read.SystemRuntimeHTTPPolicy(r.Context())
 	if err != nil {
 		return adminPageData{}, err
 	}
 	return adminPageData{
-		User:     user,
-		Sites:    siteList,
-		Settings: settings,
-		Policy:   policy,
+		User:              user,
+		Sites:             siteList,
+		Settings:          settings,
+		DatabasePolicy:    databasePolicy,
+		RuntimeHTTPPolicy: runtimeHTTPPolicy,
 	}, nil
 }
 

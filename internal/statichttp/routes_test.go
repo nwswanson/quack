@@ -93,6 +93,10 @@ func (r testReadService) SystemDatabasePolicy(ctx context.Context) (domain.Polic
 	return domain.PolicyRecord{}, nil
 }
 
+func (r testReadService) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
 type testStore struct {
 	appstorage.Storage
 	root string

@@ -220,6 +220,38 @@ func TestSiteReadServiceSystemDatabasePolicyDefaultsToInherit(t *testing.T) {
 	}
 }
 
+func TestSiteReadServiceSystemRuntimeHTTPPolicy(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeHTTPFeature,
+			Mode:      "allow",
+			Reason:    "enabled for starlark",
+		}},
+	}
+	read := NewSiteReadService(db)
+
+	policy, err := read.SystemRuntimeHTTPPolicy(context.Background())
+	if err != nil {
+		t.Fatalf("SystemRuntimeHTTPPolicy error = %v", err)
+	}
+	if policy.Mode != "allow" || policy.Reason != "enabled for starlark" {
+		t.Fatalf("SystemRuntimeHTTPPolicy = %+v, want runtime HTTP policy", policy)
+	}
+}
+
+func TestSiteReadServiceSystemRuntimeHTTPPolicyDefaultsToInherit(t *testing.T) {
+	read := NewSiteReadService(&siteReadServiceDatabase{})
+
+	policy, err := read.SystemRuntimeHTTPPolicy(context.Background())
+	if err != nil {
+		t.Fatalf("SystemRuntimeHTTPPolicy error = %v", err)
+	}
+	if policy.ScopeType != domain.ScopeSystem || policy.Key != appsettings.SettingRuntimeHTTPFeature || policy.Mode != "inherit" {
+		t.Fatalf("SystemRuntimeHTTPPolicy = %+v, want inherit default", policy)
+	}
+}
+
 type siteReadServiceDatabase struct {
 	settings   domain.ServerSettings
 	policies   []domain.PolicyRecord
