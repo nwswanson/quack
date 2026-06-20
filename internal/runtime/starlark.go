@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkjson"
 	"io"
 	"log/slog"
+	"quack/internal/runtime/modules"
+
+	"go.starlark.net/starlark"
+	"go.starlark.net/starlarkjson"
 )
 
 type StarlarkExecutor struct {
@@ -33,7 +35,10 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	}
 	thread, stopCancel := starlarkThread(ctx, req.Method+" "+req.Route, limits.MaxExecutionSteps)
 	defer stopCancel()
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, starlark.StringDict{"json": starlarkjson.Module})
+	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, starlark.StringDict{
+		"json": starlarkjson.Module,
+		"uuid": modules.UUIDModule,
+	})
 	if err != nil {
 		return InvocationResponse{}, wrapStarlarkError(err)
 	}
