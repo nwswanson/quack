@@ -1,0 +1,5 @@
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/ping.star
