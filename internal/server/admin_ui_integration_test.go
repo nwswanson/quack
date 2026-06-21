@@ -93,7 +93,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if !strings.Contains(rootRec.Body.String(), "beta") || !strings.Contains(rootRec.Body.String(), "bob") {
 		t.Fatalf("body = %q, want beta by bob", rootRec.Body.String())
 	}
-	for _, want := range []string{"Default", `value="unpublish"`, `value="publish"`, "Roll back", `value="1"`, `value="delete"`} {
+	for _, want := range []string{`class="site-card"`, "Default", `value="unpublish"`, `value="publish"`, "Roll back", `value="2" selected`, "v2 (current)", `value="1"`, `value="delete"`} {
 		if !strings.Contains(rootRec.Body.String(), want) {
 			t.Fatalf("body = %q, want site action/default marker %q", rootRec.Body.String(), want)
 		}
@@ -188,6 +188,31 @@ func TestAdminSiteActions(t *testing.T) {
 	}
 	if len(deletedSites) != 1 || deletedSites[0] != sites.HashName("alpha") {
 		t.Fatalf("deleted sites = %#v, want alpha hash", deletedSites)
+	}
+}
+
+func TestAdminRollbackToCurrentVersionIsNoop(t *testing.T) {
+	db := &fakeDatabase{
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		sites:     []domain.PublishedSite{{Site: "alpha", CurrentVersion: 2}},
+		rollback:  domain.RollbackRecord{RolledBack: true, PreviousVersion: 3},
+	}
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodPost, "/sites/action", strings.NewReader("site=alpha&action=rollback&version=2"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://quack.example.com")
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?message=Site+is+already+at+version+2." {
+		t.Fatalf("rollback current = %d %q; body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if db.rollbackVersion != 2 {
+		t.Fatalf("rollback version = %d, want 2", db.rollbackVersion)
 	}
 }
 

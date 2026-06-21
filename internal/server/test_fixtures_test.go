@@ -133,6 +133,11 @@ func (db *fakeDatabase) RollbackSite(ctx context.Context, user domain.AdminUser,
 
 func (db *fakeDatabase) RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error) {
 	db.rollbackVersion = version
+	for _, published := range db.sites {
+		if published.Site == site && published.CurrentVersion == version {
+			return domain.RollbackRecord{CurrentVersion: version}, nil
+		}
+	}
 	if db.rollback.CurrentVersion == 0 {
 		db.rollback.CurrentVersion = version
 	}

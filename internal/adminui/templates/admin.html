@@ -172,10 +172,37 @@
       color: #067647;
       font-weight: 600;
     }
-    .site-name {
+    .site-list {
+      display: grid;
+      gap: 14px;
+    }
+    .site-card {
+      border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      border-radius: 8px;
+      padding: 16px;
+      background: Canvas;
+    }
+    .site-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .site-title {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 8px;
+      min-width: 0;
+      font-size: 18px;
+      font-weight: 800;
+    }
+    .site-status {
+      color: color-mix(in srgb, CanvasText 68%, Canvas);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
     }
     .badge {
       display: inline-flex;
@@ -189,11 +216,35 @@
       font-size: 12px;
       font-weight: 800;
     }
+    .site-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin: 0;
+    }
+    .site-details div {
+      min-width: 0;
+    }
+    .site-details dt {
+      margin: 0 0 4px;
+      color: color-mix(in srgb, CanvasText 58%, Canvas);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .site-details dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+    }
     .actions {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 8px;
-      min-width: 420px;
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid color-mix(in srgb, CanvasText 10%, Canvas);
     }
     .actions form {
       display: flex;
@@ -228,6 +279,12 @@
         align-items: flex-start;
         flex-direction: column;
         gap: 8px;
+      }
+      .site-card-header {
+        flex-direction: column;
+      }
+      .site-status {
+        white-space: normal;
       }
     }
   </style>
@@ -267,78 +324,79 @@
       {{if .ActivePage "sites"}}
         <section>
         {{if .Sites}}
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Site</th>
-                  <th>Published by</th>
-                  <th>Current</th>
-                  <th>Versions</th>
-                  <th>Files</th>
-                  <th>Bytes</th>
-                  <th>Live</th>
-                  <th>Serving status</th>
-                  <th>Policy reason</th>
-                  <th>Updated</th>
-                  {{if $.IsAdmin}}<th>Actions</th>{{end}}
-                </tr>
-              </thead>
-              <tbody>
-                {{range .Sites}}
-                  <tr>
-                    <td>
-                      <span class="site-name">
-                        <span>{{.Site}}</span>
-                        {{if .IsDefault}}<span class="badge">Default</span>{{end}}
-                      </span>
-                    </td>
-                    <td>{{if .PublishedBy}}{{.PublishedBy}}{{else}}-{{end}}</td>
-                    <td>{{.CurrentVersion}}</td>
-                    <td>{{.VersionCount}}</td>
-                    <td>{{.FileCount}}</td>
-                    <td>{{.ByteCount}}</td>
-                    <td>{{.DisplayLiveState}}</td>
-                    <td>{{.ServingStatus}}</td>
-                    <td>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</td>
-                    <td>{{.UpdatedAt}}</td>
-                    {{if $.IsAdmin}}
-                      <td>
-                        <div class="actions">
-                          <form method="post" action="/sites/action">
-                            <input type="hidden" name="site" value="{{.Site}}">
-                            {{if .IsUnpublished}}
-                              <input type="hidden" name="action" value="publish">
-                              <button class="small-button" type="submit">Publish</button>
-                            {{else}}
-                              <input type="hidden" name="action" value="unpublish">
-                              <button class="small-button secondary-button" type="submit">Unpublish</button>
-                            {{end}}
-                          </form>
-                          <form method="post" action="/sites/action">
-                            <input type="hidden" name="site" value="{{.Site}}">
-                            <input type="hidden" name="action" value="rollback">
-                            <select name="version" aria-label="Rollback version for {{.Site}}" {{if not .Revisions}}disabled{{end}}>
-                              {{range .Revisions}}
-                                <option value="{{.Version}}">v{{.Version}}</option>
-                              {{else}}
-                                <option>No older versions</option>
-                              {{end}}
-                            </select>
-                            <button class="small-button secondary-button" type="submit" {{if not .Revisions}}disabled{{end}}>Roll back</button>
-                          </form>
-                          <form method="post" action="/sites/action">
-                            <input type="hidden" name="site" value="{{.Site}}">
-                            <input type="hidden" name="action" value="delete">
-                            <button class="small-button danger-button" type="submit">Delete</button>
-                          </form>
-                        </div>
-                      </td>
-                    {{end}}
-                  </tr>
+          <div class="site-list">
+            {{range .Sites}}
+              <article class="site-card">
+                <div class="site-card-header">
+                  <div class="site-title">
+                    <span>{{.Site}}</span>
+                    {{if .IsDefault}}<span class="badge">Default</span>{{end}}
+                  </div>
+                  <div class="site-status">{{.DisplayLiveState}} / {{.ServingStatus}}</div>
+                </div>
+                <dl class="site-details">
+                  <div>
+                    <dt>Published by</dt>
+                    <dd>{{if .PublishedBy}}{{.PublishedBy}}{{else}}-{{end}}</dd>
+                  </div>
+                  <div>
+                    <dt>Current version</dt>
+                    <dd>{{.CurrentVersion}}</dd>
+                  </div>
+                  <div>
+                    <dt>Versions</dt>
+                    <dd>{{.VersionCount}}</dd>
+                  </div>
+                  <div>
+                    <dt>Files</dt>
+                    <dd>{{.FileCount}}</dd>
+                  </div>
+                  <div>
+                    <dt>Bytes</dt>
+                    <dd>{{.ByteCount}}</dd>
+                  </div>
+                  <div>
+                    <dt>Updated</dt>
+                    <dd>{{.UpdatedAt}}</dd>
+                  </div>
+                  <div>
+                    <dt>Policy reason</dt>
+                    <dd>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</dd>
+                  </div>
+                </dl>
+                {{if $.IsAdmin}}
+                  <div class="actions">
+                    <form method="post" action="/sites/action">
+                      <input type="hidden" name="site" value="{{.Site}}">
+                      {{if .IsUnpublished}}
+                        <input type="hidden" name="action" value="publish">
+                        <button class="small-button" type="submit">Publish</button>
+                      {{else}}
+                        <input type="hidden" name="action" value="unpublish">
+                        <button class="small-button secondary-button" type="submit">Unpublish</button>
+                      {{end}}
+                    </form>
+                    <form method="post" action="/sites/action">
+                      <input type="hidden" name="site" value="{{.Site}}">
+                      <input type="hidden" name="action" value="rollback">
+                      <select name="version" aria-label="Rollback version for {{.Site}}" {{if not .Revisions}}disabled{{end}}>
+                        {{range .Revisions}}
+                          <option value="{{.Version}}" {{if .Current}}selected{{end}}>v{{.Version}}{{if .Current}} (current){{end}}</option>
+                        {{else}}
+                          <option>No versions</option>
+                        {{end}}
+                      </select>
+                      <button class="small-button secondary-button" type="submit" {{if not .Revisions}}disabled{{end}}>Roll back</button>
+                    </form>
+                    <form method="post" action="/sites/action">
+                      <input type="hidden" name="site" value="{{.Site}}">
+                      <input type="hidden" name="action" value="delete">
+                      <button class="small-button danger-button" type="submit">Delete</button>
+                    </form>
+                  </div>
                 {{end}}
-              </tbody>
-            </table>
+              </article>
+            {{end}}
           </div>
         {{else}}
           <p>No published sites yet.</p>

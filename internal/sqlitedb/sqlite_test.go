@@ -342,6 +342,13 @@ func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
 	if len(revisions) != 3 || !revisions[0].Current || revisions[0].Version != 3 || revisions[1].Version != 2 || revisions[2].Version != 1 {
 		t.Fatalf("revisions = %#v, want current v3 then v2 then v1", revisions)
 	}
+	noop, err := db.RollbackSiteToVersion(ctx, admin, "example", "site-sha", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noop.RolledBack || noop.CurrentVersion != 3 || noop.Warning != "" {
+		t.Fatalf("rollback to current = %#v, want clean no-op at v3", noop)
+	}
 
 	rollback, err := db.RollbackSite(ctx, admin, "example", "site-sha")
 	if err != nil {

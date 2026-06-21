@@ -1645,6 +1645,9 @@ func (d *Database) rollbackSite(ctx context.Context, user domain.AdminUser, site
 	}
 
 	rollbackVersion := targetVersion
+	if rollbackVersion == currentVersion {
+		return domain.RollbackRecord{CurrentVersion: currentVersion}, nil
+	}
 	if rollbackVersion <= 0 {
 		err = tx.QueryRowContext(ctx, `
 			SELECT version

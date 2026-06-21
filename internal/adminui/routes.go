@@ -256,6 +256,10 @@ func (h Handler) handleAdminSiteAction(w http.ResponseWriter, r *http.Request) {
 			redirectAdminMessage(w, r, "/", "error", rollback.Warning)
 			return
 		}
+		if !rollback.RolledBack {
+			redirectAdminMessage(w, r, "/", "message", fmt.Sprintf("Site is already at version %d.", rollback.CurrentVersion))
+			return
+		}
 		slog.WarnContext(r.Context(), "admin site rolled back", "site", site, "username", user.Username, "previous_version", rollback.PreviousVersion, "current_version", rollback.CurrentVersion)
 		redirectAdminMessage(w, r, "/", "message", fmt.Sprintf("Site rolled back to version %d.", rollback.CurrentVersion))
 	default:
@@ -592,11 +596,7 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 				if err != nil {
 					return adminPageData{}, err
 				}
-				for _, revision := range revisions {
-					if revision.Version < siteList[i].CurrentVersion {
-						row.Revisions = append(row.Revisions, revision)
-					}
-				}
+				row.Revisions = revisions
 			}
 			data.Sites = append(data.Sites, row)
 		}
