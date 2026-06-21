@@ -63,6 +63,29 @@ func TestEvaluateRuntimeHTTPAllowsExplicitPolicy(t *testing.T) {
 	}
 }
 
+func TestEvaluateRuntimeWebSocketDefaultsToDenied(t *testing.T) {
+	eval := Evaluate(nil, []CapabilityRequest{{Key: CapabilityRuntimeWebSocket, Required: true, Value: "true"}})
+
+	if eval.Allowed {
+		t.Fatal("runtime websocket should default to denied")
+	}
+	if len(eval.Violations) != 1 || eval.Violations[0].Key != CapabilityRuntimeWebSocket {
+		t.Fatalf("violations = %+v, want runtime websocket violation", eval.Violations)
+	}
+}
+
+func TestEvaluateRuntimeWebSocketAllowsExplicitPolicy(t *testing.T) {
+	eval := Evaluate([]domain.PolicyRecord{{
+		ScopeType: domain.ScopeSystem,
+		Key:       appsettings.SettingRuntimeWebSocketFeature,
+		Mode:      "allow",
+	}}, []CapabilityRequest{{Key: CapabilityRuntimeWebSocket, Required: true, Value: "true"}})
+
+	if !eval.Allowed || len(eval.Violations) != 0 {
+		t.Fatalf("evaluation = %+v, want allowed runtime websocket", eval)
+	}
+}
+
 func TestDatabaseAllowedUsesSystemPolicyAndDefault(t *testing.T) {
 	allowed, _, err := DatabaseAllowed(context.Background(), policyLoader{}, domain.AdminUser{}, "")
 	if err != nil {
@@ -113,6 +136,15 @@ func TestRequestsFromManifestConvertsHTTPRoutes(t *testing.T) {
 	})
 	if len(requests) != 1 || requests[0].Key != CapabilityRuntimeHTTP || !requests[0].Required {
 		t.Fatalf("requests = %+v, want required runtime HTTP request", requests)
+	}
+}
+
+func TestRequestsFromManifestConvertsWebSocketRoutes(t *testing.T) {
+	requests := RequestsFromManifest(manifest.Manifest{
+		Routes: []manifest.Route{{Path: "/api/somesocket", Kind: manifest.RouteWebSocket}},
+	})
+	if len(requests) != 1 || requests[0].Key != CapabilityRuntimeWebSocket || !requests[0].Required {
+		t.Fatalf("requests = %+v, want required runtime websocket request", requests)
 	}
 }
 

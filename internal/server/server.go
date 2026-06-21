@@ -95,7 +95,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		staticHandler,
 		publichttp.WithHostResolver(sites.SettingsHostResolver{Settings: hot}),
 		publichttp.WithRoutes(publichttp.ReleaseRouteReader{Releases: releaseService, Policies: hot}),
-		publichttp.WithRuntime(runtimehttp.New(runtimeService)),
+		publichttp.WithRuntime(runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot))),
 	).Register(publicMux)
 
 	return Servers{

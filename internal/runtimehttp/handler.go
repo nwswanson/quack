@@ -1,26 +1,46 @@
 package runtimehttp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 
+	"quack/internal/domain"
 	appruntime "quack/internal/runtime"
 )
 
 type Handler struct {
-	runtime appruntime.Service
+	runtime  appruntime.Service
+	settings SettingsReader
+	sockets  *socketManager
 }
 
-func New(runtime appruntime.Service) Handler {
+type SettingsReader interface {
+	GetServerSettings(ctx context.Context) (domain.ServerSettings, error)
+}
+
+type Option func(*Handler)
+
+func WithSettings(settings SettingsReader) Option {
+	return func(h *Handler) {
+		h.settings = settings
+	}
+}
+
+func New(runtime appruntime.Service, opts ...Option) Handler {
 	if runtime == nil {
 		// Keep this nil-to-disabled fallback as the final safety net that prevents
 		// public routing from executing user code when composition forgets to wire
 		// a runtime service.
 		runtime = appruntime.NewDisabledService()
 	}
-	return Handler{runtime: runtime}
+	h := Handler{runtime: runtime, sockets: newSocketManager()}
+	for _, opt := range opts {
+		opt(&h)
+	}
+	return h
 }
 
 func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appruntime.InvocationRequest) {

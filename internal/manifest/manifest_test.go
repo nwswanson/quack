@@ -174,6 +174,20 @@ func TestParseAllowsStarlarkHTTPRoute(t *testing.T) {
 	}
 }
 
+func TestParseAllowsStarlarkWebSocketRoute(t *testing.T) {
+	body := "routes:\n  - path: /api/somesocket\n    kind: websocket\n    runtime: starlark\n    entrypoint: api/somesocket.star\n"
+	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Routes) != 1 ||
+		manifest.Routes[0].Kind != RouteWebSocket ||
+		manifest.Routes[0].Runtime != "starlark" ||
+		manifest.Routes[0].Entrypoint != "api/somesocket.star" {
+		t.Fatalf("routes = %#v, want starlark websocket runtime", manifest.Routes)
+	}
+}
+
 func TestParseAllowsStarlarkFilesystemAtTarballRoot(t *testing.T) {
 	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n    filesystem:\n      root: /\n"
 	manifest, err := Parse(strings.NewReader(body), int64(len(body)))

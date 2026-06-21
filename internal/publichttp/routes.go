@@ -125,8 +125,8 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 			Site: decision.Site, Version: decision.Version, Route: decision.Path, Method: r.Method, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
 		})
 	case RouteWebSocket:
-		h.runtime.ServeHTTPRoute(w, r, appruntime.InvocationRequest{
-			Site: decision.Site, Version: decision.Version, Route: decision.Path, Method: r.Method, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
+		h.runtime.ServeWebSocketRoute(w, r, appruntime.WebSocketInvocationRequest{
+			Site: decision.Site, Version: decision.Version, Route: decision.Path, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
 		})
 	default:
 		http.NotFound(w, r)
@@ -189,19 +189,30 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 	if err != nil || !ok {
 		return PublicRouteDecision{}, ok, err
 	}
-	if decision.Kind == releases.RouteHTTP {
+	if decision.Kind == releases.RouteHTTP || decision.Kind == releases.RouteWebSocket {
 		if r.Policies == nil {
 			// Keep nil policy loader as deny-by-default. A missing policy
 			// dependency must never be interpreted as permission to execute dynamic
 			// code.
+			reason := "dynamic HTTP routes are disabled by administrator policy"
+			if decision.Kind == releases.RouteWebSocket {
+				reason = "dynamic WebSocket routes are disabled by administrator policy"
+			}
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: "dynamic HTTP routes are disabled by administrator policy",
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: reason,
 			}, true, nil
 		}
 		// This is the route-level gate before runtimehttp. The runtime service
 		// repeats capability evaluation immediately before invoking the executor so
 		// cached route decisions cannot outlive a policy change.
-		allowed, reason, err := policy.RuntimeHTTPAllowed(req.Context(), r.Policies, site)
+		var allowed bool
+		var reason string
+		var err error
+		if decision.Kind == releases.RouteWebSocket {
+			allowed, reason, err = policy.RuntimeWebSocketAllowed(req.Context(), r.Policies, site)
+		} else {
+			allowed, reason, err = policy.RuntimeHTTPAllowed(req.Context(), r.Policies, site)
+		}
 		if err != nil {
 			return PublicRouteDecision{}, false, err
 		}

@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	DefaultMaxUploadBytes int64 = 512 << 20
-	DefaultMaxUploadFiles int64 = 10000
+	DefaultMaxUploadBytes                 int64 = 512 << 20
+	DefaultMaxUploadFiles                 int64 = 10000
+	DefaultMaxWebSocketConnections        int64 = 1024
+	DefaultMaxWebSocketConnectionsPerSite int64 = 128
 )
 
 type SettingType string
@@ -42,17 +44,20 @@ type SettingDefinition struct {
 }
 
 const (
-	SettingMaxUploadBytes          = "max_upload_bytes"
-	SettingMaxUploadFiles          = "max_upload_files"
-	SettingMaxRetainedVersions     = "max_retained_versions"
-	SettingDefaultSite             = "default_site"
-	SettingAllowedHosts            = "allowed_hosts"
-	SettingLogLevel                = "log_level"
-	SettingDatabaseFeature         = "features.database.enabled"
-	SettingDatabaseFeatureRequired = "features.database.required"
-	SettingRuntimeHTTPFeature      = "features.runtime.http.enabled"
-	SettingRuntimeMemoryMaxBytes   = "runtime.memory.max_bytes"
-	SettingRuntimeMemoryWipe       = "runtime.memory.wipe"
+	SettingMaxUploadBytes                        = "max_upload_bytes"
+	SettingMaxUploadFiles                        = "max_upload_files"
+	SettingMaxRetainedVersions                   = "max_retained_versions"
+	SettingDefaultSite                           = "default_site"
+	SettingAllowedHosts                          = "allowed_hosts"
+	SettingLogLevel                              = "log_level"
+	SettingDatabaseFeature                       = "features.database.enabled"
+	SettingDatabaseFeatureRequired               = "features.database.required"
+	SettingRuntimeHTTPFeature                    = "features.runtime.http.enabled"
+	SettingRuntimeWebSocketFeature               = "features.runtime.websocket.enabled"
+	SettingRuntimeMemoryMaxBytes                 = "runtime.memory.max_bytes"
+	SettingRuntimeMemoryWipe                     = "runtime.memory.wipe"
+	SettingRuntimeWebSocketMaxConnections        = "runtime.websocket.max_connections"
+	SettingRuntimeWebSocketMaxConnectionsPerSite = "runtime.websocket.max_connections_per_site"
 	// Deprecated: static.root is kept only for current releases uploaded before
 	// static route roots existed. New manifests must use routes[].root.
 	SettingStaticRoot = "static.root"
@@ -96,6 +101,10 @@ var registry = map[string]SettingDefinition{
 		Key: SettingRuntimeHTTPFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
+	SettingRuntimeWebSocketFeature: {
+		Key: SettingRuntimeWebSocketFeature, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
 	SettingRuntimeMemoryMaxBytes: {
 		Key: SettingRuntimeMemoryMaxBytes, Type: SettingTypeInt64, DefaultValue: "33554432",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
@@ -103,6 +112,14 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeMemoryWipe: {
 		Key: SettingRuntimeMemoryWipe, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite}, AdminEditable: true,
+	},
+	SettingRuntimeWebSocketMaxConnections: {
+		Key: SettingRuntimeWebSocketMaxConnections, Type: SettingTypeInt64, DefaultValue: "1024",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeWebSocketMaxConnectionsPerSite: {
+		Key: SettingRuntimeWebSocketMaxConnectionsPerSite, Type: SettingTypeInt64, DefaultValue: "128",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	// Deprecated: legacy upload setting retained for old release compatibility.
 	// Remove this once stored static.root releases no longer need to serve.

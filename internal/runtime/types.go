@@ -18,6 +18,7 @@ var (
 	ErrResponseTooLarge  = errors.New("runtime response body is too large")
 	ErrTimeout           = errors.New("runtime execution timed out")
 	ErrConcurrencyLimit  = errors.New("runtime concurrency limit reached")
+	ErrConnectionLimit   = errors.New("runtime websocket connection limit reached")
 	ErrInvalidRuntime    = errors.New("invalid runtime configuration")
 	ErrInvocationFailure = errors.New("runtime invocation failed")
 )
@@ -58,13 +59,15 @@ type Route struct {
 	FilesystemRoot    string
 }
 type ResourceLimits struct {
-	MaxRequestBytes   int64  `json:"max_request_bytes,omitempty"`
-	MaxResponseBytes  int64  `json:"max_response_bytes,omitempty"`
-	MaxDurationMillis int64  `json:"max_duration_millis,omitempty"`
-	MaxMemoryBytes    int64  `json:"max_memory_bytes,omitempty"`
-	MaxConcurrency    int64  `json:"max_concurrency,omitempty"`
-	MaxExecutionSteps uint64 `json:"max_execution_steps,omitempty"`
-	MaxScriptBytes    int64  `json:"max_script_bytes,omitempty"`
+	MaxRequestBytes                int64  `json:"max_request_bytes,omitempty"`
+	MaxResponseBytes               int64  `json:"max_response_bytes,omitempty"`
+	MaxDurationMillis              int64  `json:"max_duration_millis,omitempty"`
+	MaxMemoryBytes                 int64  `json:"max_memory_bytes,omitempty"`
+	MaxConcurrency                 int64  `json:"max_concurrency,omitempty"`
+	MaxExecutionSteps              uint64 `json:"max_execution_steps,omitempty"`
+	MaxScriptBytes                 int64  `json:"max_script_bytes,omitempty"`
+	MaxWebSocketConnections        int64  `json:"max_websocket_connections,omitempty"`
+	MaxWebSocketConnectionsPerSite int64  `json:"max_websocket_connections_per_site,omitempty"`
 }
 type RouteMetadata struct {
 	Site                 string
@@ -100,6 +103,9 @@ type InvocationResponse struct {
 type Executor interface {
 	Invoke(ctx context.Context, bundle Bundle, req InvocationRequest) (InvocationResponse, error)
 }
+type WebSocketExecutor interface {
+	InvokeWebSocket(ctx context.Context, bundle Bundle, event WebSocketEvent) ([]WebSocketEffect, error)
+}
 type Repository interface {
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]RouteMetadata, error)
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetadata, error)
@@ -131,14 +137,82 @@ type NoopMetrics struct{}
 func (NoopMetrics) RecordInvocation(context.Context, InvocationEvent) {}
 
 type ServiceOptions struct {
-	Repository      Repository
-	Policies        policy.Loader
-	Executor        Executor
-	MaxConcurrency  int64
-	DefaultLimits   ResourceLimits
-	Metrics         Metrics
-	EnableExecution bool
+	Repository        Repository
+	Policies          policy.Loader
+	Executor          Executor
+	WebSocketExecutor WebSocketExecutor
+	MaxConcurrency    int64
+	DefaultLimits     ResourceLimits
+	Metrics           Metrics
+	EnableExecution   bool
 }
 type Service interface {
 	InvokeHTTP(ctx context.Context, req InvocationRequest) (InvocationResponse, error)
+	InvokeWebSocket(ctx context.Context, req WebSocketInvocationRequest) ([]WebSocketEffect, error)
+	PumpWebSockets(ctx context.Context) error
+}
+
+type WebSocketEventType string
+
+const (
+	WebSocketEventConnect    WebSocketEventType = "connect"
+	WebSocketEventMessage    WebSocketEventType = "message"
+	WebSocketEventDisconnect WebSocketEventType = "disconnect"
+	WebSocketEventEvent      WebSocketEventType = "event"
+	WebSocketEventTimer      WebSocketEventType = "timer"
+)
+
+type WebSocketInvocationRequest struct {
+	Site      string
+	Version   int64
+	Route     string
+	Query     string
+	Headers   map[string][]string
+	ConnID    string
+	EventType WebSocketEventType
+	Message   []byte
+	Event     WebSocketServerEvent
+	Limits    ResourceLimits
+}
+
+type WebSocketServerEvent struct {
+	Topic   string
+	Payload []byte
+}
+
+type WebSocketEvent struct {
+	Site      string
+	Version   int64
+	Route     string
+	Query     string
+	Headers   map[string][]string
+	ConnID    string
+	EventType WebSocketEventType
+	Message   []byte
+	Event     WebSocketServerEvent
+}
+
+type WebSocketEffectType string
+
+const (
+	WebSocketEffectAccept         WebSocketEffectType = "ws.accept"
+	WebSocketEffectClose          WebSocketEffectType = "ws.close"
+	WebSocketEffectSend           WebSocketEffectType = "ws.send"
+	WebSocketEffectBroadcast      WebSocketEffectType = "ws.broadcast"
+	WebSocketEffectSubscribe      WebSocketEffectType = "ws.subscribe"
+	WebSocketEffectUnsubscribe    WebSocketEffectType = "ws.unsubscribe"
+	WebSocketEffectUnsubscribeAll WebSocketEffectType = "ws.unsubscribe_all"
+	WebSocketEffectPublish        WebSocketEffectType = "events.publish"
+	WebSocketEffectSetTimer       WebSocketEffectType = "timers.set"
+)
+
+type WebSocketEffect struct {
+	Type    WebSocketEffectType
+	ConnID  string
+	Topic   string
+	Payload []byte
+	Code    int
+	Reason  string
+	Key     string
+	After   string
 }

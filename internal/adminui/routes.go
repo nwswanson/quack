@@ -440,7 +440,12 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "/policy", "error", "Dynamic HTTP routes policy must be inherit, allow, or deny.")
 		return
 	}
-	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy} {
+	runtimeWebSocketPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeWebSocketFeature, "runtime_websocket_policy", user.ID)
+	if !ok {
+		redirectAdminMessage(w, r, "/policy", "error", "Dynamic WebSocket routes policy must be inherit, allow, or deny.")
+		return
+	}
+	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeWebSocketPolicy} {
 		if err := h.write.SavePolicy(r.Context(), record); err != nil {
 			slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "key", record.Key, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -479,6 +484,9 @@ func (h Handler) handleAdminPolicyPage(w http.ResponseWriter, r *http.Request) {
 
 func policyFromForm(r *http.Request, key string, prefix string, userID int64) (domain.PolicyRecord, bool) {
 	mode := strings.TrimSpace(r.Form.Get(prefix + "_mode"))
+	if mode == "" {
+		mode = "inherit"
+	}
 	switch mode {
 	case "inherit", "allow", "deny":
 	default:
@@ -524,18 +532,19 @@ func (s adminSiteRow) IsUnpublished() bool {
 }
 
 type adminPageData struct {
-	User              domain.AdminUser
-	Page              string
-	Title             string
-	Nav               []adminNavItem
-	Error             string
-	Message           string
-	Sites             []adminSiteRow
-	Users             []domain.AdminUser
-	Settings          domain.ServerSettings
-	DatabasePolicy    domain.PolicyRecord
-	RuntimeHTTPPolicy domain.PolicyRecord
-	CreatedUser       domain.CreatedUser
+	User                   domain.AdminUser
+	Page                   string
+	Title                  string
+	Nav                    []adminNavItem
+	Error                  string
+	Message                string
+	Sites                  []adminSiteRow
+	Users                  []domain.AdminUser
+	Settings               domain.ServerSettings
+	DatabasePolicy         domain.PolicyRecord
+	RuntimeHTTPPolicy      domain.PolicyRecord
+	RuntimeWebSocketPolicy domain.PolicyRecord
+	CreatedUser            domain.CreatedUser
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -621,8 +630,13 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 		if err != nil {
 			return adminPageData{}, err
 		}
+		runtimeWebSocketPolicy, err := h.read.SystemRuntimeWebSocketPolicy(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
 		data.DatabasePolicy = databasePolicy
 		data.RuntimeHTTPPolicy = runtimeHTTPPolicy
+		data.RuntimeWebSocketPolicy = runtimeWebSocketPolicy
 	}
 	return data, nil
 }
@@ -740,6 +754,14 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if err != nil {
 		return domain.ServerSettings{}, err
 	}
+	maxWebSocketConnections, err := parseNonNegativeInt64(r.Form.Get("max_websocket_connections"), "max websocket connections")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	maxWebSocketConnectionsPerSite, err := parseNonNegativeInt64(r.Form.Get("max_websocket_connections_per_site"), "max websocket connections per site")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
 	logLevel := appsettings.ParseLogLevel(r.Form.Get("log_level"))
 	if strings.TrimSpace(r.Form.Get("log_level")) == "" {
 		logLevel = "warn"
@@ -752,12 +774,14 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		return domain.ServerSettings{}, err
 	}
 	return domain.ServerSettings{
-		MaxUploadBytes:      maxUploadBytes,
-		MaxUploadFiles:      maxUploadFiles,
-		MaxRetainedVersions: maxRetainedVersions,
-		DefaultSite:         strings.TrimSpace(r.Form.Get("default_site")),
-		AllowedHosts:        allowedHosts,
-		LogLevel:            logLevel,
+		MaxUploadBytes:                 maxUploadBytes,
+		MaxUploadFiles:                 maxUploadFiles,
+		MaxRetainedVersions:            maxRetainedVersions,
+		MaxWebSocketConnections:        maxWebSocketConnections,
+		MaxWebSocketConnectionsPerSite: maxWebSocketConnectionsPerSite,
+		DefaultSite:                    strings.TrimSpace(r.Form.Get("default_site")),
+		AllowedHosts:                   allowedHosts,
+		LogLevel:                       logLevel,
 	}, nil
 }
 

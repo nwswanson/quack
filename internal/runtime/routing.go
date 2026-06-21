@@ -21,8 +21,28 @@ func (s *service) lookupRoute(ctx context.Context, req InvocationRequest) (Route
 	}
 	return best, nil
 }
+
+func (s *service) lookupWebSocketRoute(ctx context.Context, req WebSocketInvocationRequest) (RouteMetadata, error) {
+	routes, err := s.repo.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		return RouteMetadata{}, err
+	}
+	var best RouteMetadata
+	for _, route := range routes {
+		if websocketRouteMatches(route, req) && (best.RoutePath == "" || len(route.RoutePath) > len(best.RoutePath)) {
+			best = route
+		}
+	}
+	if best.RoutePath == "" {
+		return RouteMetadata{}, ErrRouteNotFound
+	}
+	return best, nil
+}
 func httpRouteMatches(route RouteMetadata, req InvocationRequest) bool {
 	return route.Site == req.Site && route.Version == req.Version && route.RouteKind == RouteHTTP && routeMatches(req.Route, route.RoutePath)
+}
+func websocketRouteMatches(route RouteMetadata, req WebSocketInvocationRequest) bool {
+	return route.Site == req.Site && route.Version == req.Version && route.RouteKind == RouteWebSocket && routeMatches(req.Route, route.RoutePath)
 }
 func methodAllowed(method string, methods []string) bool {
 	if len(methods) == 0 {

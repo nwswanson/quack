@@ -462,6 +462,14 @@
               <input name="max_retained_versions" type="number" min="0" value="{{.Settings.MaxRetainedVersions}}" required>
             </label>
             <label>
+              Max WebSocket connections
+              <input name="max_websocket_connections" type="number" min="0" value="{{.Settings.MaxWebSocketConnections}}" required>
+            </label>
+            <label>
+              Max WebSocket connections per site
+              <input name="max_websocket_connections_per_site" type="number" min="0" value="{{.Settings.MaxWebSocketConnectionsPerSite}}" required>
+            </label>
+            <label>
               Default site
               <input name="default_site" value="{{.Settings.DefaultSite}}">
             </label>
@@ -504,6 +512,18 @@
             <label>
               Dynamic HTTP routes policy reason
               <input name="runtime_http_policy_reason" value="{{.RuntimeHTTPPolicy.Reason}}">
+            </label>
+            <label>
+              Dynamic WebSocket routes policy
+              <select name="runtime_websocket_policy_mode">
+                <option value="inherit" {{if eq .RuntimeWebSocketPolicy.Mode "inherit"}}selected{{end}}>inherit</option>
+                <option value="allow" {{if eq .RuntimeWebSocketPolicy.Mode "allow"}}selected{{end}}>allow</option>
+                <option value="deny" {{if eq .RuntimeWebSocketPolicy.Mode "deny"}}selected{{end}}>deny</option>
+              </select>
+            </label>
+            <label>
+              Dynamic WebSocket routes policy reason
+              <input name="runtime_websocket_policy_reason" value="{{.RuntimeWebSocketPolicy.Reason}}">
             </label>
             <button type="submit">Save policy</button>
           </form>

@@ -464,13 +464,15 @@ func (d *Database) LinkUserSite(ctx context.Context, userID int64, siteSHA strin
 
 func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	settings := domain.ServerSettings{
-		MaxUploadBytes:      appsettings.DefaultMaxUploadBytes,
-		MaxUploadFiles:      appsettings.DefaultMaxUploadFiles,
-		MaxRetainedVersions: 0,
-		DefaultSite:         "",
-		AllowedHosts:        nil,
-		LogLevel:            "warn",
-		Locked:              map[string]bool{},
+		MaxUploadBytes:                 appsettings.DefaultMaxUploadBytes,
+		MaxUploadFiles:                 appsettings.DefaultMaxUploadFiles,
+		MaxRetainedVersions:            0,
+		MaxWebSocketConnections:        appsettings.DefaultMaxWebSocketConnections,
+		MaxWebSocketConnectionsPerSite: appsettings.DefaultMaxWebSocketConnectionsPerSite,
+		DefaultSite:                    "",
+		AllowedHosts:                   nil,
+		LogLevel:                       "warn",
+		Locked:                         map[string]bool{},
 	}
 	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value, locked FROM server_settings`)
 	if err != nil {
@@ -509,6 +511,18 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxRetainedVersions = n
+		case "runtime.websocket.max_connections":
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxWebSocketConnections = n
+		case "runtime.websocket.max_connections_per_site":
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxWebSocketConnectionsPerSite = n
 		case "default_site":
 			settings.DefaultSite = value
 		case "allowed_hosts":
@@ -537,6 +551,12 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.MaxRetainedVersions < 0 {
 		return fmt.Errorf("max retained versions must be >= 0")
 	}
+	if settings.MaxWebSocketConnections < 0 {
+		return fmt.Errorf("max websocket connections must be >= 0")
+	}
+	if settings.MaxWebSocketConnectionsPerSite < 0 {
+		return fmt.Errorf("max websocket connections per site must be >= 0")
+	}
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
@@ -554,12 +574,14 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	defer tx.Rollback()
 
 	values := map[string]string{
-		"max_upload_bytes":      strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
-		"default_site":          strings.TrimSpace(settings.DefaultSite),
-		"allowed_hosts":         appsettings.FormatAllowedHosts(settings.AllowedHosts),
-		"log_level":             settings.LogLevel,
+		"max_upload_bytes":                           strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":                           strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions":                      strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"runtime.websocket.max_connections":          strconv.FormatInt(settings.MaxWebSocketConnections, 10),
+		"runtime.websocket.max_connections_per_site": strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		"default_site":                               strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts":                              appsettings.FormatAllowedHosts(settings.AllowedHosts),
+		"log_level":                                  settings.LogLevel,
 	}
 	for key, value := range values {
 		var locked int
@@ -596,6 +618,12 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.MaxRetainedVersions < 0 {
 		return fmt.Errorf("max retained versions must be >= 0")
 	}
+	if settings.MaxWebSocketConnections < 0 {
+		return fmt.Errorf("max websocket connections must be >= 0")
+	}
+	if settings.MaxWebSocketConnectionsPerSite < 0 {
+		return fmt.Errorf("max websocket connections per site must be >= 0")
+	}
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
@@ -607,12 +635,14 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	defer d.writeMu.Unlock()
 
 	for key, value := range map[string]string{
-		"max_upload_bytes":      strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
-		"default_site":          strings.TrimSpace(settings.DefaultSite),
-		"allowed_hosts":         appsettings.FormatAllowedHosts(settings.AllowedHosts),
-		"log_level":             settings.LogLevel,
+		"max_upload_bytes":                           strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":                           strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions":                      strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"runtime.websocket.max_connections":          strconv.FormatInt(settings.MaxWebSocketConnections, 10),
+		"runtime.websocket.max_connections_per_site": strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		"default_site":                               strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts":                              appsettings.FormatAllowedHosts(settings.AllowedHosts),
+		"log_level":                                  settings.LogLevel,
 	} {
 		if err := appsettings.Validate(key, value); err != nil {
 			return err

@@ -59,13 +59,15 @@ type PublishedSite struct {
 }
 
 type ServerSettings struct {
-	MaxUploadBytes      int64
-	MaxUploadFiles      int64
-	MaxRetainedVersions int64
-	DefaultSite         string
-	AllowedHosts        []string
-	LogLevel            string
-	Locked              map[string]bool
+	MaxUploadBytes                 int64
+	MaxUploadFiles                 int64
+	MaxRetainedVersions            int64
+	MaxWebSocketConnections        int64
+	MaxWebSocketConnectionsPerSite int64
+	DefaultSite                    string
+	AllowedHosts                   []string
+	LogLevel                       string
+	Locked                         map[string]bool
 }
 
 type PolicyScope struct {

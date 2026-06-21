@@ -325,9 +325,6 @@ func runtimeCapabilities(kind manifest.RouteKind) []string {
 	case manifest.RouteHTTP:
 		return []string{"runtime.http"}
 	case manifest.RouteWebSocket:
-		// Phase 13 TODO: keep websocket separate from runtime.http. Socket routes
-		// have different resource risks: long-lived connections, message limits,
-		// idle timeouts, and cleanup behavior.
 		return []string{"runtime.websocket"}
 	default:
 		return nil

@@ -494,6 +494,26 @@ func TestSiteReadServiceSystemRuntimeHTTPPolicyDefaultsToInherit(t *testing.T) {
 	}
 }
 
+func TestSiteReadServiceSystemRuntimeWebSocketPolicy(t *testing.T) {
+	db := &siteReadServiceDatabase{
+		policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeWebSocketFeature,
+			Mode:      "allow",
+			Reason:    "enabled for sockets",
+		}},
+	}
+	read := NewSiteReadService(db)
+
+	policy, err := read.SystemRuntimeWebSocketPolicy(context.Background())
+	if err != nil {
+		t.Fatalf("SystemRuntimeWebSocketPolicy error = %v", err)
+	}
+	if policy.Mode != "allow" || policy.Reason != "enabled for sockets" {
+		t.Fatalf("SystemRuntimeWebSocketPolicy = %+v, want runtime websocket policy", policy)
+	}
+}
+
 type siteReadServiceDatabase struct {
 	settings    domain.ServerSettings
 	policies    []domain.PolicyRecord

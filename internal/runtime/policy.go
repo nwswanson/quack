@@ -33,12 +33,15 @@ func requiredCapabilities(route RouteMetadata) []string {
 	if route.RouteKind == RouteHTTP && !containsCapability(capabilities, policy.CapabilityRuntimeHTTP) {
 		capabilities = append(capabilities, policy.CapabilityRuntimeHTTP)
 	}
+	if route.RouteKind == RouteWebSocket && !containsCapability(capabilities, policy.CapabilityRuntimeWebSocket) {
+		capabilities = append(capabilities, policy.CapabilityRuntimeWebSocket)
+	}
 	return capabilities
 }
 func capabilityRequests(capabilities []string) ([]policy.CapabilityRequest, error) {
 	requests := make([]policy.CapabilityRequest, 0, len(capabilities))
 	for _, capability := range capabilities {
-		if capability != policy.CapabilityRuntimeHTTP {
+		if capability != policy.CapabilityRuntimeHTTP && capability != policy.CapabilityRuntimeWebSocket {
 			return nil, fmt.Errorf("%w: unsupported runtime capability %s", ErrCapabilityDenied, capability)
 		}
 		requests = append(requests, policy.CapabilityRequest{Key: capability, Required: true, Value: "true"})

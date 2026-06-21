@@ -17,7 +17,8 @@ const (
 	// secrets, writable temp storage, and database privileges. Do not let
 	// "runtime.http" become a broad permission to do everything user code might
 	// eventually request.
-	CapabilityRuntimeHTTP = "runtime.http"
+	CapabilityRuntimeHTTP      = "runtime.http"
+	CapabilityRuntimeWebSocket = "runtime.websocket"
 )
 
 type CapabilityRequest struct {
@@ -50,13 +51,21 @@ func RequestsFromManifest(siteManifest manifest.Manifest) []CapabilityRequest {
 			Value:    "true",
 		})
 	}
+	seenRuntimeHTTP := false
+	seenRuntimeWebSocket := false
 	for _, route := range siteManifest.Routes {
-		if route.Kind == manifest.RouteHTTP {
-			// This gates declaration and invocation of HTTP runtime routes. Future
-			// route-specific capabilities should be converted here too, then
-			// persisted in RouteMetadata.RequiredCapabilities.
-			out = append(out, CapabilityRequest{Key: CapabilityRuntimeHTTP, Required: true, Value: "true"})
-			break
+		switch route.Kind {
+		case manifest.RouteHTTP:
+			if !seenRuntimeHTTP {
+				// This gates declaration and invocation of HTTP runtime routes.
+				out = append(out, CapabilityRequest{Key: CapabilityRuntimeHTTP, Required: true, Value: "true"})
+				seenRuntimeHTTP = true
+			}
+		case manifest.RouteWebSocket:
+			if !seenRuntimeWebSocket {
+				out = append(out, CapabilityRequest{Key: CapabilityRuntimeWebSocket, Required: true, Value: "true"})
+				seenRuntimeWebSocket = true
+			}
 		}
 	}
 	return out
@@ -100,6 +109,18 @@ func RuntimeHTTPAllowedByRecords(policies []domain.PolicyRecord) (bool, string, 
 	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeHTTPFeature, "dynamic HTTP routes are disabled by administrator policy")
 }
 
+func RuntimeWebSocketAllowed(ctx context.Context, loader Loader, site string) (bool, string, error) {
+	policies, err := loader.LoadPolicies(ctx, ScopesFor(domain.AdminUser{}, site))
+	if err != nil {
+		return false, "", err
+	}
+	return RuntimeWebSocketAllowedByRecords(policies)
+}
+
+func RuntimeWebSocketAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
+	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeWebSocketFeature, "dynamic WebSocket routes are disabled by administrator policy")
+}
+
 func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Evaluation {
 	eval := Evaluation{Allowed: true}
 	for _, req := range requests {
@@ -110,6 +131,8 @@ func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Eval
 			allowed, reason, _ = DatabaseAllowedByRecords(policies)
 		case CapabilityRuntimeHTTP:
 			allowed, reason, _ = RuntimeHTTPAllowedByRecords(policies)
+		case CapabilityRuntimeWebSocket:
+			allowed, reason, _ = RuntimeWebSocketAllowedByRecords(policies)
 		default:
 			continue
 		}

@@ -421,6 +421,68 @@ func TestDemoStarlarkMemoryRoutesExecute(t *testing.T) {
 	}
 }
 
+func TestStarlarkExecutorWebSocketHandlersReturnHostEffects(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_connect(ctx):
+    return [
+        ws.accept(),
+        ws.subscribe(ctx.conn_id, "doc:123"),
+        ws.send(ctx.conn_id, {"type": "connected", "path": ctx.path}),
+        timers.set(key="heartbeat:" + ctx.conn_id, after="30s", event={"type": "heartbeat"}),
+    ]
+
+def on_message(ctx, msg):
+    return [events.publish("doc:" + msg["doc_id"], {"type": msg["type"], "by": ctx.conn_id})]
+
+def on_event(ctx, event):
+    return [ws.send(ctx.conn_id, {"type": "event", "topic": event.topic, "payload": event.payload})]
+`})
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/api/somesocket", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/api/somesocket/room", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 4 || effects[1].Type != WebSocketEffectSubscribe || effects[1].Topic != "doc:123" {
+		t.Fatalf("connect effects = %#v, want subscribe effect", effects)
+	}
+	if effects[2].Type != WebSocketEffectSend || string(effects[2].Payload) != `{"path":"/room","type":"connected"}` {
+		t.Fatalf("send effect = %#v payload=%s, want JSON connected payload", effects[2], effects[2].Payload)
+	}
+	if effects[3].Type != WebSocketEffectSetTimer || effects[3].Key != "heartbeat:c1" || effects[3].After != "30s" {
+		t.Fatalf("timer effect = %#v, want durable timer intent", effects[3])
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/api/somesocket", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/api/somesocket", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"edit","doc_id":"123"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "doc:123" || string(effects[0].Payload) != `{"by":"c1","type":"edit"}` {
+		t.Fatalf("message effects = %#v payload=%s, want publish effect", effects, effects[0].Payload)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/api/somesocket", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/api/somesocket", ConnID: "c1", EventType: WebSocketEventEvent,
+		Event: WebSocketServerEvent{Topic: "doc:123", Payload: []byte(`{"ok":true}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectSend || string(effects[0].Payload) != `{"payload":{"ok":true},"topic":"doc:123","type":"event"}` {
+		t.Fatalf("event effects = %#v payload=%s, want send effect", effects, effects[0].Payload)
+	}
+}
+
 func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {
 	svc := NewService(ServiceOptions{
 		Repository: newRuntimeRepo(RouteMetadata{
@@ -438,6 +500,47 @@ func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK || string(resp.Body) != "ok" {
 		t.Fatalf("response = %+v body=%q, want ok", resp, string(resp.Body))
+	}
+}
+
+func TestServiceInvokesWebSocketStarlarkBehindPolicyGate(t *testing.T) {
+	svc := NewService(ServiceOptions{
+		Repository: newRuntimeRepo(RouteMetadata{
+			Site: "foo", Version: 3, RoutePath: "/api/somesocket", RouteKind: RouteWebSocket, RuntimeKind: RuntimeStarlark,
+			BundleObjectKey: "socket.star", RequiredCapabilities: []string{"runtime.websocket"},
+		}),
+		Policies:        allowRuntimeWebSocketPolicy(),
+		Executor:        newTestStarlarkExecutor(t, map[string]string{"socket.star": `def on_connect(ctx): return [ws.send(ctx.conn_id, "ok")]`}),
+		EnableExecution: true,
+	})
+
+	effects, err := svc.InvokeWebSocket(context.Background(), WebSocketInvocationRequest{
+		Site: "foo", Version: 3, Route: "/api/somesocket", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectSend || string(effects[0].Payload) != "ok" {
+		t.Fatalf("effects = %#v, want send ok", effects)
+	}
+}
+
+func TestServiceDeniesWebSocketWithoutPolicy(t *testing.T) {
+	svc := NewService(ServiceOptions{
+		Repository: newRuntimeRepo(RouteMetadata{
+			Site: "foo", Version: 3, RoutePath: "/api/somesocket", RouteKind: RouteWebSocket, RuntimeKind: RuntimeStarlark,
+			BundleObjectKey: "socket.star", RequiredCapabilities: []string{"runtime.websocket"},
+		}),
+		Policies:        runtimePolicyLoader{},
+		Executor:        newTestStarlarkExecutor(t, map[string]string{"socket.star": `def on_connect(ctx): return []`}),
+		EnableExecution: true,
+	})
+
+	_, err := svc.InvokeWebSocket(context.Background(), WebSocketInvocationRequest{
+		Site: "foo", Version: 3, Route: "/api/somesocket", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if !errors.Is(err, ErrCapabilityDenied) {
+		t.Fatalf("InvokeWebSocket error = %v, want capability denial", err)
 	}
 }
 
@@ -616,6 +719,10 @@ type runtimePolicyLoader struct {
 
 func allowRuntimeHTTPPolicy() runtimePolicyLoader {
 	return runtimePolicyLoader{policies: []domain.PolicyRecord{{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPFeature, Mode: "allow"}}}
+}
+
+func allowRuntimeWebSocketPolicy() runtimePolicyLoader {
+	return runtimePolicyLoader{policies: []domain.PolicyRecord{{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeWebSocketFeature, Mode: "allow"}}}
 }
 
 func (l runtimePolicyLoader) LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error) {

@@ -271,8 +271,8 @@ func TestHandlerRoutesDeclaredWebSocketRouteToDisabledRuntime(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotImplemented, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 }
 
@@ -309,6 +309,42 @@ func TestReleaseRouteReaderDeniesDynamicRouteWhenDisabledGlobally(t *testing.T) 
 	}
 	if !ok || decision.DeniedReason != "dynamic HTTP routes are disabled by administrator policy" {
 		t.Fatalf("decision = %+v ok=%v, want globally disabled dynamic route", decision, ok)
+	}
+}
+
+func TestReleaseRouteReaderDeniesWebSocketRouteWhenDisabledGlobally(t *testing.T) {
+	reader := ReleaseRouteReader{
+		Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteWebSocket, Path: "/socket"}},
+		Policies: fakePolicyLoader{},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/socket", nil)
+
+	decision, ok, err := reader.LookupRoute(req, "foo", "/socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.DeniedReason != "dynamic WebSocket routes are disabled by administrator policy" {
+		t.Fatalf("decision = %+v ok=%v, want globally disabled websocket route", decision, ok)
+	}
+}
+
+func TestReleaseRouteReaderAllowsWebSocketRouteWithPolicy(t *testing.T) {
+	reader := ReleaseRouteReader{
+		Releases: fakeReleaseRoutes{decision: releases.RouteDecision{Site: "foo", Version: 9, Kind: releases.RouteWebSocket, Path: "/socket"}},
+		Policies: fakePolicyLoader{policies: []domain.PolicyRecord{{
+			ScopeType: domain.ScopeSystem,
+			Key:       appsettings.SettingRuntimeWebSocketFeature,
+			Mode:      "allow",
+		}}},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/socket", nil)
+
+	decision, ok, err := reader.LookupRoute(req, "foo", "/socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || decision.Kind != RouteWebSocket || decision.DeniedReason != "" {
+		t.Fatalf("decision = %+v ok=%v, want allowed websocket route", decision, ok)
 	}
 }
 
@@ -414,4 +450,12 @@ func (s *recordingRuntimeService) InvokeHTTP(ctx context.Context, req appruntime
 		Headers:    map[string][]string{"Content-Type": {"text/plain"}},
 		Body:       []byte("runtime ok"),
 	}, nil
+}
+
+func (s *recordingRuntimeService) InvokeWebSocket(ctx context.Context, req appruntime.WebSocketInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+	return nil, nil
+}
+
+func (s *recordingRuntimeService) PumpWebSockets(ctx context.Context) error {
+	return nil
 }

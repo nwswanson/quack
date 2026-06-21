@@ -181,8 +181,8 @@ func validateRoutes(routes []Route) error {
 			}
 			routes[i].File = file
 		}
-		if strings.TrimSpace(route.Runtime) != "" && route.Kind != RouteHTTP {
-			return fmt.Errorf("route.runtime is only supported for http routes")
+		if strings.TrimSpace(route.Runtime) != "" && route.Kind != RouteHTTP && route.Kind != RouteWebSocket {
+			return fmt.Errorf("route.runtime is only supported for http and websocket routes")
 		}
 		if strings.TrimSpace(route.Runtime) != "" && strings.TrimSpace(route.Entrypoint) == "" {
 			return fmt.Errorf("route.entrypoint is required when route.runtime is set")

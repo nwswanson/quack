@@ -78,6 +78,31 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	}
 }
 
+func TestRuntimeRoutesFromManifestPersistsStarlarkWebSocketRoute(t *testing.T) {
+	upload := domain.UploadRecord{
+		Site: "example.com", SiteSHA: "site-sha", Version: 2,
+		Files: []domain.UploadFileRecord{{RelativePath: "api/somesocket.star", BlobPath: "socket-blob"}},
+	}
+	routes, err := RuntimeRoutesFromManifest(upload, manifest.Manifest{
+		Routes: []manifest.Route{{
+			Path: "/api/somesocket", Kind: manifest.RouteWebSocket, Runtime: "starlark", Entrypoint: "api/somesocket.star",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("routes = %#v, want one websocket runtime route", routes)
+	}
+	route := routes[0]
+	if route.RouteKind != appruntime.RouteWebSocket || route.RuntimeKind != appruntime.RuntimeStarlark || route.BundleObjectKey != "socket-blob" {
+		t.Fatalf("route = %#v, want starlark websocket metadata", route)
+	}
+	if !reflect.DeepEqual(route.RequiredCapabilities, []string{"runtime.websocket"}) {
+		t.Fatalf("capabilities = %#v, want runtime.websocket", route.RequiredCapabilities)
+	}
+}
+
 func TestServiceUploadArchiveCountsOnlyTarEntriesAfterExclusions(t *testing.T) {
 	dir := t.TempDir()
 	writeUploadArchiveFile(t, dir, "site.yml", "exclude:\n  - \"*.swp\"\n  - \"node_modules\"\n")
@@ -296,6 +321,10 @@ func (r uploadServiceRead) SystemDatabasePolicy(ctx context.Context) (domain.Pol
 }
 
 func (r uploadServiceRead) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
+func (r uploadServiceRead) SystemRuntimeWebSocketPolicy(ctx context.Context) (domain.PolicyRecord, error) {
 	return domain.PolicyRecord{}, nil
 }
 
