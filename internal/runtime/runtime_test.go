@@ -120,6 +120,151 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorExposesSiteScopedMemoryStore(t *testing.T) {
+	site := "memory-site-a"
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    memory.clear()
+    memory.set("plain", {"nested": [None, 0, b"x"]})
+    memory.list_push("events", "first")
+    memory.list_push("events", "second")
+    memory.set_add("tags", "blue")
+    memory.set_add("tags", "blue")
+    memory.zadd("scores", 2.0, "b")
+    memory.zadd("scores", 1.0, "a")
+    count = memory.incr("count", 3)
+    return (
+        200,
+        {"content-type": "text/plain"},
+        "%s|%s|%s|%s|%s|%s|%s" % (
+            memory.get("plain")["nested"][1],
+            memory.list_range("events"),
+            memory.set_members("tags"),
+            memory.zrange("scores", with_scores=True),
+            count,
+            memory.type("count"),
+            memory.usage() > 0,
+        ),
+    )
+`})
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: site, Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `0|["first", "second"]|["blue"]|[("a", 1.0), ("b", 2.0)]|3|counter|True`
+	if string(resp.Body) != want {
+		t.Fatalf("body = %q, want %q", string(resp.Body), want)
+	}
+}
+
+func TestStarlarkMemoryPersistsPerSiteOnly(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    old = memory.get("seen", "missing")
+    memory.set("seen", "yes")
+    return (200, {}, old)
+`})
+
+	for _, site := range []string{"memory-site-b", "memory-site-c"} {
+		resp, err := executor.Invoke(context.Background(), Bundle{
+			Site: site, Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(resp.Body) != "missing" {
+			t.Fatalf("first body for %s = %q, want missing", site, string(resp.Body))
+		}
+	}
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "memory-site-b", Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.Body) != "yes" {
+		t.Fatalf("second body = %q, want yes", string(resp.Body))
+	}
+}
+
+func TestStarlarkMemoryQuotaRejectsWritesWithoutMutation(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    memory.clear()
+    first = memory.set("small", "ok")
+    before = memory.usage()
+    second = memory.set("large", "x" * 200)
+    return (200, {}, "%s|%s|%s|%s|%s" % (first, second, memory.get("small"), memory.get("large", "missing"), memory.usage() == before))
+`})
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "memory-quota-site", Version: 1,
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		Limits: ResourceLimits{MaxMemoryBytes: 64},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(resp.Body), "True|False|ok|missing|True"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestStarlarkMemoryLoweredQuotaBlocksGrowthButAllowsShrink(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"seed.star": `
+def handle(req):
+    memory.clear()
+    memory.set("large", "x" * 100)
+    return (200, {}, str(memory.usage()))
+`,
+		"lower.star": `
+def handle(req):
+    grow = memory.set("new", "y")
+    shrink = memory.delete("large")
+    after = memory.set("new", "y")
+    return (200, {}, "%s|%s|%s" % (grow, shrink, after))
+`,
+	})
+	site := "memory-lowered-quota-site"
+	if _, err := executor.Invoke(context.Background(), Bundle{
+		Site: site, Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "seed.star"}},
+		Limits: ResourceLimits{MaxMemoryBytes: 1024},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: site, Version: 2, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "lower.star"}},
+		Limits: ResourceLimits{MaxMemoryBytes: 32},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(resp.Body), "False|True|True"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestStarlarkMemoryRejectsWrongTypeOperation(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    memory.clear()
+    memory.set("name", "not-a-list")
+    memory.list_push("name", "boom")
+    return (200, {}, "never")
+`})
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "memory-wrong-type-site", Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if !errors.Is(err, ErrInvocationFailure) || !strings.Contains(err.Error(), `key "name" contains value, want list`) {
+		t.Fatalf("Invoke error = %v, want wrong type invocation failure", err)
+	}
+}
+
 func TestDemoStarlarkBundleExecutes(t *testing.T) {
 	script, err := os.ReadFile("../../demos/starlark-basic/api/app.star")
 	if err != nil {

@@ -51,6 +51,8 @@ const (
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
 	SettingRuntimeHTTPFeature      = "features.runtime.http.enabled"
+	SettingRuntimeMemoryMaxBytes   = "runtime.memory.max_bytes"
+	SettingRuntimeMemoryWipe       = "runtime.memory.wipe"
 	// Deprecated: static.root is kept only for current releases uploaded before
 	// static route roots existed. New manifests must use routes[].root.
 	SettingStaticRoot = "static.root"
@@ -93,6 +95,14 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeHTTPFeature: {
 		Key: SettingRuntimeHTTPFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingRuntimeMemoryMaxBytes: {
+		Key: SettingRuntimeMemoryMaxBytes, Type: SettingTypeInt64, DefaultValue: "33554432",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeMemoryWipe: {
+		Key: SettingRuntimeMemoryWipe, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite}, AdminEditable: true,
 	},
 	// Deprecated: legacy upload setting retained for old release compatibility.
 	// Remove this once stored static.root releases no longer need to serve.

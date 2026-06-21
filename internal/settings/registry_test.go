@@ -8,17 +8,20 @@ func TestValidateSettingValue(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		"valid int":       {key: SettingMaxUploadBytes, value: "1024"},
-		"negative int":    {key: SettingMaxUploadBytes, value: "-1", wantErr: true},
-		"invalid int":     {key: SettingMaxUploadBytes, value: "large", wantErr: true},
-		"valid bool":      {key: SettingDatabaseFeature, value: "true"},
-		"valid runtime":   {key: SettingRuntimeHTTPFeature, value: "false"},
-		"invalid bool":    {key: SettingDatabaseFeature, value: "yes", wantErr: true},
-		"valid log level": {key: SettingLogLevel, value: "warning"},
-		"invalid enum":    {key: SettingLogLevel, value: "trace", wantErr: true},
-		"valid hosts":     {key: SettingAllowedHosts, value: "*.example.com\nadmin.example.com"},
-		"invalid hosts":   {key: SettingAllowedHosts, value: "*example.com", wantErr: true},
-		"unknown key":     {key: "unknown", value: "value", wantErr: true},
+		"valid int":          {key: SettingMaxUploadBytes, value: "1024"},
+		"negative int":       {key: SettingMaxUploadBytes, value: "-1", wantErr: true},
+		"invalid int":        {key: SettingMaxUploadBytes, value: "large", wantErr: true},
+		"valid bool":         {key: SettingDatabaseFeature, value: "true"},
+		"valid runtime":      {key: SettingRuntimeHTTPFeature, value: "false"},
+		"valid memory cap":   {key: SettingRuntimeMemoryMaxBytes, value: "1024"},
+		"valid memory wipe":  {key: SettingRuntimeMemoryWipe, value: "true"},
+		"invalid bool":       {key: SettingDatabaseFeature, value: "yes", wantErr: true},
+		"invalid memory cap": {key: SettingRuntimeMemoryMaxBytes, value: "-1", wantErr: true},
+		"valid log level":    {key: SettingLogLevel, value: "warning"},
+		"invalid enum":       {key: SettingLogLevel, value: "trace", wantErr: true},
+		"valid hosts":        {key: SettingAllowedHosts, value: "*.example.com\nadmin.example.com"},
+		"invalid hosts":      {key: SettingAllowedHosts, value: "*example.com", wantErr: true},
+		"unknown key":        {key: "unknown", value: "value", wantErr: true},
 	}
 
 	for name, tc := range tests {

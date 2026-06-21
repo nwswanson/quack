@@ -61,10 +61,11 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	return responseFromValue(result)
 }
 func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, route Route, limits ResourceLimits) starlark.StringDict {
-	out := make(starlark.StringDict, len(predeclareds)+1)
+	out := make(starlark.StringDict, len(predeclareds)+2)
 	for key, value := range predeclareds {
 		out[key] = value
 	}
+	out["memory"] = modules.NewMemoryModule(bundle.Site, limits.MaxMemoryBytes)
 	if route.FilesystemEnabled {
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
 	}
