@@ -309,7 +309,7 @@ func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
 	}
 	admin := domain.AdminUser{ID: 999, Username: "admin", AdminPriv: "admin:*"}
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		upload, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
 		if err != nil {
 			t.Fatal(err)
@@ -331,21 +331,31 @@ func TestListSiteRevisionsAndRollbackEnforceOwnership(t *testing.T) {
 	if _, err := db.RollbackSite(ctx, bob.User, "example", "site-sha"); !errors.Is(err, domain.ErrSiteOwnership) {
 		t.Fatalf("bob rollback error = %v, want ErrSiteOwnership", err)
 	}
+	if _, err := db.RollbackSiteToVersion(ctx, bob.User, "example", "site-sha", 1); !errors.Is(err, domain.ErrSiteOwnership) {
+		t.Fatalf("bob rollback to version error = %v, want ErrSiteOwnership", err)
+	}
 
 	revisions, err := db.ListSiteRevisions(ctx, alice.User, "example", "site-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(revisions) != 2 || !revisions[0].Current || revisions[0].Version != 2 || revisions[1].Version != 1 {
-		t.Fatalf("revisions = %#v, want current v2 then v1", revisions)
+	if len(revisions) != 3 || !revisions[0].Current || revisions[0].Version != 3 || revisions[1].Version != 2 || revisions[2].Version != 1 {
+		t.Fatalf("revisions = %#v, want current v3 then v2 then v1", revisions)
 	}
 
 	rollback, err := db.RollbackSite(ctx, admin, "example", "site-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !rollback.RolledBack || rollback.PreviousVersion != 3 || rollback.CurrentVersion != 2 {
+		t.Fatalf("rollback = %#v, want v3 to v2", rollback)
+	}
+	rollback, err = db.RollbackSiteToVersion(ctx, admin, "example", "site-sha", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !rollback.RolledBack || rollback.PreviousVersion != 2 || rollback.CurrentVersion != 1 {
-		t.Fatalf("rollback = %#v, want v2 to v1", rollback)
+		t.Fatalf("rollback to version = %#v, want v2 to v1", rollback)
 	}
 	again, err := db.RollbackSite(ctx, alice.User, "example", "site-sha")
 	if err != nil {

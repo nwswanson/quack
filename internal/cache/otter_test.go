@@ -290,6 +290,10 @@ func (db *siteUpdateCacheDatabase) RollbackSite(ctx context.Context, user domain
 	return domain.RollbackRecord{}, nil
 }
 
+func (db *siteUpdateCacheDatabase) RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error) {
+	return domain.RollbackRecord{}, nil
+}
+
 func (db *siteUpdateCacheDatabase) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
 	return domain.UnpublishRecord{}, nil
 }

@@ -60,6 +60,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Users:       db,
 		Sessions:    db,
 		Releases:    releaseService,
+		Store:       store,
 		Read:        read,
 		Write:       write,
 		SetLogLevel: SetLogLevel,

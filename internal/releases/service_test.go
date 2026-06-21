@@ -193,6 +193,10 @@ func (r *releaseRepo) RollbackSite(ctx context.Context, user domain.AdminUser, s
 	return domain.RollbackRecord{RolledBack: true}, r.err
 }
 
+func (r *releaseRepo) RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error) {
+	return domain.RollbackRecord{RolledBack: true, CurrentVersion: version}, r.err
+}
+
 func (r *releaseRepo) UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error) {
 	return domain.UnpublishRecord{Unpublished: true}, r.err
 }

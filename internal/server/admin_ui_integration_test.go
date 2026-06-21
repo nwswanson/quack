@@ -8,6 +8,7 @@ import (
 	"quack/internal/adminui"
 	"quack/internal/domain"
 	appsettings "quack/internal/settings"
+	"quack/internal/sites"
 	"strings"
 	"testing"
 )
@@ -36,9 +37,14 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sites: []domain.PublishedSite{
-			{Site: "alpha", PublishedBy: "alice", CurrentVersion: 2, VersionCount: 2, FileCount: 3, ByteCount: 300, UpdatedAt: "2026-01-01T00:00:00Z"},
-			{Site: "beta", PublishedBy: "bob", CurrentVersion: 1, VersionCount: 1, FileCount: 1, ByteCount: 100, UpdatedAt: "2026-01-02T00:00:00Z"},
+			{Site: "alpha", SiteSHA: sites.HashName("alpha"), PublishedBy: "alice", CurrentVersion: 2, VersionCount: 2, FileCount: 3, ByteCount: 300, UpdatedAt: "2026-01-01T00:00:00Z", LiveState: "live"},
+			{Site: "beta", SiteSHA: sites.HashName("beta"), PublishedBy: "bob", CurrentVersion: 1, VersionCount: 1, FileCount: 1, ByteCount: 100, UpdatedAt: "2026-01-02T00:00:00Z", LiveState: "unpublished"},
 		},
+		revisions: []domain.RevisionRecord{
+			{Version: 2, Current: true},
+			{Version: 1},
+		},
+		settings: domain.ServerSettings{DefaultSite: "alpha", LogLevel: "warn"},
 		sessions: map[string]domain.AdminUser{},
 	}
 	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
@@ -87,6 +93,11 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if !strings.Contains(rootRec.Body.String(), "beta") || !strings.Contains(rootRec.Body.String(), "bob") {
 		t.Fatalf("body = %q, want beta by bob", rootRec.Body.String())
 	}
+	for _, want := range []string{"Default", `value="unpublish"`, `value="publish"`, "Roll back", `value="1"`, `value="delete"`} {
+		if !strings.Contains(rootRec.Body.String(), want) {
+			t.Fatalf("body = %q, want site action/default marker %q", rootRec.Body.String(), want)
+		}
+	}
 	if !strings.Contains(rootRec.Body.String(), `href="/users"`) || !strings.Contains(rootRec.Body.String(), `href="/settings"`) || !strings.Contains(rootRec.Body.String(), `href="/policy"`) {
 		t.Fatalf("body = %q, want admin navigation", rootRec.Body.String())
 	}
@@ -127,6 +138,56 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	}
 	if _, ok := db.sessions[cookie.Value]; ok {
 		t.Fatal("session still exists after logout")
+	}
+}
+
+func TestAdminSiteActions(t *testing.T) {
+	deletedSites := []string{}
+	db := &fakeDatabase{
+		adminUser:       domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:        map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		publish:         domain.PublishRecord{Published: true, LiveState: "live"},
+		unpublish:       domain.UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
+		rollback:        domain.RollbackRecord{RolledBack: true, PreviousVersion: 3},
+		rollbackVersion: 0,
+	}
+	srv := New("", "", "token", fakeStorage{deletedSites: &deletedSites}, db, DefaultOptions())
+
+	postAction := func(form string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/sites/action", strings.NewReader(form))
+		req.Host = "quack.example.com"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "https://quack.example.com")
+		req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
+		rec := httptest.NewRecorder()
+		srv.Admin.Handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := postAction("site=alpha&action=unpublish")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?message=Site+unpublished." {
+		t.Fatalf("unpublish = %d %q; body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	rec = postAction("site=alpha&action=publish")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?message=Site+published." {
+		t.Fatalf("publish = %d %q; body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	rec = postAction("site=alpha&action=rollback&version=2")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?message=Site+rolled+back+to+version+2." {
+		t.Fatalf("rollback = %d %q; body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if db.rollbackVersion != 2 {
+		t.Fatalf("rollback version = %d, want 2", db.rollbackVersion)
+	}
+
+	rec = postAction("site=alpha&action=delete")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?message=Site+deleted." {
+		t.Fatalf("delete = %d %q; body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if len(deletedSites) != 1 || deletedSites[0] != sites.HashName("alpha") {
+		t.Fatalf("deleted sites = %#v, want alpha hash", deletedSites)
 	}
 }
 

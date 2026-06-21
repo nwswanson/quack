@@ -12,6 +12,7 @@ type Repository interface {
 	ListPublishedSitesByUsername(ctx context.Context, username string) ([]domain.PublishedSite, error)
 	ListSiteRevisions(ctx context.Context, user domain.AdminUser, site string, siteSHA string) ([]domain.RevisionRecord, error)
 	RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error)
+	RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error)
 	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
 	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
 	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
@@ -27,6 +28,7 @@ type Service interface {
 	ListPublishedSitesByUsername(ctx context.Context, username string) ([]domain.PublishedSite, error)
 	ListSiteRevisions(ctx context.Context, user domain.AdminUser, site string, siteSHA string) ([]domain.RevisionRecord, error)
 	RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error)
+	RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error)
 	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
 	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
 	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
@@ -66,6 +68,15 @@ func (s service) ListSiteRevisions(ctx context.Context, user domain.AdminUser, s
 
 func (s service) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
 	record, err := s.repo.RollbackSite(ctx, user, site, siteSHA)
+	if err != nil {
+		return domain.RollbackRecord{}, err
+	}
+	s.logInvalidation(ctx, "site", s.invalidator.InvalidateSite(ctx, site))
+	return record, nil
+}
+
+func (s service) RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error) {
+	record, err := s.repo.RollbackSiteToVersion(ctx, user, site, siteSHA, version)
 	if err != nil {
 		return domain.RollbackRecord{}, err
 	}

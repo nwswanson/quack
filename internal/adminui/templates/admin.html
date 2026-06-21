@@ -172,6 +172,53 @@
       color: #067647;
       font-weight: 600;
     }
+    .site-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border: 1px solid color-mix(in srgb, #1677c8 45%, Canvas);
+      border-radius: 999px;
+      background: color-mix(in srgb, #1677c8 16%, Canvas);
+      color: CanvasText;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 420px;
+    }
+    .actions form {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .actions select {
+      width: auto;
+      min-width: 112px;
+      padding: 7px 8px;
+      font-size: 13px;
+    }
+    .small-button {
+      padding: 7px 9px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .secondary-button {
+      background: color-mix(in srgb, CanvasText 10%, Canvas);
+      color: CanvasText;
+    }
+    .danger-button {
+      background: #b42318;
+      color: white;
+    }
     @media (max-width: 640px) {
       .masthead {
         align-items: flex-start;
@@ -234,21 +281,60 @@
                   <th>Serving status</th>
                   <th>Policy reason</th>
                   <th>Updated</th>
+                  {{if $.IsAdmin}}<th>Actions</th>{{end}}
                 </tr>
               </thead>
               <tbody>
                 {{range .Sites}}
                   <tr>
-                    <td>{{.Site}}</td>
+                    <td>
+                      <span class="site-name">
+                        <span>{{.Site}}</span>
+                        {{if .IsDefault}}<span class="badge">Default</span>{{end}}
+                      </span>
+                    </td>
                     <td>{{if .PublishedBy}}{{.PublishedBy}}{{else}}-{{end}}</td>
                     <td>{{.CurrentVersion}}</td>
                     <td>{{.VersionCount}}</td>
                     <td>{{.FileCount}}</td>
                     <td>{{.ByteCount}}</td>
-                    <td>{{if .LiveState}}{{.LiveState}}{{else}}-{{end}}</td>
+                    <td>{{.DisplayLiveState}}</td>
                     <td>{{.ServingStatus}}</td>
                     <td>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</td>
                     <td>{{.UpdatedAt}}</td>
+                    {{if $.IsAdmin}}
+                      <td>
+                        <div class="actions">
+                          <form method="post" action="/sites/action">
+                            <input type="hidden" name="site" value="{{.Site}}">
+                            {{if .IsUnpublished}}
+                              <input type="hidden" name="action" value="publish">
+                              <button class="small-button" type="submit">Publish</button>
+                            {{else}}
+                              <input type="hidden" name="action" value="unpublish">
+                              <button class="small-button secondary-button" type="submit">Unpublish</button>
+                            {{end}}
+                          </form>
+                          <form method="post" action="/sites/action">
+                            <input type="hidden" name="site" value="{{.Site}}">
+                            <input type="hidden" name="action" value="rollback">
+                            <select name="version" aria-label="Rollback version for {{.Site}}" {{if not .Revisions}}disabled{{end}}>
+                              {{range .Revisions}}
+                                <option value="{{.Version}}">v{{.Version}}</option>
+                              {{else}}
+                                <option>No older versions</option>
+                              {{end}}
+                            </select>
+                            <button class="small-button secondary-button" type="submit" {{if not .Revisions}}disabled{{end}}>Roll back</button>
+                          </form>
+                          <form method="post" action="/sites/action">
+                            <input type="hidden" name="site" value="{{.Site}}">
+                            <input type="hidden" name="action" value="delete">
+                            <button class="small-button danger-button" type="submit">Delete</button>
+                          </form>
+                        </div>
+                      </td>
+                    {{end}}
                   </tr>
                 {{end}}
               </tbody>

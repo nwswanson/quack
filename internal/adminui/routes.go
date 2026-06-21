@@ -39,10 +39,15 @@ type SessionRepository interface {
 	DeleteAdminSession(ctx context.Context, token string) error
 }
 
+type SiteStorage interface {
+	DeleteSite(ctx context.Context, siteSHA string) error
+}
+
 type Handler struct {
 	users       UserRepository
 	sessions    SessionRepository
 	releases    releases.Service
+	store       SiteStorage
 	read        sites.SiteReadService
 	write       sites.SiteWriteService
 	setLogLevel func(string) error
@@ -52,6 +57,7 @@ type Options struct {
 	Users       UserRepository
 	Sessions    SessionRepository
 	Releases    releases.Service
+	Store       SiteStorage
 	Read        sites.SiteReadService
 	Write       sites.SiteWriteService
 	SetLogLevel func(string) error
@@ -66,6 +72,7 @@ func New(opts Options) Handler {
 		users:       opts.Users,
 		sessions:    opts.Sessions,
 		releases:    opts.Releases,
+		store:       opts.Store,
 		read:        opts.Read,
 		write:       opts.Write,
 		setLogLevel: setLogLevel,
@@ -76,6 +83,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleAdminLoginPage)
 	mux.HandleFunc("/login", h.handleAdminLogin)
 	mux.HandleFunc("/logout", h.handleAdminLogout)
+	mux.HandleFunc("/sites/action", h.handleAdminSiteAction)
 	mux.HandleFunc("/users", h.handleAdminUsers)
 	mux.HandleFunc("/settings", h.handleAdminSettings)
 	mux.HandleFunc("/policy", h.handleAdminPolicy)
@@ -167,6 +175,92 @@ func (h Handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, adminSessionCookie(r, "", -1))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h Handler) handleAdminSiteAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdminSameOrigin(w, r) {
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		redirectAdminMessage(w, r, "/", "error", "Unable to read site action form.")
+		return
+	}
+	site := strings.TrimSpace(r.Form.Get("site"))
+	if site == "" {
+		redirectAdminMessage(w, r, "/", "error", "Site is required.")
+		return
+	}
+	siteSHA := sites.HashName(site)
+	switch strings.TrimSpace(r.Form.Get("action")) {
+	case "delete":
+		deleted, err := h.releases.DeleteSite(r.Context(), site, siteSHA)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "username", user.Username, "error", err)
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if deleted && h.store != nil {
+			if err := h.store.DeleteSite(r.Context(), siteSHA); err != nil {
+				slog.ErrorContext(r.Context(), "delete site blobs failed", "site", site, "site_sha", siteSHA, "username", user.Username, "error", err)
+				protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+				return
+			}
+		}
+		slog.WarnContext(r.Context(), "admin site deleted", "site", site, "username", user.Username, "deleted", deleted)
+		redirectAdminMessage(w, r, "/", "message", "Site deleted.")
+	case "unpublish":
+		out, err := h.releases.UnpublishSite(r.Context(), user, site, siteSHA)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "admin unpublish site failed", "site", site, "username", user.Username, "error", err)
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		slog.WarnContext(r.Context(), "admin site unpublished", "site", site, "username", user.Username, "unpublished", out.Unpublished)
+		redirectAdminMessage(w, r, "/", "message", "Site unpublished.")
+	case "publish":
+		out, err := h.releases.PublishSite(r.Context(), user, site, siteSHA)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "admin publish site failed", "site", site, "username", user.Username, "error", err)
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		slog.WarnContext(r.Context(), "admin site published", "site", site, "username", user.Username, "published", out.Published)
+		redirectAdminMessage(w, r, "/", "message", "Site published.")
+	case "rollback":
+		version, err := parsePositiveInt64(r.Form.Get("version"), "rollback version")
+		if err != nil {
+			redirectAdminMessage(w, r, "/", "error", err.Error())
+			return
+		}
+		rollback, err := h.releases.RollbackSiteToVersion(r.Context(), user, site, siteSHA, version)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "admin rollback site failed", "site", site, "version", version, "username", user.Username, "error", err)
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if rollback.Warning != "" {
+			redirectAdminMessage(w, r, "/", "error", rollback.Warning)
+			return
+		}
+		slog.WarnContext(r.Context(), "admin site rolled back", "site", site, "username", user.Username, "previous_version", rollback.PreviousVersion, "current_version", rollback.CurrentVersion)
+		redirectAdminMessage(w, r, "/", "message", fmt.Sprintf("Site rolled back to version %d.", rollback.CurrentVersion))
+	default:
+		redirectAdminMessage(w, r, "/", "error", "Site action is invalid.")
+	}
 }
 
 func (h Handler) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +502,23 @@ type adminNavItem struct {
 	Path  string
 }
 
+type adminSiteRow struct {
+	domain.PublishedSite
+	Revisions []domain.RevisionRecord
+	IsDefault bool
+}
+
+func (s adminSiteRow) DisplayLiveState() string {
+	if s.LiveState == "" {
+		return "-"
+	}
+	return s.LiveState
+}
+
+func (s adminSiteRow) IsUnpublished() bool {
+	return s.LiveState == "unpublished"
+}
+
 type adminPageData struct {
 	User              domain.AdminUser
 	Page              string
@@ -415,7 +526,7 @@ type adminPageData struct {
 	Nav               []adminNavItem
 	Error             string
 	Message           string
-	Sites             []domain.PublishedSite
+	Sites             []adminSiteRow
 	Users             []domain.AdminUser
 	Settings          domain.ServerSettings
 	DatabasePolicy    domain.PolicyRecord
@@ -456,6 +567,12 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 		if err != nil {
 			return adminPageData{}, err
 		}
+		settings, err := h.read.ServerSettings(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
+		data.Settings = settings
+		data.Sites = make([]adminSiteRow, 0, len(siteList))
 		for i := range siteList {
 			decision, err := h.read.CurrentSiteServingStatus(r.Context(), siteList[i].Site)
 			if err != nil {
@@ -466,8 +583,23 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 				siteList[i].ServingStatus = domain.SiteServingActive
 			}
 			siteList[i].PolicyReason = decision.Reason
+			row := adminSiteRow{
+				PublishedSite: siteList[i],
+				IsDefault:     settings.DefaultSite != "" && siteList[i].Site == settings.DefaultSite,
+			}
+			if user.IsAdmin() {
+				revisions, err := h.releases.ListSiteRevisions(r.Context(), user, siteList[i].Site, siteList[i].SiteSHA)
+				if err != nil {
+					return adminPageData{}, err
+				}
+				for _, revision := range revisions {
+					if revision.Version < siteList[i].CurrentVersion {
+						row.Revisions = append(row.Revisions, revision)
+					}
+				}
+			}
+			data.Sites = append(data.Sites, row)
 		}
-		data.Sites = siteList
 	case adminPageUsers:
 		users, err := h.users.ListUsers(r.Context())
 		if err != nil {
@@ -640,6 +772,17 @@ func parseNonNegativeInt64(value string, label string) (int64, error) {
 	}
 	if n < 0 {
 		return 0, fmt.Errorf("%s must be >= 0", label)
+	}
+	return n, nil
+}
+
+func parsePositiveInt64(value string, label string) (int64, error) {
+	n, err := parseNonNegativeInt64(value, label)
+	if err != nil {
+		return 0, err
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s is required", label)
 	}
 	return n, nil
 }

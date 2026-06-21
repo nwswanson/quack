@@ -16,6 +16,7 @@ import (
 type fakeStorage struct {
 	root            string
 	deletedVersions *[]int64
+	deletedSites    *[]string
 }
 
 func (fakeStorage) AcceptFile(ctx context.Context, file storage.StoredFile) (storage.StoredFileResult, error) {
@@ -37,7 +38,10 @@ func (s fakeStorage) OpenBlob(ctx context.Context, blobPath string) (*os.File, e
 	return nil, os.ErrNotExist
 }
 
-func (fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
+func (s fakeStorage) DeleteSite(ctx context.Context, siteSHA string) error {
+	if s.deletedSites != nil {
+		*s.deletedSites = append(*s.deletedSites, siteSHA)
+	}
 	return nil
 }
 
@@ -62,6 +66,7 @@ type fakeDatabase struct {
 	prunedVersions       []int64
 	revisions            []domain.RevisionRecord
 	rollback             domain.RollbackRecord
+	rollbackVersion      int64
 	unpublish            domain.UnpublishRecord
 	publish              domain.PublishRecord
 	sites                []domain.PublishedSite
@@ -123,6 +128,14 @@ func (db *fakeDatabase) ListSiteRevisions(ctx context.Context, user domain.Admin
 }
 
 func (db *fakeDatabase) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
+	return db.rollback, nil
+}
+
+func (db *fakeDatabase) RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error) {
+	db.rollbackVersion = version
+	if db.rollback.CurrentVersion == 0 {
+		db.rollback.CurrentVersion = version
+	}
 	return db.rollback, nil
 }
 

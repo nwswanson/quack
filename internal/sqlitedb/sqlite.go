@@ -1594,6 +1594,17 @@ func (d *Database) ListSiteRevisions(ctx context.Context, user domain.AdminUser,
 }
 
 func (d *Database) RollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.RollbackRecord, error) {
+	return d.rollbackSite(ctx, user, site, siteSHA, 0)
+}
+
+func (d *Database) RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error) {
+	if version <= 0 {
+		return domain.RollbackRecord{Warning: "rollback version is required"}, nil
+	}
+	return d.rollbackSite(ctx, user, site, siteSHA, version)
+}
+
+func (d *Database) rollbackSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string, targetVersion int64) (domain.RollbackRecord, error) {
 	if siteSHA == "" {
 		return domain.RollbackRecord{Warning: "no older revisions available"}, nil
 	}
@@ -1633,26 +1644,42 @@ func (d *Database) RollbackSite(ctx context.Context, user domain.AdminUser, site
 		return domain.RollbackRecord{}, fmt.Errorf("load current site version: %w", err)
 	}
 
-	var previousVersion int64
-	err = tx.QueryRowContext(ctx, `
-		SELECT version
-		FROM uploads
-		WHERE site_sha = ? AND state = ? AND version < ?
-		ORDER BY version DESC
-		LIMIT 1
-	`, siteSHA, string(domain.UploadStateFinished), currentVersion).Scan(&previousVersion)
-	if err == sql.ErrNoRows {
-		return domain.RollbackRecord{CurrentVersion: currentVersion, Warning: "no older revisions available"}, nil
-	}
-	if err != nil {
-		return domain.RollbackRecord{}, fmt.Errorf("find previous site revision: %w", err)
+	rollbackVersion := targetVersion
+	if rollbackVersion <= 0 {
+		err = tx.QueryRowContext(ctx, `
+			SELECT version
+			FROM uploads
+			WHERE site_sha = ? AND state = ? AND version < ?
+			ORDER BY version DESC
+			LIMIT 1
+		`, siteSHA, string(domain.UploadStateFinished), currentVersion).Scan(&rollbackVersion)
+		if err == sql.ErrNoRows {
+			return domain.RollbackRecord{CurrentVersion: currentVersion, Warning: "no older revisions available"}, nil
+		}
+		if err != nil {
+			return domain.RollbackRecord{}, fmt.Errorf("find previous site revision: %w", err)
+		}
+	} else {
+		var exists int
+		err = tx.QueryRowContext(ctx, `
+			SELECT 1
+			FROM uploads
+			WHERE site_sha = ? AND state = ? AND version = ? AND version < ?
+			LIMIT 1
+		`, siteSHA, string(domain.UploadStateFinished), rollbackVersion, currentVersion).Scan(&exists)
+		if err == sql.ErrNoRows {
+			return domain.RollbackRecord{CurrentVersion: currentVersion, Warning: "selected revision is not older than the current version"}, nil
+		}
+		if err != nil {
+			return domain.RollbackRecord{}, fmt.Errorf("find selected site revision: %w", err)
+		}
 	}
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE sites
 		SET current_version = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE site_sha = ? AND current_version = ?
-	`, previousVersion, siteSHA, currentVersion)
+	`, rollbackVersion, siteSHA, currentVersion)
 	if err != nil {
 		return domain.RollbackRecord{}, fmt.Errorf("rollback site version: %w", err)
 	}
@@ -1669,7 +1696,7 @@ func (d *Database) RollbackSite(ctx context.Context, user domain.AdminUser, site
 	return domain.RollbackRecord{
 		RolledBack:      true,
 		PreviousVersion: currentVersion,
-		CurrentVersion:  previousVersion,
+		CurrentVersion:  rollbackVersion,
 	}, nil
 }
 
