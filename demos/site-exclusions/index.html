@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quack Site Exclusions Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f7f4ec;
+        color: #172026;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+
+      section {
+        width: min(760px, 100%);
+      }
+
+      h1 {
+        margin: 0 0 16px;
+        font-size: clamp(2rem, 6vw, 4rem);
+        line-height: 1;
+      }
+
+      p {
+        max-width: 60ch;
+        font-size: 1.05rem;
+        line-height: 1.6;
+      }
+
+      code {
+        background: #ffffff;
+        border: 1px solid #d7cfbf;
+        border-radius: 6px;
+        padding: 2px 6px;
+      }
+
+      ul {
+        display: grid;
+        gap: 10px;
+        padding-left: 22px;
+        font-size: 1rem;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>Site Exclusions</h1>
+        <p>This demo uploads one served page while keeping local-only files out of the archive.</p>
+        <ul>
+          <li><code>notes.local</code> is excluded by the basename glob.</li>
+          <li><code>scratch/</code> is excluded by a bare directory pattern.</li>
+          <li><code>vendor-cache/</code> is excluded by an explicit tree pattern.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

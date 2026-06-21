@@ -1,0 +1,9 @@
+exclude:
+  - "*.local"
+  - "README.md"
+  - "scratch"
+  - "vendor-cache/**"
+
+routes:
+  - path: /
+    kind: static
