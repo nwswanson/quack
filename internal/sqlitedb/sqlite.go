@@ -443,6 +443,7 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		MaxUploadFiles:      appsettings.DefaultMaxUploadFiles,
 		MaxRetainedVersions: 0,
 		DefaultSite:         "",
+		AllowedHosts:        nil,
 		LogLevel:            "warn",
 		Locked:              map[string]bool{},
 	}
@@ -485,6 +486,12 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 			settings.MaxRetainedVersions = n
 		case "default_site":
 			settings.DefaultSite = value
+		case "allowed_hosts":
+			hosts, err := appsettings.ParseAllowedHosts(value)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.AllowedHosts = hosts
 		case "log_level":
 			settings.LogLevel = strings.ToLower(strings.TrimSpace(value))
 		}
@@ -526,6 +533,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
 		"default_site":          strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts":         appsettings.FormatAllowedHosts(settings.AllowedHosts),
 		"log_level":             settings.LogLevel,
 	}
 	for key, value := range values {
@@ -578,6 +586,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		"max_upload_files":      strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions": strconv.FormatInt(settings.MaxRetainedVersions, 10),
 		"default_site":          strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts":         appsettings.FormatAllowedHosts(settings.AllowedHosts),
 		"log_level":             settings.LogLevel,
 	} {
 		if err := appsettings.Validate(key, value); err != nil {

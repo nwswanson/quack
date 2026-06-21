@@ -56,7 +56,7 @@
       font-size: 14px;
       font-weight: 600;
     }
-    input {
+    input, textarea {
       box-sizing: border-box;
       width: 100%;
       padding: 10px 12px;
@@ -65,6 +65,10 @@
       font: inherit;
       background: Canvas;
       color: CanvasText;
+    }
+    textarea {
+      min-height: 96px;
+      resize: vertical;
     }
     button {
       padding: 10px 12px;
@@ -179,6 +183,10 @@
             <label>
               Default site
               <input name="default_site" value="{{.Settings.DefaultSite}}">
+            </label>
+            <label>
+              Allowed hosts
+              <textarea name="allowed_hosts" spellcheck="false" placeholder="*.example.com">{{.AllowedHostsValue}}</textarea>
             </label>
             <label>
               Log level

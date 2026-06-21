@@ -23,6 +23,27 @@ func TestNameFromHost(t *testing.T) {
 	}
 }
 
+func TestHostAllowed(t *testing.T) {
+	tests := map[string]struct {
+		host    string
+		allowed []string
+		want    bool
+	}{
+		"empty list allows existing behavior": {host: "foo.badhost.com", want: true},
+		"exact match":                         {host: "example.com", allowed: []string{"example.com"}, want: true},
+		"wildcard subdomain":                  {host: "mysite.goodhost.com", allowed: []string{"*.goodhost.com"}, want: true},
+		"wildcard parent rejected":            {host: "goodhost.com", allowed: []string{"*.goodhost.com"}, want: false},
+		"wrong parent rejected":               {host: "mysite.badhost.com", allowed: []string{"*.goodhost.com"}, want: false},
+		"port normalized":                     {host: "MYSITE.GOODHOST.COM:443", allowed: []string{"*.goodhost.com"}, want: true},
+	}
+
+	for name, tc := range tests {
+		if got := HostAllowed(tc.host, tc.allowed); got != tc.want {
+			t.Fatalf("%s: HostAllowed(%q, %#v) = %v, want %v", name, tc.host, tc.allowed, got, tc.want)
+		}
+	}
+}
+
 func TestCanonicalName(t *testing.T) {
 	tests := map[string]struct {
 		input string

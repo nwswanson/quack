@@ -58,6 +58,7 @@ func (r passthroughHotDataReader) GetServerSettings(ctx context.Context) (domain
 	if err != nil {
 		return domain.ServerSettings{}, err
 	}
+	settings.AllowedHosts = append([]string(nil), settings.AllowedHosts...)
 	settings.Locked = cloneBoolMap(settings.Locked)
 	return settings, nil
 }

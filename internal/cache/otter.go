@@ -68,6 +68,7 @@ func (r *otterHotDataReader) GetServerSettings(ctx context.Context) (domain.Serv
 		if err != nil {
 			return domain.ServerSettings{}, err
 		}
+		settings.AllowedHosts = append([]string(nil), settings.AllowedHosts...)
 		settings.Locked = cloneBoolMap(settings.Locked)
 		return settings, nil
 	})
@@ -75,6 +76,7 @@ func (r *otterHotDataReader) GetServerSettings(ctx context.Context) (domain.Serv
 		return domain.ServerSettings{}, err
 	}
 	settings := value.(domain.ServerSettings)
+	settings.AllowedHosts = append([]string(nil), settings.AllowedHosts...)
 	settings.Locked = cloneBoolMap(settings.Locked)
 	return settings, nil
 }

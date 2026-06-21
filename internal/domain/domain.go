@@ -63,6 +63,7 @@ type ServerSettings struct {
 	MaxUploadFiles      int64
 	MaxRetainedVersions int64
 	DefaultSite         string
+	AllowedHosts        []string
 	LogLevel            string
 	Locked              map[string]bool
 }

@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -14,16 +13,7 @@ import (
 )
 
 func NameFromHost(host string) string {
-	host = strings.TrimSpace(strings.ToLower(host))
-	if host == "" {
-		return ""
-	}
-	if splitHost, _, err := net.SplitHostPort(host); err == nil {
-		host = splitHost
-	} else if strings.Count(host, ":") == 1 {
-		host = strings.Split(host, ":")[0]
-	}
-	host = strings.Trim(host, ".")
+	host = NormalizeHost(host)
 	if host == "" {
 		return ""
 	}

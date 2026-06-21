@@ -33,12 +33,14 @@ type PublicRouteDecision struct {
 	Methods        []string
 	ResourceLimits appruntime.ResourceLimits
 	DeniedReason   string
+	BlockedHost    bool
 }
 
 type Handler struct {
-	static  statichttp.Handler
-	runtime runtimehttp.Handler
-	routes  RouteReader
+	static       statichttp.Handler
+	runtime      runtimehttp.Handler
+	routes       RouteReader
+	hostResolver sites.HostResolver
 }
 
 type RouteReader interface {
@@ -63,6 +65,12 @@ func WithRuntime(runtime runtimehttp.Handler) Option {
 	}
 }
 
+func WithHostResolver(resolver sites.HostResolver) Option {
+	return func(h *Handler) {
+		h.hostResolver = resolver
+	}
+}
+
 func New(static statichttp.Handler, opts ...Option) Handler {
 	h := Handler{static: static, runtime: runtimehttp.New(nil)}
 	for _, opt := range opts {
@@ -83,6 +91,10 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if decision.Site == "" {
+		if decision.BlockedHost {
+			writeUnconfiguredHost(w)
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}
@@ -122,10 +134,18 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) decide(r *http.Request) (PublicRouteDecision, error) {
-	site := sites.NameFromHost(r.Host)
-	if site == "" {
+	resolution, err := h.resolveHost(r)
+	if err != nil {
+		return PublicRouteDecision{}, err
+	}
+	switch resolution.Status {
+	case sites.HostResolved:
+	case sites.HostBlocked:
+		return PublicRouteDecision{BlockedHost: true}, nil
+	default:
 		return PublicRouteDecision{}, nil
 	}
+	site := resolution.Site
 	if h.routes != nil {
 		decision, ok, err := h.routes.LookupRoute(r, site, r.URL.Path)
 		if err != nil {
@@ -140,6 +160,23 @@ func (h Handler) decide(r *http.Request) (PublicRouteDecision, error) {
 		Kind: RouteStatic,
 		Path: r.URL.Path,
 	}, nil
+}
+
+func (h Handler) resolveHost(r *http.Request) (sites.HostResolution, error) {
+	if h.hostResolver != nil {
+		return h.hostResolver.ResolveHost(r.Context(), r.Host)
+	}
+	site := sites.NameFromHost(r.Host)
+	if site == "" {
+		return sites.HostResolution{Status: sites.HostUnmatched, Host: sites.NormalizeHost(r.Host)}, nil
+	}
+	return sites.HostResolution{Status: sites.HostResolved, Site: site, Host: sites.NormalizeHost(r.Host)}, nil
+}
+
+func writeUnconfiguredHost(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusMisdirectedRequest)
+	_, _ = w.Write([]byte("<!doctype html><title>Unconfigured host</title><h1>Unconfigured host</h1>"))
 }
 
 type ReleaseRouteReader struct {

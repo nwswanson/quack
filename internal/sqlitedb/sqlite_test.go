@@ -664,14 +664,14 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
 		t.Fatalf("settings = %#v, initialize should not overwrite", settings)
 	}
-	if err := db.SaveServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 2048, MaxUploadFiles: 8}); err != nil {
+	if err := db.SaveServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 2048, MaxUploadFiles: 8, AllowedHosts: []string{"*.example.com", "admin.example.com"}}); err != nil {
 		t.Fatal(err)
 	}
 	settings, err = db.GetServerSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.MaxUploadBytes != 2048 || settings.MaxUploadFiles != 8 {
+	if settings.MaxUploadBytes != 2048 || settings.MaxUploadFiles != 8 || len(settings.AllowedHosts) != 2 || settings.AllowedHosts[0] != "*.example.com" || settings.AllowedHosts[1] != "admin.example.com" {
 		t.Fatalf("settings = %#v, want saved values", settings)
 	}
 }

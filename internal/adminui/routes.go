@@ -335,6 +335,10 @@ func (d adminPageData) HasCreatedUser() bool {
 	return d.CreatedUser.User.ID > 0
 }
 
+func (d adminPageData) AllowedHostsValue() string {
+	return appsettings.FormatAllowedHosts(d.Settings.AllowedHosts)
+}
+
 func (h Handler) adminPageData(r *http.Request, user domain.AdminUser) (adminPageData, error) {
 	siteList, err := h.releases.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
 	if err != nil {
@@ -467,11 +471,16 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if logLevel == "" {
 		return domain.ServerSettings{}, fmt.Errorf("log level must be debug, info, warn, or error")
 	}
+	allowedHosts, err := appsettings.ParseAllowedHosts(r.Form.Get("allowed_hosts"))
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
 	return domain.ServerSettings{
 		MaxUploadBytes:      maxUploadBytes,
 		MaxUploadFiles:      maxUploadFiles,
 		MaxRetainedVersions: maxRetainedVersions,
 		DefaultSite:         strings.TrimSpace(r.Form.Get("default_site")),
+		AllowedHosts:        allowedHosts,
 		LogLevel:            logLevel,
 	}, nil
 }

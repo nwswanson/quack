@@ -13,6 +13,7 @@ import (
 	appruntime "quack/internal/runtime"
 	"quack/internal/runtimehttp"
 	appsettings "quack/internal/settings"
+	"quack/internal/sites"
 	"quack/internal/statichttp"
 )
 
@@ -93,6 +94,48 @@ func TestHandlerRejectsUnknownPublicHostBeforeStaticServing(t *testing.T) {
 	}
 	if static.called {
 		t.Fatal("static handler called for reserved public host")
+	}
+}
+
+func TestHandlerBlocksConfiguredHostMismatchBeforeStaticServing(t *testing.T) {
+	static := &recordingStaticHandler{}
+	h := New(static, WithHostResolver(sites.SettingsHostResolver{Settings: fakeSettingsReader{
+		settings: domain.ServerSettings{AllowedHosts: []string{"*.goodhost.com"}},
+	}}))
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "mysite.badhost.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusMisdirectedRequest, rec.Body.String())
+	}
+	if static.called {
+		t.Fatal("static handler called for blocked host")
+	}
+}
+
+func TestHandlerAllowsConfiguredWildcardHost(t *testing.T) {
+	static := &recordingStaticHandler{}
+	h := New(static, WithHostResolver(sites.SettingsHostResolver{Settings: fakeSettingsReader{
+		settings: domain.ServerSettings{AllowedHosts: []string{"*.goodhost.com"}},
+	}}))
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "mysite.goodhost.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if static.request.Site != "mysite" {
+		t.Fatalf("site = %q, want mysite", static.request.Site)
 	}
 }
 
@@ -342,6 +385,14 @@ func (l fakePolicyLoader) LoadPolicies(ctx context.Context, scopes []domain.Poli
 		}
 	}
 	return out, nil
+}
+
+type fakeSettingsReader struct {
+	settings domain.ServerSettings
+}
+
+func (r fakeSettingsReader) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
+	return r.settings, nil
 }
 
 func (h *recordingStaticHandler) ServeSiteFile(w http.ResponseWriter, r *http.Request, req statichttp.Request) {

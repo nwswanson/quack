@@ -46,6 +46,7 @@ const (
 	SettingMaxUploadFiles          = "max_upload_files"
 	SettingMaxRetainedVersions     = "max_retained_versions"
 	SettingDefaultSite             = "default_site"
+	SettingAllowedHosts            = "allowed_hosts"
 	SettingLogLevel                = "log_level"
 	SettingDatabaseFeature         = "features.database.enabled"
 	SettingDatabaseFeatureRequired = "features.database.required"
@@ -71,6 +72,10 @@ var registry = map[string]SettingDefinition{
 	},
 	SettingDefaultSite: {
 		Key: SettingDefaultSite, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true,
+	},
+	SettingAllowedHosts: {
+		Key: SettingAllowedHosts, Type: SettingTypeString, DefaultValue: "",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true,
 	},
 	SettingLogLevel: {
@@ -138,6 +143,12 @@ func Validate(key, value string) error {
 		if key == SettingLogLevel && ParseLogLevel(value) == "" {
 			return fmt.Errorf("log level must be debug, info, warn, or error")
 		}
+	case SettingTypeString:
+		if key == SettingAllowedHosts {
+			if _, err := ParseAllowedHosts(value); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -160,4 +171,62 @@ func ParseLogLevel(value string) string {
 func ParseBool(value string) bool {
 	b, _ := strconv.ParseBool(strings.TrimSpace(value))
 	return b
+}
+
+func ParseAllowedHosts(value string) ([]string, error) {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	seen := map[string]bool{}
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		host := strings.Trim(strings.ToLower(strings.TrimSpace(field)), ".")
+		if host == "" || seen[host] {
+			continue
+		}
+		if err := validateAllowedHostPattern(host); err != nil {
+			return nil, err
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	return out, nil
+}
+
+func FormatAllowedHosts(hosts []string) string {
+	return strings.Join(hosts, "\n")
+}
+
+func validateAllowedHostPattern(host string) error {
+	if strings.Contains(host, "://") || strings.Contains(host, "/") || strings.Contains(host, ":") {
+		return fmt.Errorf("allowed hosts must be hostnames, optionally prefixed with *.")
+	}
+	if strings.Contains(host, "*") {
+		if !strings.HasPrefix(host, "*.") || strings.Count(host, "*") != 1 {
+			return fmt.Errorf("allowed host wildcards must use the form *.example.com")
+		}
+		host = strings.TrimPrefix(host, "*.")
+	}
+	if host == "" || strings.Contains(host, "..") {
+		return fmt.Errorf("allowed hosts must be valid hostnames")
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return fmt.Errorf("allowed hosts must be valid hostnames")
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("allowed hosts must be valid hostnames")
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z':
+			case r >= '0' && r <= '9':
+			case r == '-':
+			default:
+				return fmt.Errorf("allowed hosts must contain only letters, numbers, hyphens, dots, and leftmost wildcards")
+			}
+		}
+	}
+	return nil
 }

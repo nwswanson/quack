@@ -16,6 +16,8 @@ func TestValidateSettingValue(t *testing.T) {
 		"invalid bool":    {key: SettingDatabaseFeature, value: "yes", wantErr: true},
 		"valid log level": {key: SettingLogLevel, value: "warning"},
 		"invalid enum":    {key: SettingLogLevel, value: "trace", wantErr: true},
+		"valid hosts":     {key: SettingAllowedHosts, value: "*.example.com\nadmin.example.com"},
+		"invalid hosts":   {key: SettingAllowedHosts, value: "*example.com", wantErr: true},
 		"unknown key":     {key: "unknown", value: "value", wantErr: true},
 	}
 
@@ -41,5 +43,15 @@ func TestParseSettingHelpers(t *testing.T) {
 	}
 	if got := Default(SettingMaxUploadFiles); got != "10000" {
 		t.Fatalf("Default max upload files = %q, want 10000", got)
+	}
+}
+
+func TestParseAllowedHosts(t *testing.T) {
+	hosts, err := ParseAllowedHosts(" *.Example.com,\nadmin.example.com *.example.com ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := FormatAllowedHosts(hosts), "*.example.com\nadmin.example.com"; got != want {
+		t.Fatalf("allowed hosts = %q, want %q", got, want)
 	}
 }
