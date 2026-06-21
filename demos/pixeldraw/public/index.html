@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PixelDraw</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <h1>PixelDraw</h1>
+        <div class="status" data-state="closed" id="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="statusText">Connecting</span>
+        </div>
+      </header>
+
+      <section class="workspace" aria-label="Pixel canvas">
+        <aside class="tools" aria-label="Color tools">
+          <div class="palette" id="palette" role="radiogroup" aria-label="Paint color">
+            <button class="swatch is-active" type="button" data-color="white" role="radio" aria-checked="true" title="White">
+              <span style="background: #ffffff"></span>
+            </button>
+            <button class="swatch" type="button" data-color="black" role="radio" aria-checked="false" title="Black">
+              <span style="background: #16191d"></span>
+            </button>
+            <button class="swatch" type="button" data-color="red" role="radio" aria-checked="false" title="Red">
+              <span style="background: #e13a32"></span>
+            </button>
+            <button class="swatch" type="button" data-color="green" role="radio" aria-checked="false" title="Green">
+              <span style="background: #239a57"></span>
+            </button>
+            <button class="swatch" type="button" data-color="blue" role="radio" aria-checked="false" title="Blue">
+              <span style="background: #2469d8"></span>
+            </button>
+          </div>
+
+          <dl class="meta">
+            <div>
+              <dt>Revision</dt>
+              <dd id="revision">0</dd>
+            </div>
+            <div>
+              <dt>Grid</dt>
+              <dd id="gridSize">48 x 48</dd>
+            </div>
+          </dl>
+        </aside>
+
+        <div class="canvas-shell">
+          <canvas id="canvas" width="960" height="960" aria-label="Collaborative pixel canvas"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
