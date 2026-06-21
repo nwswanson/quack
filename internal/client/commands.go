@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
+	"quack/internal/manifest"
 	"quack/internal/protocol"
 )
 
@@ -51,9 +54,18 @@ func UploadDirectory(ctx context.Context, serverURL, token, site, directory stri
 	if err := validateDirectory(directory); err != nil {
 		return nil, err
 	}
+	siteManifest, err := readUploadManifest(directory)
+	if err != nil {
+		return nil, err
+	}
 
 	pr, pw := io.Pipe()
-	go func() { _ = pw.CloseWithError(protocol.WriteTar(ctx, directory, pw)) }()
+	go func() {
+		err := protocol.WriteTarWithOptions(ctx, directory, pw, protocol.WriteTarOptions{
+			Exclude: siteManifest.Exclude,
+		})
+		_ = pw.CloseWithError(err)
+	}()
 
 	req, err := protocol.NewRequest(ctx, http.MethodPost, protocol.UploadArchiveURL(serverURL), token, pr)
 	if err != nil {
@@ -64,6 +76,37 @@ func UploadDirectory(ctx context.Context, serverURL, token, site, directory stri
 	req.Header.Set("Content-Type", protocol.ContentTypeTar)
 	req.Header.Set(protocol.HeaderSite, site)
 	return doRequest[protocol.UploadArchiveResponse](req, "upload", "upload archive")
+}
+
+func readUploadManifest(directory string) (manifest.Manifest, error) {
+	for _, name := range []string{"site.yml", "site.yaml"} {
+		path := filepath.Join(directory, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return manifest.Manifest{}, fmt.Errorf("stat %s: %w", name, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return manifest.Manifest{}, fmt.Errorf("open %s: %w", name, err)
+		}
+		siteManifest, parseErr := manifest.Parse(file, info.Size())
+		closeErr := file.Close()
+		if parseErr != nil {
+			return manifest.Manifest{}, parseErr
+		}
+		if closeErr != nil {
+			return manifest.Manifest{}, fmt.Errorf("close %s: %w", name, closeErr)
+		}
+		return siteManifest, nil
+	}
+	return manifest.Default(), nil
 }
 
 func DeleteSite(ctx context.Context, serverURL, token, site string) (*protocol.DeleteSiteResponse, error) {

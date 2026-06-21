@@ -2,8 +2,13 @@ package protocol
 
 import (
 	"archive/tar"
+	"bytes"
+	"context"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -98,4 +103,85 @@ func TestPlanTransfers(t *testing.T) {
 	if actions["old.txt"] != TransferDelete {
 		t.Fatalf("old.txt action = %q, want delete", actions["old.txt"])
 	}
+}
+
+func TestWriteTarWithOptionsExcludesPatterns(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "index.html", "home")
+	writeTestFile(t, dir, "nested/.index.html.swp", "swap")
+	writeTestFile(t, dir, "nested/keep.txt", "keep")
+	writeTestFile(t, dir, "node_modules/pkg/index.js", "module")
+	writeTestFile(t, dir, "site.yml", "exclude:\n  - \"*\"\n")
+
+	var buf bytes.Buffer
+	err := WriteTarWithOptions(context.Background(), dir, &buf, WriteTarOptions{
+		Exclude: []string{"*.swp", "node_modules"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := tarEntryNames(t, buf.Bytes())
+	if got, want := strings.Join(names, ","), "index.html,nested,nested/keep.txt,site.yml"; got != want {
+		t.Fatalf("tar entries = %q, want %q", got, want)
+	}
+}
+
+func TestExcludeMatcherDirectoryTreePatterns(t *testing.T) {
+	matcher, err := NewExcludeMatcher([]string{"node_modules/**", "tmp/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"node_modules", "node_modules/pkg/index.js", "tmp", "tmp/file.txt"} {
+		if !matcher.Match(path, true) && !matcher.Match(path, false) {
+			t.Fatalf("%s was not excluded", path)
+		}
+	}
+	for _, path := range []string{"nested/node_modules/pkg.js", "assets/tmp/file.txt"} {
+		if matcher.Match(path, false) {
+			t.Fatalf("%s should not be excluded by path-scoped tree patterns", path)
+		}
+	}
+	if matcher.Match("site.yml", false) || matcher.Match("site.yaml", false) {
+		t.Fatal("site manifest should not be excluded")
+	}
+}
+
+func TestExcludeMatcherBareDirectoryPatternMatchesNestedDirectory(t *testing.T) {
+	matcher, err := NewExcludeMatcher([]string{"node_modules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matcher.Match("nested/node_modules", true) {
+		t.Fatal("bare directory pattern should match nested directory basename")
+	}
+}
+
+func writeTestFile(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tarEntryNames(t *testing.T, data []byte) []string {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(data))
+	var names []string
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, header.Name)
+	}
+	sort.Strings(names)
+	return names
 }

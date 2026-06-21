@@ -1,6 +1,7 @@
 package client
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,39 @@ func TestUploadDirectorySuccessStillDecodesResponse(t *testing.T) {
 	}
 	if resp == nil || !resp.OK || resp.Site != "foo" || resp.Files != 1 {
 		t.Fatalf("response = %#v, want successful upload response", resp)
+	}
+}
+
+func TestUploadDirectoryAppliesSiteExclusionsBeforeUpload(t *testing.T) {
+	dir := t.TempDir()
+	writeUploadTestFile(t, dir, "site.yml", "exclude:\n  - \"*.swp\"\n  - \"node_modules\"\n")
+	writeUploadTestFile(t, dir, "index.html", "hello")
+	writeUploadTestFile(t, dir, "nested/file.swp", "swap")
+	writeUploadTestFile(t, dir, "node_modules/pkg/index.js", "module")
+
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		names := requestTarEntryNames(t, req)
+		if got, want := strings.Join(names, ","), "index.html,nested,site.yml"; got != want {
+			t.Fatalf("uploaded tar entries = %q, want %q", got, want)
+		}
+		return response(req, http.StatusOK, `{"ok":true,"site":"foo","version":1,"files":1,"bytes":5}`), nil
+	}))
+
+	if _, err := UploadDirectory(context.Background(), "http://example.test", "token", "foo", dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUploadDirectoryRejectsInvalidSiteExclusions(t *testing.T) {
+	dir := t.TempDir()
+	writeUploadTestFile(t, dir, "site.yml", "exclude:\n  - \"../secret\"\n")
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("upload request should not be sent")
+		return nil, nil
+	}))
+
+	if _, err := UploadDirectory(context.Background(), "http://example.test", "token", "foo", dir); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
@@ -317,4 +351,33 @@ func drainRequestBody(t *testing.T, req *http.Request) {
 	if err := req.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeUploadTestFile(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func requestTarEntryNames(t *testing.T, req *http.Request) []string {
+	t.Helper()
+	defer req.Body.Close()
+	tr := tar.NewReader(req.Body)
+	var names []string
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, header.Name)
+	}
+	return names
 }

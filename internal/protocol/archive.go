@@ -13,8 +13,20 @@ import (
 	"strings"
 )
 
+type WriteTarOptions struct {
+	Exclude []string
+}
+
 func WriteTar(ctx context.Context, root string, w io.Writer) error {
+	return WriteTarWithOptions(ctx, root, w, WriteTarOptions{})
+}
+
+func WriteTarWithOptions(ctx context.Context, root string, w io.Writer, options WriteTarOptions) error {
 	if err := validateDirectory(root); err != nil {
+		return err
+	}
+	excludes, err := NewExcludeMatcher(options.Exclude)
+	if err != nil {
 		return err
 	}
 
@@ -56,6 +68,12 @@ func WriteTar(ctx context.Context, root string, w io.Writer) error {
 		if name == "" {
 			return nil
 		}
+		if !isSiteManifestPath(name) && excludes.Match(name, mode.IsDir()) {
+			if mode.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
@@ -84,6 +102,141 @@ func WriteTar(ctx context.Context, root string, w io.Writer) error {
 		}
 		return nil
 	})
+}
+
+type ExcludeMatcher struct {
+	patterns []excludePattern
+}
+
+type excludePattern struct {
+	pattern    string
+	tree       bool
+	pathScoped bool
+}
+
+func NewExcludeMatcher(patterns []string) (ExcludeMatcher, error) {
+	normalized, err := NormalizeExcludePatterns(patterns)
+	if err != nil {
+		return ExcludeMatcher{}, err
+	}
+
+	matcher := ExcludeMatcher{patterns: make([]excludePattern, 0, len(normalized))}
+	for _, pattern := range normalized {
+		if strings.HasSuffix(pattern, "/**") {
+			matcher.patterns = append(matcher.patterns, excludePattern{
+				pattern:    strings.TrimSuffix(pattern, "/**"),
+				tree:       true,
+				pathScoped: true,
+			})
+			continue
+		}
+		matcher.patterns = append(matcher.patterns, excludePattern{pattern: pattern})
+	}
+	return matcher, nil
+}
+
+func NormalizeExcludePatterns(patterns []string) ([]string, error) {
+	out := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		normalized, err := normalizeExcludePattern(pattern)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+func (m ExcludeMatcher) Match(name string, isDir bool) bool {
+	name = strings.Trim(path.Clean(strings.ReplaceAll(name, "\\", "/")), "/")
+	if name == "." || isSiteManifestPath(name) {
+		return false
+	}
+
+	base := path.Base(name)
+	for _, pattern := range m.patterns {
+		if pattern.tree {
+			if matchesTreePattern(pattern, name) {
+				return true
+			}
+			continue
+		}
+
+		if strings.Contains(pattern.pattern, "/") {
+			if ok, _ := path.Match(pattern.pattern, name); ok {
+				return true
+			}
+			continue
+		}
+		if ok, _ := path.Match(pattern.pattern, base); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeExcludePattern(pattern string) (string, error) {
+	normalized := strings.TrimSpace(strings.ReplaceAll(pattern, "\\", "/"))
+	if normalized == "" {
+		return "", errors.New("exclude patterns cannot be empty")
+	}
+	if strings.HasPrefix(normalized, "/") {
+		return "", fmt.Errorf("exclude pattern must be relative: %s", pattern)
+	}
+
+	trailingSlash := strings.HasSuffix(normalized, "/")
+	normalized = strings.TrimPrefix(normalized, "./")
+	normalized = strings.TrimRight(normalized, "/")
+	if normalized == "" || normalized == "." {
+		return "", fmt.Errorf("exclude pattern must name a relative path or glob: %s", pattern)
+	}
+	for _, part := range strings.Split(normalized, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("exclude pattern cannot contain ..: %s", pattern)
+		}
+	}
+
+	matchPattern := normalized
+	if strings.HasSuffix(matchPattern, "/**") {
+		matchPattern = strings.TrimSuffix(matchPattern, "/**")
+	} else if strings.HasSuffix(matchPattern, "/") {
+		matchPattern = strings.TrimSuffix(matchPattern, "/") + "/**"
+	}
+	if _, err := path.Match(matchPattern, matchPattern); err != nil {
+		return "", fmt.Errorf("invalid exclude pattern %q: %w", pattern, err)
+	}
+
+	if trailingSlash {
+		normalized += "/**"
+	}
+	return normalized, nil
+}
+
+func matchesTreePattern(pattern excludePattern, name string) bool {
+	if pattern.pathScoped {
+		for candidate := name; candidate != ""; {
+			if ok, _ := path.Match(pattern.pattern, candidate); ok {
+				return true
+			}
+			i := strings.LastIndex(candidate, "/")
+			if i < 0 {
+				break
+			}
+			candidate = candidate[:i]
+		}
+		return false
+	}
+
+	if ok, _ := path.Match(pattern.pattern, path.Base(name)); ok {
+		return true
+	}
+	parts := strings.Split(name, "/")
+	for _, part := range parts[:len(parts)-1] {
+		if ok, _ := path.Match(pattern.pattern, part); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateArchivePath(name string) error {
@@ -119,7 +272,12 @@ func SanitizeServingPath(name string) (string, error) {
 
 func IsSiteManifestArchiveEntry(header *tar.Header) bool {
 	name := path.Clean(header.Name)
-	return (name == "site.yaml" || name == "site.yml") && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA)
+	return isSiteManifestPath(name) && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA)
+}
+
+func isSiteManifestPath(name string) bool {
+	name = path.Clean(name)
+	return name == "site.yaml" || name == "site.yml"
 }
 
 func validateDirectory(directory string) error {

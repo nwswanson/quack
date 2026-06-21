@@ -7,12 +7,14 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"quack/internal/domain"
 	"quack/internal/manifest"
+	"quack/internal/protocol"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
@@ -73,6 +75,49 @@ func TestServiceUploadArchiveFinishesAndPrunes(t *testing.T) {
 	}
 	if got, want := store.deletedVersions, []int64{1, 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("deleted versions = %#v, want %#v", got, want)
+	}
+}
+
+func TestServiceUploadArchiveCountsOnlyTarEntriesAfterExclusions(t *testing.T) {
+	dir := t.TempDir()
+	writeUploadArchiveFile(t, dir, "site.yml", "exclude:\n  - \"*.swp\"\n  - \"node_modules\"\n")
+	writeUploadArchiveFile(t, dir, "index.html", "hello")
+	writeUploadArchiveFile(t, dir, "draft.swp", "swap")
+	writeUploadArchiveFile(t, dir, "node_modules/pkg/index.js", "module")
+
+	var body bytes.Buffer
+	if err := protocol.WriteTarWithOptions(context.Background(), dir, &body, protocol.WriteTarOptions{
+		Exclude: []string{"*.swp", "node_modules"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	db := &uploadServiceDB{}
+	store := &uploadServiceStore{}
+	service := NewService(db, store, uploadServiceRead{}, &uploadServiceWrite{})
+	resp, err := service.UploadArchive(context.Background(), Request{
+		Site: "example.com",
+		Policy: domain.UploadPolicy{
+			MaxUploadFiles: domain.EffectiveValue[int64]{Value: 10},
+		},
+		Body: bytes.NewReader(body.Bytes()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || resp.Files != 1 || resp.Bytes != int64(len("hello")) {
+		t.Fatalf("response = %#v, want only non-excluded file counted", resp)
+	}
+}
+
+func writeUploadArchiveFile(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

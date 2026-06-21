@@ -56,6 +56,33 @@ func TestParseRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestParseAllowsExcludePatterns(t *testing.T) {
+	body := "exclude:\n  - \"*.swp\"\n  - \"node_modules/\"\n"
+	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(manifest.Exclude, ","), "*.swp,node_modules/**"; got != want {
+		t.Fatalf("exclude = %q, want %q", got, want)
+	}
+}
+
+func TestParseRejectsInvalidExcludePattern(t *testing.T) {
+	tests := []string{
+		"exclude:\n  - \"\"\n",
+		"exclude:\n  - \"/tmp\"\n",
+		"exclude:\n  - \"../secret\"\n",
+		"exclude:\n  - \"[\"\n",
+	}
+	for _, body := range tests {
+		t.Run(body, func(t *testing.T) {
+			if _, err := Parse(strings.NewReader(body), int64(len(body))); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
 func TestParseRejectsInvalidDatabaseRequirement(t *testing.T) {
 	_, err := Parse(strings.NewReader("features:\n  database:\n    required: true\n"), 45)
 	if err == nil {

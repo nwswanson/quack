@@ -61,6 +61,16 @@ go run ./cmd/quack deploy ./some-folder example \
 
 The uploader streams a tar archive directly into the HTTP request. It does not write a temporary archive to disk.
 
+You can exclude local files before upload with a top-level `exclude` list in `site.yml` or `site.yaml`:
+
+```yaml
+exclude:
+  - "*.swp"
+  - "node_modules"
+```
+
+Exclusions are evaluated by the CLI before the archive is streamed. Patterns use slash-separated paths relative to the site root; basename-only patterns such as `*.swp` match at any depth, and matching files are not sent to the server.
+
 If the directory is a simple folder name, Quack can infer the site name:
 
 ```bash

@@ -16,6 +16,7 @@ const MaxBytes int64 = 64 << 10
 
 type Manifest struct {
 	Features Features `json:"features" yaml:"features"`
+	Exclude  []string `json:"exclude" yaml:"exclude"`
 	Routes   []Route  `json:"routes" yaml:"routes"`
 }
 
@@ -75,6 +76,11 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 	if manifest.Features.Database.Required && !manifest.Features.Database.Enabled {
 		return Manifest{}, fmt.Errorf("database.required cannot be true when database.enabled is false")
 	}
+	exclude, err := protocol.NormalizeExcludePatterns(manifest.Exclude)
+	if err != nil {
+		return Manifest{}, err
+	}
+	manifest.Exclude = exclude
 	if err := validateRoutes(manifest.Routes); err != nil {
 		return Manifest{}, err
 	}
