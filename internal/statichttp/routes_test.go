@@ -25,7 +25,7 @@ func TestHandlerServesBlobForStaticRequest(t *testing.T) {
 			Status:       sites.ServeSiteFileFound,
 			Site:         "foo",
 			RelativePath: "index.html",
-			File:         domain.UploadFileRecord{BlobPath: "index-blob"},
+			File:         domain.UploadFileRecord{BlobPath: "index-blob", FileSHA: "index-sha"},
 		},
 	})
 
@@ -38,6 +38,46 @@ func TestHandlerServesBlobForStaticRequest(t *testing.T) {
 	}
 	if rec.Body.String() != "site index" {
 		t.Fatalf("body = %q, want site index", rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("cache-control = %q, want no-cache", got)
+	}
+	if got := rec.Header().Get("ETag"); got != `"index-sha"` {
+		t.Fatalf("etag = %q, want %q", got, `"index-sha"`)
+	}
+}
+
+func TestHandlerRevalidatesStaticBlobWithETag(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app-blob"), []byte("console.log('fresh')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(testStore{root: root}, testReadService{
+		decision: sites.ServeSiteFileDecision{
+			Status:       sites.ServeSiteFileFound,
+			Site:         "foo",
+			RelativePath: "app.js",
+			File:         domain.UploadFileRecord{BlobPath: "app-blob", FileSHA: "app-sha"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	req.Header.Set("If-None-Match", `"app-sha"`)
+	rec := httptest.NewRecorder()
+	h.ServeSiteFile(rec, req, Request{Site: "foo", URLPath: "/app.js"})
+
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotModified, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("body length = %d, want 0", rec.Body.Len())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("cache-control = %q, want no-cache", got)
+	}
+	if got := rec.Header().Get("ETag"); got != `"app-sha"` {
+		t.Fatalf("etag = %q, want %q", got, `"app-sha"`)
 	}
 }
 

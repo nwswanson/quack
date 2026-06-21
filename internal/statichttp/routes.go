@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"quack/internal/domain"
@@ -73,5 +74,17 @@ func (h handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, 
 	}
 	defer blob.Close()
 
+	w.Header().Set("Cache-Control", "no-cache")
+	if etag := fileETag(file); etag != "" {
+		w.Header().Set("ETag", etag)
+	}
 	http.ServeContent(w, r, relativePath, time.Time{}, blob)
+}
+
+func fileETag(file domain.UploadFileRecord) string {
+	sha := strings.TrimSpace(file.FileSHA)
+	if sha == "" {
+		return ""
+	}
+	return `"` + strings.ReplaceAll(sha, `"`, `%22`) + `"`
 }
