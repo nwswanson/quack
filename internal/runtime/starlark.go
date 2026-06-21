@@ -20,8 +20,9 @@ type StarlarkExecutor struct {
 }
 
 var predeclareds = starlark.StringDict{
-	"json": starlarkjson.Module,
-	"uuid": modules.UUIDModule,
+	"json":    starlarkjson.Module,
+	"request": modules.RequestModule,
+	"uuid":    modules.UUIDModule,
 }
 
 func NewStarlarkExecutor(loader ScriptLoader, limits ResourceLimits) (*StarlarkExecutor, error) {

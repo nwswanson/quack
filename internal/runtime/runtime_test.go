@@ -349,6 +349,55 @@ func TestDemoStarlarkFSBundleExecutes(t *testing.T) {
 	}
 }
 
+func TestDemoStarlarkMemoryRoutesExecute(t *testing.T) {
+	scripts := map[string]string{}
+	for _, name := range []string{"meta", "kv", "list", "set", "zset", "counter"} {
+		src, err := os.ReadFile("../../demos/starlark-memory/api/" + name + ".star")
+		if err != nil {
+			t.Fatal(err)
+		}
+		scripts[name+".star"] = string(src)
+	}
+	executor := newTestStarlarkExecutor(t, scripts)
+	site := "demo-memory-routes"
+	call := func(entrypoint, body string) string {
+		t.Helper()
+		resp, err := executor.Invoke(context.Background(), Bundle{
+			Site: site, Version: 1, Routes: []Route{{Path: "/api/" + strings.TrimSuffix(entrypoint, ".star"), Kind: RouteHTTP, Entrypoint: entrypoint}},
+		}, InvocationRequest{Method: http.MethodPost, Route: "/api/" + strings.TrimSuffix(entrypoint, ".star"), Body: []byte(body)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK || resp.Headers["Content-Type"][0] != "application/json; charset=utf-8" {
+			t.Fatalf("response = %+v body=%s, want JSON ok", resp, string(resp.Body))
+		}
+		return string(resp.Body)
+	}
+
+	for _, step := range []struct {
+		entrypoint string
+		body       string
+		want       string
+	}{
+		{"meta.star", `{"op":"clear"}`, `"cleared"`},
+		{"kv.star", `{"op":"set","value":"hello from json"}`, `"value": "hello from json"`},
+		{"kv.star", `{"op":"set_object","value":"structured"}`, `"blob_label": "QUACK"`},
+		{"list.star", `{"op":"push_right","value":"launch"}`, `"length_after_push": 1`},
+		{"list.star", `{"op":"pop_left"}`, `"popped": "launch"`},
+		{"set.star", `{"op":"add","value":"demo"}`, `"added": true`},
+		{"set.star", `{"op":"contains","value":"demo"}`, `"contains_value": true`},
+		{"zset.star", `{"op":"add","value":"Ada","score":2}`, `"added": true`},
+		{"zset.star", `{"op":"score","value":"Ada"}`, `"score": 2.0`},
+		{"counter.star", `{"op":"incr","delta":5}`, `"value": 5`},
+		{"counter.star", `{"op":"decr","delta":1}`, `"value": 4`},
+	} {
+		body := call(step.entrypoint, step.body)
+		if !strings.Contains(body, step.want) {
+			t.Fatalf("%s %s body = %s, want %s", step.entrypoint, step.body, body, step.want)
+		}
+	}
+}
+
 func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {
 	svc := NewService(ServiceOptions{
 		Repository: newRuntimeRepo(RouteMetadata{
