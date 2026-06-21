@@ -292,6 +292,21 @@ func (db *fakeDatabase) ListRuntimeRoutes(ctx context.Context, siteSHA string, v
 	return append([]appruntime.RouteMetadata(nil), db.runtimeRoutes[key]...), nil
 }
 
+func (db *fakeDatabase) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	siteName := ""
+	for _, site := range db.sites {
+		if site.SiteSHA == siteSHA && site.CurrentVersion == version {
+			siteName = site.Site
+			break
+		}
+	}
+	if siteName == "" {
+		return nil, false, nil
+	}
+	files, siteExists, err := db.ListCurrentSiteFiles(ctx, siteName)
+	return files, siteExists, err
+}
+
 func (db *fakeDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
 	var out []appruntime.RouteMetadata
 	for _, site := range db.sites {

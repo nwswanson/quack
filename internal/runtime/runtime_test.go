@@ -74,6 +74,33 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorExposesReadOnlyBundleFS(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"app.star": `
+def handle(req):
+    meta = fs.stat("data/message.txt")
+    return (
+        200,
+        {"content-type": "text/plain", "x-size": str(meta["size"])},
+        ",".join(fs.listdir("data")) + ":" + fs.read("/data/message.txt"),
+    )
+`,
+		"data-blob": "hello from bundle",
+	})
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1,
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		Files:  []BundleFile{{Path: "data/message.txt", BlobPath: "data-blob", FileSHA: "sha", Bytes: 17}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.Body) != "message.txt:hello from bundle" || resp.Headers["X-Size"][0] != "17" {
+		t.Fatalf("response = %+v body=%q, want bundle fs read", resp, string(resp.Body))
+	}
+}
+
 func TestDemoStarlarkBundleExecutes(t *testing.T) {
 	script, err := os.ReadFile("../../demos/starlark-basic/api/app.star")
 	if err != nil {
@@ -121,6 +148,28 @@ func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK || string(resp.Body) != "ok" {
 		t.Fatalf("response = %+v body=%q, want ok", resp, string(resp.Body))
+	}
+}
+
+func TestServicePassesRuntimeBundleFilesToExecutor(t *testing.T) {
+	executor := &recordingExecutor{resp: InvocationResponse{StatusCode: http.StatusOK, Body: []byte("ok")}}
+	repo := newRuntimeRepo(RouteMetadata{
+		Site: "foo", SiteSHA: "foo-sha", Version: 3, RoutePath: "/api", RouteKind: RouteHTTP, RuntimeKind: RuntimeStarlark,
+		BundleObjectKey: "app.star", Methods: []string{http.MethodGet}, RequiredCapabilities: []string{"runtime.http"},
+	})
+	repo.files = []domain.UploadFileRecord{{RelativePath: "data.txt", BlobPath: "data-blob", FileSHA: "sha", Bytes: 4}}
+	svc := NewService(ServiceOptions{
+		Repository:      repo,
+		Policies:        allowRuntimeHTTPPolicy(),
+		Executor:        executor,
+		EnableExecution: true,
+	})
+
+	if _, err := svc.InvokeHTTP(context.Background(), InvocationRequest{Site: "foo", Version: 3, Route: "/api", Method: http.MethodGet}); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.bundle.Files) != 1 || executor.bundle.Files[0].Path != "data.txt" || executor.bundle.Files[0].BlobPath != "data-blob" {
+		t.Fatalf("bundle files = %#v, want runtime upload files", executor.bundle.Files)
 	}
 }
 
@@ -252,6 +301,7 @@ func (m scriptMap) OpenScript(ctx context.Context, objectKey string) (io.ReadClo
 
 type runtimeRepo struct {
 	routes []RouteMetadata
+	files  []domain.UploadFileRecord
 }
 
 func newRuntimeRepo(routes ...RouteMetadata) runtimeRepo {
@@ -264,6 +314,10 @@ func (r runtimeRepo) ListRuntimeRoutes(ctx context.Context, siteSHA string, vers
 
 func (r runtimeRepo) ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetadata, error) {
 	return append([]RouteMetadata(nil), r.routes...), nil
+}
+
+func (r runtimeRepo) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	return append([]domain.UploadFileRecord(nil), r.files...), true, nil
 }
 
 type runtimePolicyLoader struct {
@@ -288,12 +342,14 @@ func (l runtimePolicyLoader) LoadPolicies(ctx context.Context, scopes []domain.P
 
 type recordingExecutor struct {
 	called bool
+	bundle Bundle
 	resp   InvocationResponse
 	err    error
 }
 
 func (e *recordingExecutor) Invoke(ctx context.Context, bundle Bundle, req InvocationRequest) (InvocationResponse, error) {
 	e.called = true
+	e.bundle = bundle
 	return e.resp, e.err
 }
 

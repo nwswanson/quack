@@ -282,6 +282,16 @@ func (r *countingHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA s
 	return r.runtimeRoutes, nil
 }
 
+func (r *countingHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	if r.err != nil {
+		return nil, false, r.err
+	}
+	if r.file.RelativePath == "" {
+		return nil, true, nil
+	}
+	return []domain.UploadFileRecord{r.file}, true, nil
+}
+
 func (r *countingHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	return nil, r.err
 }

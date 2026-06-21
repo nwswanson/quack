@@ -131,6 +131,10 @@ func (r staticHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA stri
 	return nil, nil
 }
 
+func (r staticHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	return nil, true, nil
+}
+
 func (r staticHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	return nil, nil
 }

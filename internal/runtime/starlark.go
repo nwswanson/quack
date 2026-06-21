@@ -17,6 +17,11 @@ type StarlarkExecutor struct {
 	limits ResourceLimits
 }
 
+var predeclareds = starlark.StringDict{
+	"json": starlarkjson.Module,
+	"uuid": modules.UUIDModule,
+}
+
 func NewStarlarkExecutor(loader ScriptLoader, limits ResourceLimits) (*StarlarkExecutor, error) {
 	if loader == nil {
 		return nil, fmt.Errorf("script loader is required")
@@ -35,10 +40,7 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	}
 	thread, stopCancel := starlarkThread(ctx, req.Method+" "+req.Route, limits.MaxExecutionSteps)
 	defer stopCancel()
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, starlark.StringDict{
-		"json": starlarkjson.Module,
-		"uuid": modules.UUIDModule,
-	})
+	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.predeclareds(ctx, bundle, limits))
 	if err != nil {
 		return InvocationResponse{}, wrapStarlarkError(err)
 	}
@@ -55,6 +57,26 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 		return InvocationResponse{}, wrapStarlarkError(err)
 	}
 	return responseFromValue(result)
+}
+func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, limits ResourceLimits) starlark.StringDict {
+	out := make(starlark.StringDict, len(predeclareds)+1)
+	for key, value := range predeclareds {
+		out[key] = value
+	}
+	out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files), e.loader.OpenScript, limits.MaxScriptBytes)
+	return out
+}
+func fsFiles(files []BundleFile) []modules.FSFile {
+	out := make([]modules.FSFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, modules.FSFile{
+			Path:    file.Path,
+			BlobKey: file.BlobPath,
+			FileSHA: file.FileSHA,
+			Bytes:   file.Bytes,
+		})
+	}
+	return out
 }
 func (e *StarlarkExecutor) readScript(ctx context.Context, objectKey string, limits ResourceLimits) (string, error) {
 	if objectKey == "" {

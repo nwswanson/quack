@@ -139,6 +139,22 @@ func (r *memoryHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA str
 	return cloneRuntimeRoutes(value.([]appruntime.RouteMetadata)), nil
 }
 
+func (r *memoryHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	key := "runtime_bundle_files:" + siteSHA + ":" + strconv.FormatInt(version, 10)
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		files, uploadExists, err := r.source.ListRuntimeBundleFiles(ctx, siteSHA, version)
+		if err != nil {
+			return nil, err
+		}
+		return cachedCurrentSiteFiles{files: append([]domain.UploadFileRecord(nil), files...), siteExists: uploadExists}, nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	cached := value.(cachedCurrentSiteFiles)
+	return append([]domain.UploadFileRecord(nil), cached.files...), cached.siteExists, nil
+}
+
 func (r *memoryHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	key := "policy_violations:" + siteSHA + ":" + strconv.FormatInt(version, 10)
 	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
@@ -198,6 +214,7 @@ func (r *memoryHotDataReader) InvalidateSite(ctx context.Context, site string) e
 func (r *memoryHotDataReader) InvalidateSiteVersion(ctx context.Context, siteSHA string, version int64) error {
 	r.deletePrefix("upload_settings:" + siteSHA + ":")
 	r.deletePrefix("runtime_routes:" + siteSHA + ":")
+	r.deletePrefix("runtime_bundle_files:" + siteSHA + ":")
 	r.deletePrefix("policy_violations:" + siteSHA + ":")
 	r.deletePrefix("current_site_manifests")
 	r.deletePrefix("current_runtime_routes")

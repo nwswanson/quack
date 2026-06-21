@@ -583,6 +583,25 @@ For Starlark routes, the executor receives a bundle whose route entrypoint is
 the stored blob object key, not the original source path. The script loader
 opens that blob through storage.
 
+### Starlark Bundle Filesystem
+
+Starlark receives a read-only `fs` module scoped to the uploaded site version
+being executed. Paths are bundle-relative upload paths; leading slashes are
+accepted and normalized away. `..` traversal is rejected. The module never
+exposes host filesystem paths.
+
+```python
+fs.exists(path)      # bool; true for files or virtual directories
+fs.read(path)        # string file contents
+fs.read_bytes(path)  # bytes file contents
+fs.listdir(path)     # sorted immediate child names
+fs.stat(path)        # dict: path, type, size, and sha256 for files
+```
+
+Missing files, reading directories, listing files, and oversized reads fail the
+Starlark invocation. File reads are currently bounded by the route
+`max_script_bytes` limit.
+
 ## Caching
 
 The public path uses `cache.HotDataReader` instead of calling SQLite directly.
@@ -596,6 +615,7 @@ LoadUploadSettings
 ListCurrentSiteManifests
 ListCurrentRuntimeRoutes
 ListRuntimeRoutes
+ListRuntimeBundleFiles
 ListPolicyViolations
 FindCurrentSiteFile
 ListCurrentSiteFiles

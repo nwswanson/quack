@@ -14,6 +14,7 @@ type HotDataReader interface {
 	ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error)
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error)
+	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
@@ -26,6 +27,7 @@ type Source interface {
 	ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error)
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error)
+	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
@@ -98,6 +100,14 @@ func (r passthroughHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA
 		return nil, err
 	}
 	return cloneRuntimeRoutes(routes), nil
+}
+
+func (r passthroughHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	files, uploadExists, err := r.db.ListRuntimeBundleFiles(ctx, siteSHA, version)
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]domain.UploadFileRecord(nil), files...), uploadExists, nil
 }
 
 func (r passthroughHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

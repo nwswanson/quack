@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"quack/internal/domain"
 	"quack/internal/policy"
 	"time"
 )
@@ -39,7 +40,14 @@ type Bundle struct {
 	Site    string
 	Version int64
 	Routes  []Route
+	Files   []BundleFile
 	Limits  ResourceLimits
+}
+type BundleFile struct {
+	Path     string
+	BlobPath string
+	FileSHA  string
+	Bytes    int64
 }
 type Route struct {
 	Path       string
@@ -91,6 +99,7 @@ type Executor interface {
 type Repository interface {
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]RouteMetadata, error)
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetadata, error)
+	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
 }
 type ScriptLoader interface {
 	OpenScript(ctx context.Context, objectKey string) (io.ReadCloser, error)

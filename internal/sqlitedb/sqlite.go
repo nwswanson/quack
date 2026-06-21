@@ -874,6 +874,45 @@ func (d *Database) ListRuntimeRoutes(ctx context.Context, siteSHA string, versio
 	return scanRuntimeRoutes(rows)
 }
 
+func (d *Database) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	var uploadID int64
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT id
+		FROM uploads
+		WHERE site_sha = ? AND version = ? AND state = ?
+	`, siteSHA, version, string(domain.UploadStateFinished)).Scan(&uploadID)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("find runtime bundle upload: %w", err)
+	}
+
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT relative_path, blob_path, file_sha, bytes
+		FROM upload_files
+		WHERE upload_id = ?
+		ORDER BY relative_path ASC
+	`, uploadID)
+	if err != nil {
+		return nil, true, fmt.Errorf("list runtime bundle files: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.UploadFileRecord
+	for rows.Next() {
+		var file domain.UploadFileRecord
+		if err := rows.Scan(&file.RelativePath, &file.BlobPath, &file.FileSHA, &file.Bytes); err != nil {
+			return nil, true, fmt.Errorf("scan runtime bundle file: %w", err)
+		}
+		out = append(out, file)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, true, fmt.Errorf("iterate runtime bundle files: %w", err)
+	}
+	return out, true, nil
+}
+
 func (d *Database) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
 	// Public routing can cache this current-release view, but the executor path
 	// re-checks route metadata and policy at invocation time so

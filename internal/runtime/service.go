@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"quack/internal/policy"
 	"time"
+
+	"quack/internal/domain"
+	"quack/internal/policy"
 )
 
 type service struct {
@@ -61,11 +63,22 @@ func (s *service) InvokeHTTP(ctx context.Context, req InvocationRequest) (resp I
 	defer s.release()
 	invokeCtx, cancel := context.WithTimeout(ctx, time.Duration(limits.MaxDurationMillis)*time.Millisecond)
 	defer cancel()
-	resp, err = s.executor.Invoke(invokeCtx, route.bundle(limits), req)
+	bundle, err := s.runtimeBundle(invokeCtx, route, limits)
+	if err != nil {
+		return InvocationResponse{}, err
+	}
+	resp, err = s.executor.Invoke(invokeCtx, bundle, req)
 	if err != nil {
 		return InvocationResponse{}, invocationError(invokeCtx, err)
 	}
 	return validateResponse(resp, limits)
+}
+func (s *service) runtimeBundle(ctx context.Context, route RouteMetadata, limits ResourceLimits) (Bundle, error) {
+	files, _, err := s.repo.ListRuntimeBundleFiles(ctx, route.SiteSHA, route.Version)
+	if err != nil {
+		return Bundle{}, err
+	}
+	return route.bundle(limits, files), nil
 }
 func (s *service) prepareHTTPInvocation(ctx context.Context, req InvocationRequest) (RouteMetadata, ResourceLimits, error) {
 	route, err := s.lookupRoute(ctx, req)
@@ -117,13 +130,21 @@ func validateResponse(resp InvocationResponse, limits ResourceLimits) (Invocatio
 func eventForRoute(route RouteMetadata) InvocationEvent {
 	return InvocationEvent{Site: route.Site, Version: route.Version, Route: route.RoutePath, RuntimeKind: route.RuntimeKind}
 }
-func (r RouteMetadata) bundle(limits ResourceLimits) Bundle {
+func (r RouteMetadata) bundle(limits ResourceLimits, files []domain.UploadFileRecord) Bundle {
 	return Bundle{
 		Site:    r.Site,
 		Version: r.Version,
 		Routes:  []Route{{Path: r.RoutePath, Kind: r.RouteKind, Entrypoint: r.BundleObjectKey, Methods: append([]string(nil), r.Methods...)}},
+		Files:   bundleFiles(files),
 		Limits:  limits,
 	}
+}
+func bundleFiles(files []domain.UploadFileRecord) []BundleFile {
+	out := make([]BundleFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, BundleFile{Path: file.RelativePath, BlobPath: file.BlobPath, FileSHA: file.FileSHA, Bytes: file.Bytes})
+	}
+	return out
 }
 func (s *service) acquire(ctx context.Context) bool {
 	select {

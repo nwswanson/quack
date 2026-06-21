@@ -81,6 +81,16 @@ func TestPassthroughHotDataReaderCopiesMutableResults(t *testing.T) {
 		t.Fatalf("ListCurrentRuntimeRoutes leaked mutable result")
 	}
 
+	db.file = domain.UploadFileRecord{RelativePath: "data.txt", BlobPath: "data-blob"}
+	bundleFiles, _, err := reader.ListRuntimeBundleFiles(ctx, "site-sha", 3)
+	if err != nil {
+		t.Fatalf("ListRuntimeBundleFiles error = %v", err)
+	}
+	bundleFiles[0].BlobPath = "mutated"
+	if db.file.BlobPath != "data-blob" {
+		t.Fatalf("ListRuntimeBundleFiles leaked mutable result")
+	}
+
 	violations, err := reader.ListPolicyViolations(ctx, "site-sha", 3)
 	if err != nil {
 		t.Fatalf("ListPolicyViolations error = %v", err)
@@ -138,6 +148,13 @@ func (db *readerBackingDatabase) ListCurrentRuntimeRoutes(ctx context.Context) (
 
 func (db *readerBackingDatabase) ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error) {
 	return db.runtimeRoutes, nil
+}
+
+func (db *readerBackingDatabase) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	if db.file.RelativePath == "" {
+		return nil, true, nil
+	}
+	return []domain.UploadFileRecord{db.file}, true, nil
 }
 
 func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

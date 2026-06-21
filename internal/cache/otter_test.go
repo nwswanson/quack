@@ -252,6 +252,10 @@ func (db *siteUpdateCacheDatabase) ListRuntimeRoutes(ctx context.Context, siteSH
 	return nil, nil
 }
 
+func (db *siteUpdateCacheDatabase) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
+	return nil, true, nil
+}
+
 func (db *siteUpdateCacheDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {
 	return nil, nil
 }
