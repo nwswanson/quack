@@ -59,6 +59,9 @@ func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appr
 			http.Error(w, "runtime concurrency limit reached", http.StatusTooManyRequests)
 		case errors.Is(err, appruntime.ErrRouteNotFound):
 			http.NotFound(w, r)
+		case errors.Is(err, appruntime.ErrInvocationFailure):
+			// TODO: Gate detailed runtime error responses behind a site.yml setting.
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		default:
 			http.Error(w, "runtime invocation failed", http.StatusInternalServerError)
 		}

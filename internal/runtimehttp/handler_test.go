@@ -3,6 +3,7 @@ package runtimehttp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -95,6 +96,20 @@ func TestHandlerMapsStructuredRuntimeErrors(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandlerReturnsInvocationFailureDetails(t *testing.T) {
+	handler := New(&recordingRuntime{err: fmt.Errorf("%w:\nTraceback: kaboom", appruntime.ErrInvocationFailure)})
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTPRoute(rec, req, appruntime.InvocationRequest{Site: "foo", Version: 1, Route: "/api", Method: http.MethodGet})
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Traceback: kaboom") {
+		t.Fatalf("body = %q, want invocation failure details", rec.Body.String())
 	}
 }
 

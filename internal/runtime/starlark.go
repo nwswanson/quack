@@ -154,8 +154,9 @@ func singleHTTPRoute(bundle Bundle) (Route, error) {
 func wrapStarlarkError(err error) error {
 	var evalErr *starlark.EvalError
 	if errors.As(err, &evalErr) {
-		slog.Warn("starlark invocation failed", "backtrace", evalErr.Backtrace())
-		return fmt.Errorf("%w: %v", ErrInvocationFailure, evalErr)
+		backtrace := evalErr.Backtrace()
+		slog.Warn("starlark invocation failed", "backtrace", backtrace)
+		return fmt.Errorf("%w:\n%s", ErrInvocationFailure, backtrace)
 	}
 	return fmt.Errorf("%w: %v", ErrInvocationFailure, err)
 }

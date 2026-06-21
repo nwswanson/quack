@@ -74,6 +74,29 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorReturnsBacktraceForScriptError(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def explode():
+    fail("kaboom")
+
+def handle(req):
+    explode()
+    return (200, {}, "never")
+`})
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if !errors.Is(err, ErrInvocationFailure) {
+		t.Fatalf("Invoke error = %v, want invocation failure", err)
+	}
+	for _, want := range []string{"Traceback", "in handle", "in explode", "kaboom"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Invoke error = %q, want %q in backtrace", err.Error(), want)
+		}
+	}
+}
+
 func TestStarlarkExecutorExposesReadOnlyBundleFS(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{
 		"app.star": `
