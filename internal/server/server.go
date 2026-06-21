@@ -67,19 +67,6 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		}
 	}
 
-	adminui.New(adminui.Options{
-		Users:       db,
-		Sessions:    db,
-		Releases:    releaseService,
-		Store:       store,
-		Read:        read,
-		Write:       write,
-		SetLogLevel: SetLogLevel,
-		ApplySettings: func(settings domain.ServerSettings) error {
-			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
-		},
-	}).Register(adminMux)
-
 	controlapi.New(controlapi.Options{
 		Token:                token,
 		AllowUnauthenticated: opts.AllowUnauthenticated,
@@ -105,11 +92,27 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Executor:        starlarkExecutor,
 		EnableExecution: true,
 	})
+	runtimeHandler := runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot))
+
+	adminui.New(adminui.Options{
+		Users:       db,
+		Sessions:    db,
+		Releases:    releaseService,
+		Store:       store,
+		Read:        read,
+		Write:       write,
+		Stats:       runtimeStatsReader{runtime: runtimeHandler},
+		SetLogLevel: SetLogLevel,
+		ApplySettings: func(settings domain.ServerSettings) error {
+			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
+		},
+	}).Register(adminMux)
+
 	publichttp.New(
 		staticHandler,
 		publichttp.WithHostResolver(sites.SettingsHostResolver{Settings: hot}),
 		publichttp.WithRoutes(publichttp.ReleaseRouteReader{Releases: releaseService, Policies: hot}),
-		publichttp.WithRuntime(runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot))),
+		publichttp.WithRuntime(runtimeHandler),
 	).Register(publicMux)
 
 	return Servers{

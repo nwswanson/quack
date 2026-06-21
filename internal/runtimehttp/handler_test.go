@@ -165,7 +165,16 @@ func TestSocketManagerEnforcesConnectionLimits(t *testing.T) {
 	if _, _, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 1}); !errors.Is(err, appruntime.ErrConnectionLimit) {
 		t.Fatalf("second site reserve error = %v, want per-site connection limit", err)
 	}
+	if got := manager.activeBySite("foo"); got != 1 {
+		t.Fatalf("activeBySite(foo) = %d, want 1", got)
+	}
+	if got := manager.activeBySite("bar"); got != 0 {
+		t.Fatalf("activeBySite(bar) = %d, want 0", got)
+	}
 	manager.unregister(first)
+	if got := manager.activeBySite("foo"); got != 0 {
+		t.Fatalf("activeBySite(foo) after unregister = %d, want 0", got)
+	}
 }
 
 func TestSocketManagerClosesConnectionWhenSendQueueIsFull(t *testing.T) {

@@ -50,8 +50,18 @@ type Handler struct {
 	store         SiteStorage
 	read          sites.SiteReadService
 	write         sites.SiteWriteService
+	stats         SiteRuntimeStatsReader
 	setLogLevel   func(string) error
 	applySettings func(domain.ServerSettings) error
+}
+
+type SiteRuntimeStats struct {
+	ActiveWebSockets int64
+	MemoryUsedBytes  int64
+}
+
+type SiteRuntimeStatsReader interface {
+	SiteRuntimeStats(site string) SiteRuntimeStats
 }
 
 type Options struct {
@@ -61,6 +71,7 @@ type Options struct {
 	Store         SiteStorage
 	Read          sites.SiteReadService
 	Write         sites.SiteWriteService
+	Stats         SiteRuntimeStatsReader
 	SetLogLevel   func(string) error
 	ApplySettings func(domain.ServerSettings) error
 }
@@ -81,6 +92,7 @@ func New(opts Options) Handler {
 		store:         opts.Store,
 		read:          opts.Read,
 		write:         opts.Write,
+		stats:         opts.Stats,
 		setLogLevel:   setLogLevel,
 		applySettings: applySettings,
 	}
@@ -528,8 +540,10 @@ type adminNavItem struct {
 
 type adminSiteRow struct {
 	domain.PublishedSite
-	Revisions []domain.RevisionRecord
-	IsDefault bool
+	Revisions        []domain.RevisionRecord
+	IsDefault        bool
+	ActiveWebSockets int64
+	MemoryUsedBytes  int64
 }
 
 func (s adminSiteRow) DisplayLiveState() string {
@@ -611,6 +625,11 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 			row := adminSiteRow{
 				PublishedSite: siteList[i],
 				IsDefault:     settings.DefaultSite != "" && siteList[i].Site == settings.DefaultSite,
+			}
+			if h.stats != nil {
+				stats := h.stats.SiteRuntimeStats(siteList[i].Site)
+				row.ActiveWebSockets = stats.ActiveWebSockets
+				row.MemoryUsedBytes = stats.MemoryUsedBytes
 			}
 			if user.IsAdmin() {
 				revisions, err := h.releases.ListSiteRevisions(r.Context(), user, siteList[i].Site, siteList[i].SiteSHA)

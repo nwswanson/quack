@@ -43,6 +43,13 @@ func New(runtime appruntime.Service, opts ...Option) Handler {
 	return h
 }
 
+func (h Handler) ActiveWebSockets(site string) int64 {
+	if h.sockets == nil {
+		return 0
+	}
+	return h.sockets.activeBySite(site)
+}
+
 func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appruntime.InvocationRequest) {
 	limits := req.Limits
 	if limits.MaxRequestBytes <= 0 {

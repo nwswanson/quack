@@ -93,7 +93,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if !strings.Contains(rootRec.Body.String(), "beta") || !strings.Contains(rootRec.Body.String(), "bob") {
 		t.Fatalf("body = %q, want beta by bob", rootRec.Body.String())
 	}
-	for _, want := range []string{`class="site-card"`, "Default", `value="unpublish"`, `value="publish"`, "Roll back", `value="2" selected`, "v2 (current)", `value="1"`, `value="delete"`} {
+	for _, want := range []string{`class="site-card"`, "Default", "Memory", "WebSockets", `value="unpublish"`, `value="publish"`, "Roll back", `value="2" selected`, "v2 (current)", `value="1"`, `value="delete"`} {
 		if !strings.Contains(rootRec.Body.String(), want) {
 			t.Fatalf("body = %q, want site action/default marker %q", rootRec.Body.String(), want)
 		}

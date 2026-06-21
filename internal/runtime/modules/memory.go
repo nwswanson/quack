@@ -28,6 +28,10 @@ func WipeAllMemory() {
 	globalMemory.wipeAll()
 }
 
+func MemoryUsage(site string) int64 {
+	return globalMemory.memoryUsage(site)
+}
+
 type memoryStore struct {
 	mu          sync.Mutex
 	sites       map[string]*siteMemory
@@ -171,6 +175,22 @@ func (s *memoryStore) markDirty(site string) {
 	if manager != nil {
 		manager.markDirty(normalizedMemorySite(site))
 	}
+}
+
+func (s *memoryStore) memoryUsage(site string) int64 {
+	site = normalizedMemorySite(site)
+	s.mu.Lock()
+	store := s.sites[site]
+	manager := s.persistence
+	if store == nil && manager == nil {
+		s.mu.Unlock()
+		return 0
+	}
+	s.mu.Unlock()
+	store = s.siteStore(site)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.used
 }
 
 func (m *memoryModule) usage(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

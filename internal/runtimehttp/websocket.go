@@ -438,6 +438,12 @@ func (m *socketManager) subscriberSnapshots(site string, topic string) []socketS
 	return out
 }
 
+func (m *socketManager) activeBySite(site string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.bySite[site]
+}
+
 func (m *socketManager) send(connID string, payload []byte) error {
 	return m.sendFrame(connID, websocketOpcodeText, payload)
 }

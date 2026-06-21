@@ -174,6 +174,9 @@ func TestWipeMemorySiteRemovesSnapshot(t *testing.T) {
 	site := "wipe.example"
 	m := &memoryModule{site: site, quota: 1 << 20}
 	callMemory(t, m.set, "memory.set", starlark.String("key"), starlark.String("value"))
+	if got := MemoryUsage(site); got <= 0 {
+		t.Fatalf("MemoryUsage(%q) = %d, want positive", site, got)
+	}
 	if err := FlushMemorySnapshots(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -183,6 +186,9 @@ func TestWipeMemorySiteRemovesSnapshot(t *testing.T) {
 	}
 
 	WipeMemorySite(site)
+	if got := MemoryUsage(site); got != 0 {
+		t.Fatalf("MemoryUsage(%q) after wipe = %d, want 0", site, got)
+	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("snapshot stat after wipe error = %v, want not exist", err)
 	}
