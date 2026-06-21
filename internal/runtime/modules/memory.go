@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"sort"
@@ -28,14 +29,16 @@ func WipeAllMemory() {
 }
 
 type memoryStore struct {
-	mu    sync.Mutex
-	sites map[string]*siteMemory
+	mu          sync.Mutex
+	sites       map[string]*siteMemory
+	persistence *memoryPersistenceManager
 }
 
 type siteMemory struct {
-	mu    sync.Mutex
-	used  int64
-	items map[string]memoryEntry
+	mu     sync.Mutex
+	loaded bool
+	used   int64
+	items  map[string]memoryEntry
 }
 
 type memoryEntry struct {
@@ -97,32 +100,78 @@ func newMemoryStore() *memoryStore {
 }
 
 func (s *memoryStore) siteStore(site string) *siteMemory {
+	site = normalizedMemorySite(site)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if site == "" {
-		site = "<unknown>"
-	}
 	store := s.sites[site]
 	if store == nil {
-		store = &siteMemory{items: map[string]memoryEntry{}}
+		store = &siteMemory{items: map[string]memoryEntry{}, loaded: s.persistence == nil}
 		s.sites[site] = store
+	}
+	manager := s.persistence
+	s.mu.Unlock()
+	if manager != nil {
+		if err := store.loadSnapshot(site, manager.p); err != nil {
+			// Persistence should not make the Starlark memory module unavailable.
+			// Keep serving with an empty in-memory store and surface the fault in logs.
+			slog.Warn("memory snapshot load failed", "site", site, "error", err)
+		}
 	}
 	return store
 }
 
 func (s *memoryStore) wipeSite(site string) {
+	site = normalizedMemorySite(site)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.sites, site)
+	manager := s.persistence
+	s.mu.Unlock()
+	if manager != nil {
+		manager.forget(site)
+		if err := manager.p.Remove(site); err != nil {
+			slog.Warn("memory snapshot remove failed", "site", site, "error", err)
+		}
+	}
 }
 
 func (s *memoryStore) wipeAll() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.sites = map[string]*siteMemory{}
+	manager := s.persistence
+	s.mu.Unlock()
+	if manager != nil {
+		manager.forgetAll()
+		if err := manager.p.RemoveAll(); err != nil {
+			slog.Warn("memory snapshots remove all failed", "error", err)
+		}
+	}
 }
 
 func (m *memoryModule) store() *siteMemory { return globalMemory.siteStore(m.site) }
+
+func normalizedMemorySite(site string) string {
+	if site == "" {
+		return "<unknown>"
+	}
+	return site
+}
+
+func (s *memoryStore) siteNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sites := make([]string, 0, len(s.sites))
+	for site := range s.sites {
+		sites = append(sites, site)
+	}
+	sort.Strings(sites)
+	return sites
+}
+
+func (s *memoryStore) markDirty(site string) {
+	manager := s.persistenceManager()
+	if manager != nil {
+		manager.markDirty(normalizedMemorySite(site))
+	}
+}
 
 func (m *memoryModule) usage(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if err := starlark.UnpackArgs(fn.Name(), args, kwargs); err != nil {
@@ -149,8 +198,12 @@ func (m *memoryModule) clear(thread *starlark.Thread, fn *starlark.Builtin, args
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	n := len(store.items)
+	if n == 0 {
+		return starlark.MakeInt(n), nil
+	}
 	store.items = map[string]memoryEntry{}
 	store.used = 0
+	globalMemory.markDirty(m.site)
 	return starlark.MakeInt(n), nil
 }
 
@@ -250,6 +303,7 @@ func (m *memoryModule) delete(thread *starlark.Thread, fn *starlark.Builtin, arg
 	if ok {
 		delete(store.items, key)
 		store.used -= entry.bytes
+		globalMemory.markDirty(m.site)
 	}
 	return starlark.Bool(ok), nil
 }
@@ -382,6 +436,9 @@ func (m *memoryModule) setAdd(thread *starlark.Thread, fn *starlark.Builtin, arg
 		next[mvKey(mv)] = mv
 		added = true
 	}
+	if !added {
+		return starlark.False, nil
+	}
 	entry := setEntry(key, next)
 	if !m.replace(store, key, old, entry) {
 		return starlark.False, nil
@@ -414,6 +471,9 @@ func (m *memoryModule) setRemove(thread *starlark.Thread, fn *starlark.Builtin, 
 		next[k] = v
 	}
 	_, removed := next[mvKey(mv)]
+	if !removed {
+		return starlark.False, nil
+	}
 	delete(next, mvKey(mv))
 	m.mustReplace(store, key, old, setEntry(key, next))
 	return starlark.Bool(removed), nil
@@ -519,6 +579,9 @@ func (m *memoryModule) zremove(thread *starlark.Thread, fn *starlark.Builtin, ar
 		next[k] = v
 	}
 	_, removed := next[mvKey(mv)]
+	if !removed {
+		return starlark.False, nil
+	}
 	delete(next, mvKey(mv))
 	m.mustReplace(store, key, old, zsetEntry(key, next))
 	return starlark.Bool(removed), nil
@@ -646,12 +709,14 @@ func (m *memoryModule) replace(store *siteMemory, key string, old, next memoryEn
 	}
 	store.items[key] = next
 	store.used = newUsed
+	globalMemory.markDirty(m.site)
 	return true
 }
 
 func (m *memoryModule) mustReplace(store *siteMemory, key string, old, next memoryEntry) {
 	store.items[key] = next
 	store.used = store.used - old.bytes + next.bytes
+	globalMemory.markDirty(m.site)
 }
 
 func freezeMemoryValue(value starlark.Value) (memoryValue, error) {

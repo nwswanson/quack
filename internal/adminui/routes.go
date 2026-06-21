@@ -44,23 +44,25 @@ type SiteStorage interface {
 }
 
 type Handler struct {
-	users       UserRepository
-	sessions    SessionRepository
-	releases    releases.Service
-	store       SiteStorage
-	read        sites.SiteReadService
-	write       sites.SiteWriteService
-	setLogLevel func(string) error
+	users         UserRepository
+	sessions      SessionRepository
+	releases      releases.Service
+	store         SiteStorage
+	read          sites.SiteReadService
+	write         sites.SiteWriteService
+	setLogLevel   func(string) error
+	applySettings func(domain.ServerSettings) error
 }
 
 type Options struct {
-	Users       UserRepository
-	Sessions    SessionRepository
-	Releases    releases.Service
-	Store       SiteStorage
-	Read        sites.SiteReadService
-	Write       sites.SiteWriteService
-	SetLogLevel func(string) error
+	Users         UserRepository
+	Sessions      SessionRepository
+	Releases      releases.Service
+	Store         SiteStorage
+	Read          sites.SiteReadService
+	Write         sites.SiteWriteService
+	SetLogLevel   func(string) error
+	ApplySettings func(domain.ServerSettings) error
 }
 
 func New(opts Options) Handler {
@@ -68,14 +70,19 @@ func New(opts Options) Handler {
 	if setLogLevel == nil {
 		setLogLevel = func(string) error { return nil }
 	}
+	applySettings := opts.ApplySettings
+	if applySettings == nil {
+		applySettings = func(domain.ServerSettings) error { return nil }
+	}
 	return Handler{
-		users:       opts.Users,
-		sessions:    opts.Sessions,
-		releases:    opts.Releases,
-		store:       opts.Store,
-		read:        opts.Read,
-		write:       opts.Write,
-		setLogLevel: setLogLevel,
+		users:         opts.Users,
+		sessions:      opts.Sessions,
+		releases:      opts.Releases,
+		store:         opts.Store,
+		read:          opts.Read,
+		write:         opts.Write,
+		setLogLevel:   setLogLevel,
+		applySettings: applySettings,
 	}
 }
 
@@ -375,6 +382,11 @@ func (h Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.setLogLevel(settings.LogLevel); err != nil {
 		slog.ErrorContext(r.Context(), "apply log level failed", "username", user.Username, "log_level", settings.LogLevel, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := h.applySettings(settings); err != nil {
+		slog.ErrorContext(r.Context(), "apply server settings failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -762,6 +774,42 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if err != nil {
 		return domain.ServerSettings{}, err
 	}
+	memoryPersistenceModeValue := strings.TrimSpace(r.Form.Get("memory_persistence_mode"))
+	if memoryPersistenceModeValue == "" {
+		memoryPersistenceModeValue = appsettings.Default(appsettings.SettingRuntimeMemoryPersistenceMode)
+	}
+	memoryPersistenceMode := appsettings.ParseMemoryPersistenceMode(memoryPersistenceModeValue)
+	if memoryPersistenceMode == "" {
+		return domain.ServerSettings{}, fmt.Errorf("memory persistence mode must be off or snapshot")
+	}
+	memorySnapshotSave := strings.TrimSpace(r.Form.Get("memory_snapshot_save"))
+	if memorySnapshotSave == "" {
+		memorySnapshotSave = appsettings.Default(appsettings.SettingRuntimeMemorySnapshotSave)
+	}
+	if _, err := appsettings.ParseMemorySnapshotSaveRules(memorySnapshotSave); err != nil {
+		return domain.ServerSettings{}, err
+	}
+	memorySnapshotMinIntervalMS, err := parseNonNegativeInt64(r.Form.Get("memory_snapshot_min_interval_ms"), "memory snapshot min interval")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if memorySnapshotMinIntervalMS == 0 {
+		memorySnapshotMinIntervalMS = parseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMinIntervalMS)
+	}
+	memorySnapshotMaxConcurrency, err := parseNonNegativeInt64(r.Form.Get("memory_snapshot_max_concurrency"), "memory snapshot max concurrency")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if memorySnapshotMaxConcurrency == 0 {
+		memorySnapshotMaxConcurrency = parseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMaxConcurrency)
+	}
+	memoryShutdownFlushTimeoutMS, err := parseNonNegativeInt64(r.Form.Get("memory_shutdown_flush_timeout_ms"), "memory shutdown flush timeout")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if memoryShutdownFlushTimeoutMS == 0 {
+		memoryShutdownFlushTimeoutMS = parseDefaultInt64(appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS)
+	}
 	logLevel := appsettings.ParseLogLevel(r.Form.Get("log_level"))
 	if strings.TrimSpace(r.Form.Get("log_level")) == "" {
 		logLevel = "warn"
@@ -779,6 +827,11 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		MaxRetainedVersions:            maxRetainedVersions,
 		MaxWebSocketConnections:        maxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: maxWebSocketConnectionsPerSite,
+		MemoryPersistenceMode:          memoryPersistenceMode,
+		MemorySnapshotSave:             memorySnapshotSave,
+		MemorySnapshotMinIntervalMS:    memorySnapshotMinIntervalMS,
+		MemorySnapshotMaxConcurrency:   memorySnapshotMaxConcurrency,
+		MemoryShutdownFlushTimeoutMS:   memoryShutdownFlushTimeoutMS,
 		DefaultSite:                    strings.TrimSpace(r.Form.Get("default_site")),
 		AllowedHosts:                   allowedHosts,
 		LogLevel:                       logLevel,
@@ -798,6 +851,11 @@ func parseNonNegativeInt64(value string, label string) (int64, error) {
 		return 0, fmt.Errorf("%s must be >= 0", label)
 	}
 	return n, nil
+}
+
+func parseDefaultInt64(key string) int64 {
+	n, _ := strconv.ParseInt(appsettings.Default(key), 10, 64)
+	return n
 }
 
 func parsePositiveInt64(value string, label string) (int64, error) {

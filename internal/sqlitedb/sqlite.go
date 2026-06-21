@@ -469,6 +469,11 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		MaxRetainedVersions:            0,
 		MaxWebSocketConnections:        appsettings.DefaultMaxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: appsettings.DefaultMaxWebSocketConnectionsPerSite,
+		MemoryPersistenceMode:          appsettings.Default(appsettings.SettingRuntimeMemoryPersistenceMode),
+		MemorySnapshotSave:             appsettings.Default(appsettings.SettingRuntimeMemorySnapshotSave),
+		MemorySnapshotMinIntervalMS:    mustParseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMinIntervalMS),
+		MemorySnapshotMaxConcurrency:   mustParseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMaxConcurrency),
+		MemoryShutdownFlushTimeoutMS:   mustParseDefaultInt64(appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS),
 		DefaultSite:                    "",
 		AllowedHosts:                   nil,
 		LogLevel:                       "warn",
@@ -523,6 +528,28 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxWebSocketConnectionsPerSite = n
+		case appsettings.SettingRuntimeMemoryPersistenceMode:
+			settings.MemoryPersistenceMode = appsettings.ParseMemoryPersistenceMode(value)
+		case appsettings.SettingRuntimeMemorySnapshotSave:
+			settings.MemorySnapshotSave = value
+		case appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MemorySnapshotMinIntervalMS = n
+		case appsettings.SettingRuntimeMemorySnapshotMaxConcurrency:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MemorySnapshotMaxConcurrency = n
+		case appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MemoryShutdownFlushTimeoutMS = n
 		case "default_site":
 			settings.DefaultSite = value
 		case "allowed_hosts":
@@ -557,6 +584,10 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.MaxWebSocketConnectionsPerSite < 0 {
 		return fmt.Errorf("max websocket connections per site must be >= 0")
 	}
+	normalizeMemoryServerSettings(&settings)
+	if err := validateMemoryServerSettings(settings); err != nil {
+		return err
+	}
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
@@ -574,14 +605,19 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	defer tx.Rollback()
 
 	values := map[string]string{
-		"max_upload_bytes":                           strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files":                           strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"max_retained_versions":                      strconv.FormatInt(settings.MaxRetainedVersions, 10),
-		"runtime.websocket.max_connections":          strconv.FormatInt(settings.MaxWebSocketConnections, 10),
-		"runtime.websocket.max_connections_per_site": strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
-		"default_site":                               strings.TrimSpace(settings.DefaultSite),
-		"allowed_hosts":                              appsettings.FormatAllowedHosts(settings.AllowedHosts),
-		"log_level":                                  settings.LogLevel,
+		"max_upload_bytes":                                     strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
+		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
+		appsettings.SettingRuntimeMemorySnapshotSave:           strings.TrimSpace(settings.MemorySnapshotSave),
+		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
+		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
+		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
+		"default_site":  strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts": appsettings.FormatAllowedHosts(settings.AllowedHosts),
+		"log_level":     settings.LogLevel,
 	}
 	for key, value := range values {
 		var locked int
@@ -624,6 +660,10 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.MaxWebSocketConnectionsPerSite < 0 {
 		return fmt.Errorf("max websocket connections per site must be >= 0")
 	}
+	normalizeMemoryServerSettings(&settings)
+	if err := validateMemoryServerSettings(settings); err != nil {
+		return err
+	}
 	if settings.LogLevel == "" {
 		settings.LogLevel = "warn"
 	}
@@ -635,14 +675,19 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	defer d.writeMu.Unlock()
 
 	for key, value := range map[string]string{
-		"max_upload_bytes":                           strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files":                           strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"max_retained_versions":                      strconv.FormatInt(settings.MaxRetainedVersions, 10),
-		"runtime.websocket.max_connections":          strconv.FormatInt(settings.MaxWebSocketConnections, 10),
-		"runtime.websocket.max_connections_per_site": strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
-		"default_site":                               strings.TrimSpace(settings.DefaultSite),
-		"allowed_hosts":                              appsettings.FormatAllowedHosts(settings.AllowedHosts),
-		"log_level":                                  settings.LogLevel,
+		"max_upload_bytes":                                     strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
+		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
+		appsettings.SettingRuntimeMemorySnapshotSave:           strings.TrimSpace(settings.MemorySnapshotSave),
+		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
+		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
+		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
+		"default_site":  strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts": appsettings.FormatAllowedHosts(settings.AllowedHosts),
+		"log_level":     settings.LogLevel,
 	} {
 		if err := appsettings.Validate(key, value); err != nil {
 			return err
@@ -656,6 +701,49 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		}
 	}
 	return nil
+}
+
+func normalizeMemoryServerSettings(settings *domain.ServerSettings) {
+	if strings.TrimSpace(settings.MemoryPersistenceMode) == "" {
+		settings.MemoryPersistenceMode = appsettings.Default(appsettings.SettingRuntimeMemoryPersistenceMode)
+	}
+	settings.MemoryPersistenceMode = appsettings.ParseMemoryPersistenceMode(settings.MemoryPersistenceMode)
+	if strings.TrimSpace(settings.MemorySnapshotSave) == "" {
+		settings.MemorySnapshotSave = appsettings.Default(appsettings.SettingRuntimeMemorySnapshotSave)
+	}
+	if settings.MemorySnapshotMinIntervalMS <= 0 {
+		settings.MemorySnapshotMinIntervalMS = mustParseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMinIntervalMS)
+	}
+	if settings.MemorySnapshotMaxConcurrency <= 0 {
+		settings.MemorySnapshotMaxConcurrency = mustParseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMaxConcurrency)
+	}
+	if settings.MemoryShutdownFlushTimeoutMS <= 0 {
+		settings.MemoryShutdownFlushTimeoutMS = mustParseDefaultInt64(appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS)
+	}
+}
+
+func validateMemoryServerSettings(settings domain.ServerSettings) error {
+	values := map[string]string{
+		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
+		appsettings.SettingRuntimeMemorySnapshotSave:           settings.MemorySnapshotSave,
+		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
+		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
+		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
+	}
+	for key, value := range values {
+		if err := appsettings.Validate(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mustParseDefaultInt64(key string) int64 {
+	n, err := strconv.ParseInt(appsettings.Default(key), 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return n
 }
 
 func (d *Database) PruneSiteVersions(ctx context.Context, siteSHA string, maxRetainedVersions int64) ([]int64, error) {

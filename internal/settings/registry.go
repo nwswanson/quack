@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"quack/internal/domain"
 )
@@ -56,6 +57,11 @@ const (
 	SettingRuntimeWebSocketFeature               = "features.runtime.websocket.enabled"
 	SettingRuntimeMemoryMaxBytes                 = "runtime.memory.max_bytes"
 	SettingRuntimeMemoryWipe                     = "runtime.memory.wipe"
+	SettingRuntimeMemoryPersistenceMode          = "runtime.memory.persistence_mode"
+	SettingRuntimeMemorySnapshotSave             = "runtime.memory.snapshot_save"
+	SettingRuntimeMemorySnapshotMinIntervalMS    = "runtime.memory.snapshot_min_interval_ms"
+	SettingRuntimeMemorySnapshotMaxConcurrency   = "runtime.memory.snapshot_max_concurrency"
+	SettingRuntimeMemoryShutdownFlushTimeoutMS   = "runtime.memory.shutdown_flush_timeout_ms"
 	SettingRuntimeWebSocketMaxConnections        = "runtime.websocket.max_connections"
 	SettingRuntimeWebSocketMaxConnectionsPerSite = "runtime.websocket.max_connections_per_site"
 	// Deprecated: static.root is kept only for current releases uploaded before
@@ -112,6 +118,26 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeMemoryWipe: {
 		Key: SettingRuntimeMemoryWipe, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite}, AdminEditable: true,
+	},
+	SettingRuntimeMemoryPersistenceMode: {
+		Key: SettingRuntimeMemoryPersistenceMode, Type: SettingTypeEnum, DefaultValue: "off",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindEnum,
+	},
+	SettingRuntimeMemorySnapshotSave: {
+		Key: SettingRuntimeMemorySnapshotSave, Type: SettingTypeString, DefaultValue: "60s 1\n15s 100\n10s 1000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true,
+	},
+	SettingRuntimeMemorySnapshotMinIntervalMS: {
+		Key: SettingRuntimeMemorySnapshotMinIntervalMS, Type: SettingTypeInt64, DefaultValue: "10000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeMemorySnapshotMaxConcurrency: {
+		Key: SettingRuntimeMemorySnapshotMaxConcurrency, Type: SettingTypeInt64, DefaultValue: "1",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeMemoryShutdownFlushTimeoutMS: {
+		Key: SettingRuntimeMemoryShutdownFlushTimeoutMS, Type: SettingTypeInt64, DefaultValue: "5000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingRuntimeWebSocketMaxConnections: {
 		Key: SettingRuntimeWebSocketMaxConnections, Type: SettingTypeInt64, DefaultValue: "1024",
@@ -170,9 +196,17 @@ func Validate(key, value string) error {
 		if key == SettingLogLevel && ParseLogLevel(value) == "" {
 			return fmt.Errorf("log level must be debug, info, warn, or error")
 		}
+		if key == SettingRuntimeMemoryPersistenceMode && ParseMemoryPersistenceMode(value) == "" {
+			return fmt.Errorf("%s must be off or snapshot", key)
+		}
 	case SettingTypeString:
 		if key == SettingAllowedHosts {
 			if _, err := ParseAllowedHosts(value); err != nil {
+				return err
+			}
+		}
+		if key == SettingRuntimeMemorySnapshotSave {
+			if _, err := ParseMemorySnapshotSaveRules(value); err != nil {
 				return err
 			}
 		}
@@ -198,6 +232,69 @@ func ParseLogLevel(value string) string {
 func ParseBool(value string) bool {
 	b, _ := strconv.ParseBool(strings.TrimSpace(value))
 	return b
+}
+
+func ParseMemoryPersistenceMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "off", "disabled", "none":
+		return "off"
+	case "snapshot", "rdb":
+		return "snapshot"
+	default:
+		return ""
+	}
+}
+
+type MemorySnapshotSaveRule struct {
+	After   time.Duration
+	Changes int64
+}
+
+func ParseMemorySnapshotSaveRules(value string) ([]MemorySnapshotSaveRule, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, fmt.Errorf("%s must contain at least one rule", SettingRuntimeMemorySnapshotSave)
+	}
+	lines := strings.Split(value, "\n")
+	rules := make([]MemorySnapshotSaveRule, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("%s rule %q must be '<duration> <changes>'", SettingRuntimeMemorySnapshotSave, line)
+		}
+		after, err := time.ParseDuration(fields[0])
+		if err != nil {
+			seconds, parseErr := strconv.ParseInt(fields[0], 10, 64)
+			if parseErr != nil {
+				return nil, fmt.Errorf("%s rule %q has invalid duration", SettingRuntimeMemorySnapshotSave, line)
+			}
+			after = time.Duration(seconds) * time.Second
+		}
+		if after < 0 {
+			return nil, fmt.Errorf("%s rule %q duration must be >= 0", SettingRuntimeMemorySnapshotSave, line)
+		}
+		changes, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || changes <= 0 {
+			return nil, fmt.Errorf("%s rule %q changes must be > 0", SettingRuntimeMemorySnapshotSave, line)
+		}
+		rules = append(rules, MemorySnapshotSaveRule{After: after, Changes: changes})
+	}
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("%s must contain at least one rule", SettingRuntimeMemorySnapshotSave)
+	}
+	return rules, nil
+}
+
+func FormatMemorySnapshotSaveRules(rules []MemorySnapshotSaveRule) string {
+	lines := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		lines = append(lines, rule.After.String()+" "+strconv.FormatInt(rule.Changes, 10))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func ParseAllowedHosts(value string) ([]string, error) {

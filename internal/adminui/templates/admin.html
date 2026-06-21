@@ -470,6 +470,29 @@
               <input name="max_websocket_connections_per_site" type="number" min="0" value="{{.Settings.MaxWebSocketConnectionsPerSite}}" required>
             </label>
             <label>
+              Memory persistence mode
+              <select name="memory_persistence_mode">
+                <option value="off" {{if eq .Settings.MemoryPersistenceMode "off"}}selected{{end}}>off</option>
+                <option value="snapshot" {{if eq .Settings.MemoryPersistenceMode "snapshot"}}selected{{end}}>snapshot</option>
+              </select>
+            </label>
+            <label>
+              Memory snapshot save rules
+              <textarea name="memory_snapshot_save" spellcheck="false">{{.Settings.MemorySnapshotSave}}</textarea>
+            </label>
+            <label>
+              Memory snapshot min interval ms
+              <input name="memory_snapshot_min_interval_ms" type="number" min="0" value="{{.Settings.MemorySnapshotMinIntervalMS}}" required>
+            </label>
+            <label>
+              Memory snapshot max concurrency
+              <input name="memory_snapshot_max_concurrency" type="number" min="1" value="{{.Settings.MemorySnapshotMaxConcurrency}}" required>
+            </label>
+            <label>
+              Memory shutdown flush timeout ms
+              <input name="memory_shutdown_flush_timeout_ms" type="number" min="0" value="{{.Settings.MemoryShutdownFlushTimeoutMS}}" required>
+            </label>
+            <label>
               Default site
               <input name="default_site" value="{{.Settings.DefaultSite}}">
             </label>

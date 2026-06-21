@@ -64,6 +64,11 @@ type ServerSettings struct {
 	MaxRetainedVersions            int64
 	MaxWebSocketConnections        int64
 	MaxWebSocketConnectionsPerSite int64
+	MemoryPersistenceMode          string
+	MemorySnapshotSave             string
+	MemorySnapshotMinIntervalMS    int64
+	MemorySnapshotMaxConcurrency   int64
+	MemoryShutdownFlushTimeoutMS   int64
 	DefaultSite                    string
 	AllowedHosts                   []string
 	LogLevel                       string

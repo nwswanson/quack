@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"quack/internal/adminui"
 	"quack/internal/cache"
 	"quack/internal/controlapi"
+	"quack/internal/domain"
 	"quack/internal/publichttp"
 	"quack/internal/publishing"
 	"quack/internal/releases"
@@ -27,6 +29,7 @@ const (
 
 type Options struct {
 	AllowUnauthenticated bool
+	MemoryDirectory      string
 }
 
 func DefaultOptions() Options {
@@ -55,6 +58,14 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	uploadService := uploads.NewService(db, store, read, write)
 	publishingService := publishing.NewService(uploadService)
 	releaseService := releases.NewService(db, hot)
+	if opts.MemoryDirectory != "" {
+		settings, err := db.GetServerSettings(context.Background())
+		if err != nil {
+			slog.Warn("load memory persistence settings failed", "error", err)
+		} else if err := ApplyRuntimeSettings(settings, opts.MemoryDirectory); err != nil {
+			slog.Warn("apply memory persistence settings failed", "error", err)
+		}
+	}
 
 	adminui.New(adminui.Options{
 		Users:       db,
@@ -64,6 +75,9 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Read:        read,
 		Write:       write,
 		SetLogLevel: SetLogLevel,
+		ApplySettings: func(settings domain.ServerSettings) error {
+			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
+		},
 	}).Register(adminMux)
 
 	controlapi.New(controlapi.Options{

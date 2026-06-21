@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"quack/internal/domain"
 	"quack/internal/storage"
 
@@ -18,6 +19,7 @@ import (
 func main() {
 	root := flag.String("root", "", "root directory for blob storage")
 	databasePath := flag.String("database", "", "sqlite database file")
+	memoryDir := flag.String("memory-dir", "", "directory for runtime memory snapshots")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
 	flag.Parse()
 	if *root == "" {
@@ -69,6 +71,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "log_level: %v\n", err)
 		os.Exit(1)
 	}
+	if *memoryDir == "" {
+		*memoryDir = filepath.Join(filepath.Dir(*databasePath), "memory")
+	}
 	if *allowUnauthenticated {
 		slog.Warn("unauthenticated api access enabled")
 	}
@@ -87,6 +92,7 @@ func main() {
 
 	opts := server.DefaultOptions()
 	opts.AllowUnauthenticated = *allowUnauthenticated
+	opts.MemoryDirectory = *memoryDir
 
 	servers := server.New(adminAddr, publicAddr, uploadToken, store, db, opts)
 	slog.Warn("starting quack server",
@@ -94,6 +100,7 @@ func main() {
 		"public_addr", publicAddr,
 		"root", *root,
 		"database", *databasePath,
+		"memory_dir", *memoryDir,
 		"max_upload_bytes", settings.MaxUploadBytes,
 		"max_upload_files", settings.MaxUploadFiles,
 		"max_retained_versions", settings.MaxRetainedVersions,
