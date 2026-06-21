@@ -123,6 +123,11 @@ routes:
     methods: [GET, POST]
     filesystem:
       root: data
+
+  - path: /api/somesocket
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/somesocket.star
 ```
 
 `manifest.Parse` uses `yaml.Decoder.KnownFields(true)`, so unknown fields fail
@@ -187,14 +192,15 @@ Each route has:
 - `kind`: optional, defaults to `static` when route settings are interpreted
 - `root`: optional static-route archive subtree to expose at this route path
 - `file`: optional static-route archive file to serve for an exact route path
-- `runtime`: currently only `starlark`, and only on `http` routes
+- `runtime`: currently only `starlark`, and only on `http` and `websocket`
+  routes
 - `entrypoint`: required when `runtime` is set
 - `methods`: optional list; empty means all methods are allowed at the routing
   layer
 
-Upload validation allows `static`, `http`, and `websocket` route kinds. Only
-`http` routes can currently name a runtime. WebSocket metadata can be persisted,
-but the runtime execution path currently invokes HTTP-style runtime handling.
+Upload validation allows `static`, `http`, and `websocket` route kinds. HTTP
+and WebSocket routes can name the `starlark` runtime. WebSocket runtime details
+are covered in [WebSocket Runtime](websockets.md).
 
 ## Upload-Time Persistence
 
@@ -217,6 +223,10 @@ For a Starlark HTTP route:
 3. The route stores the entrypoint blob path as `BundleObjectKey`.
 4. Runtime limits are initialized from runtime defaults.
 5. Required capabilities are stored with the route metadata.
+
+For a Starlark WebSocket route, the same metadata path is used, but the required
+capability is `runtime.websocket` and public dispatch goes through the
+WebSocket upgrade/runtime path.
 
 Static route declarations do not create `runtime_routes` rows. They live only in
 the JSON `routes` upload setting.
@@ -356,14 +366,17 @@ against runtime metadata using the request path and current version.
   empty method list because they came from the manifest `routes` setting rather
   than runtime metadata; runtime invocation performs the authoritative method
   check later.
-- `websocket`: currently calls `runtimehttp.Handler.ServeHTTPRoute` with the
-  same invocation request shape. The lower runtime layer only matches HTTP route
-  metadata today, so this is not a complete WebSocket execution path yet.
+- `websocket`: calls `runtimehttp.Handler.ServeWebSocketRoute`. The handler
+  validates the HTTP upgrade, reserves a connection, invokes the route's
+  `on_connect` handler, upgrades the transport, and then lets the Go-owned
+  connection manager apply returned effects.
 - unknown: returns `404`.
 
 Dynamic HTTP routes are denied before dispatch unless policy allows
-`features.runtime.http.enabled` for system/site scope. This is a route-level
-gate in `publichttp.ReleaseRouteReader`.
+`features.runtime.http.enabled` for system/site scope. Dynamic WebSocket routes
+are denied before dispatch unless policy allows
+`features.runtime.websocket.enabled`. These are route-level gates in
+`publichttp.ReleaseRouteReader`.
 
 The runtime service repeats capability checks at invocation time. Do not remove
 that second gate: it protects against stale cached route decisions and direct
@@ -532,11 +545,15 @@ Currently, serving status only reacts to database feature policy violations:
   decision
 - suspended database violation: static serving returns `403`
 
-Runtime HTTP has a separate policy gate:
+Runtime HTTP and WebSocket routes have separate policy gates:
 
 - Upload validation rejects HTTP runtime route declarations unless
   `features.runtime.http.enabled` is allowed.
+- Upload validation rejects WebSocket runtime route declarations unless
+  `features.runtime.websocket.enabled` is allowed.
 - Public route lookup denies HTTP runtime dispatch if current policy denies it.
+- Public route lookup denies WebSocket runtime dispatch if current policy denies
+  it.
 - Runtime invocation checks required route capabilities again.
 
 ## Runtime Invocation
@@ -580,7 +597,8 @@ runtime.InvocationRequest{
 8. Records invocation metrics.
 
 Runtime route lookup in `internal/runtime/routing.go` repeats longest-prefix
-matching over `ListCurrentRuntimeRoutes`. It only matches `RouteHTTP` metadata.
+matching over `ListCurrentRuntimeRoutes`. HTTP invocation matches `RouteHTTP`
+metadata. WebSocket invocation matches `RouteWebSocket` metadata.
 
 For Starlark routes, the executor receives a bundle whose route entrypoint is
 the stored blob object key, not the original source path. The script loader
@@ -848,8 +866,6 @@ behavior should prove that `/` maps to `public/index.html` and that
   settings route currently wins the public-layer tie, so runtime metadata is the
   authoritative source for runtime methods and limits.
 - Runtime route metadata errors from SQLite scan fail the route lookup.
-- WebSocket route execution is not complete; public dispatch has a WebSocket
-  route kind, but runtime lookup currently matches HTTP route metadata.
 - Dynamic default-site fallback is not implemented.
 - Static serving returns an empty `200 text/html` for a missing requested index.
   This is historical behavior; change it deliberately and with tests if the
