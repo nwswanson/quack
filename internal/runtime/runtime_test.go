@@ -78,11 +78,11 @@ func TestStarlarkExecutorExposesReadOnlyBundleFS(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{
 		"app.star": `
 def handle(req):
-    meta = fs.stat("data/message.txt")
+    meta = fs.stat("message.txt")
     return (
         200,
         {"content-type": "text/plain", "x-size": str(meta["size"])},
-        ",".join(fs.listdir("data")) + ":" + fs.read("/data/message.txt"),
+        ",".join(fs.listdir(".")) + ":" + fs.read("/message.txt") + ":" + str(fs.exists("private.txt")),
     )
 `,
 		"data-blob": "hello from bundle",
@@ -90,14 +90,33 @@ def handle(req):
 
 	resp, err := executor.Invoke(context.Background(), Bundle{
 		Site: "foo", Version: 1,
-		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
-		Files:  []BundleFile{{Path: "data/message.txt", BlobPath: "data-blob", FileSHA: "sha", Bytes: 17}},
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star", FilesystemEnabled: true, FilesystemRoot: "data"}},
+		Files: []BundleFile{
+			{Path: "data/message.txt", BlobPath: "data-blob", FileSHA: "sha", Bytes: 17},
+			{Path: "private.txt", BlobPath: "private-blob", FileSHA: "private-sha", Bytes: 7},
+		},
 	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(resp.Body) != "message.txt:hello from bundle" || resp.Headers["X-Size"][0] != "17" {
+	if string(resp.Body) != "message.txt:hello from bundle:False" || resp.Headers["X-Size"][0] != "17" {
 		t.Fatalf("response = %+v body=%q, want bundle fs read", resp, string(resp.Body))
+	}
+}
+
+func TestStarlarkExecutorDoesNotExposeFSUnlessEnabled(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    return (200, {}, str(fs.exists("message.txt")))
+`})
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1,
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		Files:  []BundleFile{{Path: "message.txt", BlobPath: "data-blob", FileSHA: "sha", Bytes: 17}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if !errors.Is(err, ErrInvocationFailure) {
+		t.Fatalf("Invoke error = %v, want invocation failure from disabled fs", err)
 	}
 }
 
@@ -157,7 +176,7 @@ func TestDemoStarlarkFSBundleExecutes(t *testing.T) {
 
 	resp, err := executor.Invoke(context.Background(), Bundle{
 		Site: "demo", Version: 1,
-		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "api/app.star"}},
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "api/app.star", FilesystemEnabled: true, FilesystemRoot: "data"}},
 		Files: []BundleFile{
 			{Path: "data/profile.txt", BlobPath: "data/profile.txt", FileSHA: "profile-sha", Bytes: int64(len(profile))},
 			{Path: "data/notes.md", BlobPath: "data/notes.md", FileSHA: "notes-sha", Bytes: int64(len(notes))},

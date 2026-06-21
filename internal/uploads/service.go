@@ -278,6 +278,12 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 			}
 			bundleObjectKey = file.BlobPath
 		}
+		filesystemEnabled := false
+		filesystemRoot := ""
+		if route.Filesystem != nil {
+			filesystemEnabled = true
+			filesystemRoot = route.Filesystem.Root
+		}
 		out = append(out, appruntime.RouteMetadata{
 			Site:                 upload.Site,
 			SiteSHA:              upload.SiteSHA,
@@ -288,6 +294,8 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 			Entrypoint:           route.Entrypoint,
 			BundleObjectKey:      bundleObjectKey,
 			Methods:              append([]string(nil), route.Methods...),
+			FilesystemEnabled:    filesystemEnabled,
+			FilesystemRoot:       filesystemRoot,
 			RequiredCapabilities: runtimeCapabilities(route.Kind),
 			ResourceLimits: appruntime.ResourceLimits{
 				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,

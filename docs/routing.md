@@ -110,6 +110,7 @@ files are sanitized and stored as upload files.
 
 The manifest schema currently relevant to routing is:
 
+```yaml
 routes:
   - path: /
     kind: static
@@ -120,6 +121,8 @@ routes:
     runtime: starlark
     entrypoint: api/app.star
     methods: [GET, POST]
+    filesystem:
+      root: data
 ```
 
 `manifest.Parse` uses `yaml.Decoder.KnownFields(true)`, so unknown fields fail
@@ -585,10 +588,26 @@ opens that blob through storage.
 
 ### Starlark Bundle Filesystem
 
-Starlark receives a read-only `fs` module scoped to the uploaded site version
-being executed. Paths are bundle-relative upload paths; leading slashes are
-accepted and normalized away. `..` traversal is rejected. The module never
-exposes host filesystem paths.
+Starlark receives a read-only `fs` module only when its route opts in with a
+`filesystem` block:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    filesystem:
+      root: data
+```
+
+`filesystem.root` is relative to the tarball root. Empty, `.`, and `/` enable
+the whole uploaded tarball as the Starlark filesystem root. A non-empty value
+such as `data` exposes only that subtree, rebased so Starlark reads
+`fs.read("profile.txt")` for the uploaded file `data/profile.txt`.
+
+Starlark paths may start with `/`; leading slashes are normalized away. `..`
+traversal is rejected. The module never exposes host filesystem paths.
 
 ```python
 fs.exists(path)      # bool; true for files or virtual directories

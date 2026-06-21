@@ -192,6 +192,8 @@ func TestRuntimeRoutesRoundTrip(t *testing.T) {
 		Entrypoint:           "main.handler",
 		BundleObjectKey:      "bundles/site-sha/1/runtime.tar",
 		Methods:              []string{"GET", "POST"},
+		FilesystemEnabled:    true,
+		FilesystemRoot:       "data",
 		RequiredCapabilities: []string{"runtime.http", "database"},
 		ResourceLimits:       appruntime.ResourceLimits{MaxRequestBytes: 1024, MaxDurationMillis: 250},
 	}}); err != nil {
@@ -223,6 +225,9 @@ func TestRuntimeRoutesRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(route.Methods, []string{"GET", "POST"}) || !reflect.DeepEqual(route.RequiredCapabilities, []string{"runtime.http", "database"}) {
 		t.Fatalf("route arrays = %#v, want methods and capabilities", route)
+	}
+	if !route.FilesystemEnabled || route.FilesystemRoot != "data" {
+		t.Fatalf("route filesystem = (%v, %q), want enabled data root", route.FilesystemEnabled, route.FilesystemRoot)
 	}
 	if route.ResourceLimits.MaxRequestBytes != 1024 || route.ResourceLimits.MaxDurationMillis != 250 || route.CreatedAt == "" {
 		t.Fatalf("route limits/timestamp = %#v, want persisted limits and created timestamp", route)

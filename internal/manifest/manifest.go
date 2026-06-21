@@ -38,13 +38,18 @@ const (
 )
 
 type Route struct {
-	Path       string    `json:"path" yaml:"path"`
-	Kind       RouteKind `json:"kind" yaml:"kind"`
-	Root       string    `json:"root,omitempty" yaml:"root,omitempty"`
-	File       string    `json:"file,omitempty" yaml:"file,omitempty"`
-	Runtime    string    `json:"runtime,omitempty" yaml:"runtime,omitempty"`
-	Entrypoint string    `json:"entrypoint" yaml:"entrypoint"`
-	Methods    []string  `json:"methods,omitempty" yaml:"methods,omitempty"`
+	Path       string           `json:"path" yaml:"path"`
+	Kind       RouteKind        `json:"kind" yaml:"kind"`
+	Root       string           `json:"root,omitempty" yaml:"root,omitempty"`
+	File       string           `json:"file,omitempty" yaml:"file,omitempty"`
+	Runtime    string           `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	Entrypoint string           `json:"entrypoint" yaml:"entrypoint"`
+	Methods    []string         `json:"methods,omitempty" yaml:"methods,omitempty"`
+	Filesystem *RouteFilesystem `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
+}
+
+type RouteFilesystem struct {
+	Root string `json:"root,omitempty" yaml:"root,omitempty"`
 }
 
 func Default() Manifest {
@@ -122,6 +127,22 @@ func SanitizeStaticFile(file string) (string, error) {
 	return sanitized, nil
 }
 
+func SanitizeFilesystemRoot(root string) (string, error) {
+	root = strings.TrimSpace(strings.ReplaceAll(root, "\\", "/"))
+	root = strings.Trim(root, "/")
+	if root == "" || root == "." {
+		return "", nil
+	}
+	if strings.Contains(root, "../") || strings.Contains(root, "/..") || root == ".." {
+		return "", fmt.Errorf("filesystem.root cannot contain ..")
+	}
+	sanitized, err := protocol.SanitizeServingPath(path.Clean(root))
+	if err != nil {
+		return "", fmt.Errorf("invalid filesystem.root: %w", err)
+	}
+	return sanitized, nil
+}
+
 func validateRoutes(routes []Route) error {
 	for i, route := range routes {
 		if route.Path == "" {
@@ -165,6 +186,16 @@ func validateRoutes(routes []Route) error {
 		}
 		if strings.TrimSpace(route.Runtime) != "" && strings.TrimSpace(route.Entrypoint) == "" {
 			return fmt.Errorf("route.entrypoint is required when route.runtime is set")
+		}
+		if route.Filesystem != nil {
+			if route.Kind != RouteHTTP || strings.TrimSpace(route.Runtime) != "starlark" {
+				return fmt.Errorf("route.filesystem is only supported for starlark http routes")
+			}
+			root, err := SanitizeFilesystemRoot(route.Filesystem.Root)
+			if err != nil {
+				return fmt.Errorf("invalid route.filesystem.root: %w", err)
+			}
+			routes[i].Filesystem.Root = root
 		}
 		for _, method := range route.Methods {
 			if strings.TrimSpace(method) == "" {

@@ -134,9 +134,16 @@ func (r RouteMetadata) bundle(limits ResourceLimits, files []domain.UploadFileRe
 	return Bundle{
 		Site:    r.Site,
 		Version: r.Version,
-		Routes:  []Route{{Path: r.RoutePath, Kind: r.RouteKind, Entrypoint: r.BundleObjectKey, Methods: append([]string(nil), r.Methods...)}},
-		Files:   bundleFiles(files),
-		Limits:  limits,
+		Routes: []Route{{
+			Path:              r.RoutePath,
+			Kind:              r.RouteKind,
+			Entrypoint:        r.BundleObjectKey,
+			Methods:           append([]string(nil), r.Methods...),
+			FilesystemEnabled: r.FilesystemEnabled,
+			FilesystemRoot:    r.FilesystemRoot,
+		}},
+		Files:  bundleFiles(files),
+		Limits: limits,
 	}
 }
 func bundleFiles(files []domain.UploadFileRecord) []BundleFile {

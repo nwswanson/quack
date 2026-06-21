@@ -50,10 +50,12 @@ type BundleFile struct {
 	Bytes    int64
 }
 type Route struct {
-	Path       string
-	Kind       RouteKind
-	Entrypoint string
-	Methods    []string
+	Path              string
+	Kind              RouteKind
+	Entrypoint        string
+	Methods           []string
+	FilesystemEnabled bool
+	FilesystemRoot    string
 }
 type ResourceLimits struct {
 	MaxRequestBytes   int64  `json:"max_request_bytes,omitempty"`
@@ -74,6 +76,8 @@ type RouteMetadata struct {
 	BundleObjectKey      string
 	RoutePath            string
 	Methods              []string
+	FilesystemEnabled    bool
+	FilesystemRoot       string
 	RequiredCapabilities []string
 	ResourceLimits       ResourceLimits
 	CreatedAt            string

@@ -1,8 +1,8 @@
 def handle(req):
-    profile = fs.read("data/profile.txt").strip()
-    manifest = fs.stat("data/profile.txt")
-    assets = fs.listdir("data")
-    raw = fs.read_bytes("/data/raw.bin")
+    profile = fs.read("profile.txt").strip()
+    manifest = fs.stat("profile.txt")
+    assets = fs.listdir(".")
+    raw = fs.read_bytes("/raw.bin")
 
     return (
         200,
@@ -12,8 +12,8 @@ def handle(req):
             "message": profile,
             "data_dir": assets,
             "profile": manifest,
-            "has_notes": fs.exists("data/notes.md"),
-            "has_missing_file": fs.exists("data/missing.txt"),
+            "has_notes": fs.exists("notes.md"),
+            "has_missing_file": fs.exists("missing.txt"),
             "raw_size": len(raw),
             "raw_text": str(raw),
         }, indent = "  ") + "\n",

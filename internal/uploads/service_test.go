@@ -132,7 +132,7 @@ func TestServiceUploadArchivePersistsStarlarkRuntimeBundleMetadata(t *testing.T)
 			MaxUploadFiles: domain.EffectiveValue[int64]{Value: 10},
 		},
 		Body: tarArchive(t, map[string]string{
-			"site.yaml":    "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: api/app.star\n    methods: [GET]\n",
+			"site.yaml":    "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: api/app.star\n    methods: [GET]\n    filesystem:\n      root: data\n",
 			"api/app.star": "def handle(req): return (200, {}, 'ok')\n",
 		}),
 	})
@@ -145,6 +145,9 @@ func TestServiceUploadArchivePersistsStarlarkRuntimeBundleMetadata(t *testing.T)
 	route := db.runtimeRoutes[0]
 	if route.RuntimeKind != appruntime.RuntimeStarlark || route.BundleObjectKey != "blob:app" {
 		t.Fatalf("runtime route = %#v, want starlark blob metadata", route)
+	}
+	if !route.FilesystemEnabled || route.FilesystemRoot != "data" {
+		t.Fatalf("runtime route filesystem = (%v, %q), want enabled data root", route.FilesystemEnabled, route.FilesystemRoot)
 	}
 	if route.ResourceLimits.MaxRequestBytes != appruntime.DefaultMaxRequestBytes ||
 		route.ResourceLimits.MaxResponseBytes != appruntime.DefaultMaxResponseBytes ||

@@ -7,3 +7,5 @@ routes:
     runtime: starlark
     entrypoint: api/app.star
     methods: [GET]
+    filesystem:
+      root: data

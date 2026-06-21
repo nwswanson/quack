@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
+
 	"quack/internal/runtime/modules"
 
 	"go.starlark.net/starlark"
@@ -40,7 +42,7 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	}
 	thread, stopCancel := starlarkThread(ctx, req.Method+" "+req.Route, limits.MaxExecutionSteps)
 	defer stopCancel()
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.predeclareds(ctx, bundle, limits))
+	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.predeclareds(ctx, bundle, route, limits))
 	if err != nil {
 		return InvocationResponse{}, wrapStarlarkError(err)
 	}
@@ -58,25 +60,43 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	}
 	return responseFromValue(result)
 }
-func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, limits ResourceLimits) starlark.StringDict {
+func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, route Route, limits ResourceLimits) starlark.StringDict {
 	out := make(starlark.StringDict, len(predeclareds)+1)
 	for key, value := range predeclareds {
 		out[key] = value
 	}
-	out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files), e.loader.OpenScript, limits.MaxScriptBytes)
+	if route.FilesystemEnabled {
+		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
+	}
 	return out
 }
-func fsFiles(files []BundleFile) []modules.FSFile {
+func fsFiles(files []BundleFile, root string) []modules.FSFile {
 	out := make([]modules.FSFile, 0, len(files))
 	for _, file := range files {
+		rebased, ok := fsPathUnderRoot(file.Path, root)
+		if !ok {
+			continue
+		}
 		out = append(out, modules.FSFile{
-			Path:    file.Path,
+			Path:    rebased,
 			BlobKey: file.BlobPath,
 			FileSHA: file.FileSHA,
 			Bytes:   file.Bytes,
 		})
 	}
 	return out
+}
+func fsPathUnderRoot(filePath string, root string) (string, bool) {
+	filePath = strings.Trim(filePath, "/")
+	root = strings.Trim(root, "/")
+	if root == "" {
+		return filePath, filePath != ""
+	}
+	if !strings.HasPrefix(filePath, root+"/") {
+		return "", false
+	}
+	rebased := strings.TrimPrefix(filePath, root+"/")
+	return rebased, rebased != ""
 }
 func (e *StarlarkExecutor) readScript(ctx context.Context, objectKey string, limits ResourceLimits) (string, error) {
 	if objectKey == "" {

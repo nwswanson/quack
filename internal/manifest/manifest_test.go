@@ -161,13 +161,54 @@ func TestParseRejectsFileOnHTTPRoute(t *testing.T) {
 }
 
 func TestParseAllowsStarlarkHTTPRoute(t *testing.T) {
-	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n"
+	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n    filesystem:\n      root: /data\\files/\n"
 	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Routes) != 1 || manifest.Routes[0].Runtime != "starlark" {
-		t.Fatalf("routes = %#v, want starlark runtime", manifest.Routes)
+	if len(manifest.Routes) != 1 ||
+		manifest.Routes[0].Runtime != "starlark" ||
+		manifest.Routes[0].Filesystem == nil ||
+		manifest.Routes[0].Filesystem.Root != "data/files" {
+		t.Fatalf("routes = %#v, want starlark runtime with sanitized filesystem root", manifest.Routes)
+	}
+}
+
+func TestParseAllowsStarlarkFilesystemAtTarballRoot(t *testing.T) {
+	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n    filesystem:\n      root: /\n"
+	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Routes[0].Filesystem == nil || manifest.Routes[0].Filesystem.Root != "" {
+		t.Fatalf("filesystem = %#v, want enabled at tarball root", manifest.Routes[0].Filesystem)
+	}
+}
+
+func TestParseRejectsInvalidStarlarkFilesystem(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "static route",
+			body: "routes:\n  - path: /\n    kind: static\n    filesystem:\n      root: data\n",
+			want: "route.filesystem is only supported",
+		},
+		{
+			name: "traversal",
+			body: "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n    filesystem:\n      root: ../data\n",
+			want: "filesystem.root cannot contain ..",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(tc.body), int64(len(tc.body)))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
