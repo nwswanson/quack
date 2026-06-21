@@ -79,7 +79,7 @@ func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	h.sockets.attach(connID, netConn)
-	if err := h.applyEffects(r.Context(), effects); err != nil {
+	if err := h.applyEffects(r.Context(), req.Site, effects); err != nil {
 		_ = writeCloseFrame(netConn, 1011, "runtime effect failed")
 		_ = netConn.Close()
 		return
@@ -140,7 +140,7 @@ func (h Handler) readWebSocketLoop(ctx context.Context, reader *bufio.Reader, co
 				h.invokeDisconnect(ctx, req)
 				return
 			}
-			if err := h.applyEffects(ctx, effects); err != nil {
+			if err := h.applyEffects(ctx, req.Site, effects); err != nil {
 				_ = h.sockets.close(connID, 1011, "runtime effect failed")
 				h.invokeDisconnect(ctx, req)
 				return
@@ -166,11 +166,11 @@ func (h Handler) invokeDisconnect(ctx context.Context, req appruntime.WebSocketI
 	req.Event = appruntime.WebSocketServerEvent{}
 	effects, err := h.runtime.InvokeWebSocket(ctx, req)
 	if err == nil {
-		_ = h.applyEffects(ctx, effects)
+		_ = h.applyEffects(ctx, req.Site, effects)
 	}
 }
 
-func (h Handler) applyEffects(ctx context.Context, effects []appruntime.WebSocketEffect) error {
+func (h Handler) applyEffects(ctx context.Context, site string, effects []appruntime.WebSocketEffect) error {
 	for _, effect := range effects {
 		switch effect.Type {
 		case appruntime.WebSocketEffectAccept:
@@ -179,7 +179,7 @@ func (h Handler) applyEffects(ctx context.Context, effects []appruntime.WebSocke
 				return err
 			}
 		case appruntime.WebSocketEffectBroadcast:
-			h.sockets.broadcast(effect.Topic, effect.Payload)
+			h.sockets.broadcast(site, effect.Topic, effect.Payload)
 		case appruntime.WebSocketEffectSubscribe:
 			h.sockets.subscribe(effect.ConnID, effect.Topic)
 		case appruntime.WebSocketEffectUnsubscribe:
@@ -187,7 +187,7 @@ func (h Handler) applyEffects(ctx context.Context, effects []appruntime.WebSocke
 		case appruntime.WebSocketEffectUnsubscribeAll:
 			h.sockets.unsubscribeAll(effect.ConnID)
 		case appruntime.WebSocketEffectPublish:
-			if err := h.dispatchEvent(ctx, effect.Topic, effect.Payload); err != nil {
+			if err := h.dispatchEvent(ctx, site, effect.Topic, effect.Payload); err != nil {
 				return err
 			}
 		case appruntime.WebSocketEffectSetTimer:
@@ -208,8 +208,8 @@ func (h Handler) applyEffects(ctx context.Context, effects []appruntime.WebSocke
 	return nil
 }
 
-func (h Handler) dispatchEvent(ctx context.Context, topic string, payload []byte) error {
-	for _, snapshot := range h.sockets.subscriberSnapshots(topic) {
+func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, payload []byte) error {
+	for _, snapshot := range h.sockets.subscriberSnapshots(site, topic) {
 		effects, err := h.runtime.InvokeWebSocket(ctx, appruntime.WebSocketInvocationRequest{
 			Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Query: snapshot.query,
 			Headers: snapshot.headers, ConnID: snapshot.id, EventType: appruntime.WebSocketEventEvent,
@@ -219,7 +219,7 @@ func (h Handler) dispatchEvent(ctx context.Context, topic string, payload []byte
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event invocation failed")
 			continue
 		}
-		if err := h.applyEffects(ctx, effects); err != nil {
+		if err := h.applyEffects(ctx, snapshot.site, effects); err != nil {
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event effect failed")
 			continue
 		}
@@ -368,26 +368,33 @@ func (m *socketManager) unregister(connID string) {
 func (m *socketManager) subscribe(connID string, topic string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.connections[connID] == nil || strings.TrimSpace(topic) == "" {
+	conn := m.connections[connID]
+	if conn == nil || strings.TrimSpace(topic) == "" {
 		return
 	}
-	if m.topics[topic] == nil {
-		m.topics[topic] = map[string]bool{}
+	scoped := scopedTopic(conn.site, topic)
+	if m.topics[scoped] == nil {
+		m.topics[scoped] = map[string]bool{}
 	}
 	if m.connTopics[connID] == nil {
 		m.connTopics[connID] = map[string]bool{}
 	}
-	m.topics[topic][connID] = true
-	m.connTopics[connID][topic] = true
+	m.topics[scoped][connID] = true
+	m.connTopics[connID][scoped] = true
 }
 
 func (m *socketManager) unsubscribe(connID string, topic string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.connTopics[connID], topic)
-	delete(m.topics[topic], connID)
-	if len(m.topics[topic]) == 0 {
-		delete(m.topics, topic)
+	conn := m.connections[connID]
+	if conn == nil {
+		return
+	}
+	scoped := scopedTopic(conn.site, topic)
+	delete(m.connTopics[connID], scoped)
+	delete(m.topics[scoped], connID)
+	if len(m.topics[scoped]) == 0 {
+		delete(m.topics, scoped)
 	}
 }
 
@@ -413,11 +420,12 @@ func (m *socketManager) subscribers(topic string) []string {
 	return out
 }
 
-func (m *socketManager) subscriberSnapshots(topic string) []socketSnapshot {
+func (m *socketManager) subscriberSnapshots(site string, topic string) []socketSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]socketSnapshot, 0, len(m.topics[topic]))
-	for connID := range m.topics[topic] {
+	scoped := scopedTopic(site, topic)
+	out := make([]socketSnapshot, 0, len(m.topics[scoped]))
+	for connID := range m.topics[scoped] {
 		conn := m.connections[connID]
 		if conn == nil {
 			continue
@@ -450,10 +458,14 @@ func (m *socketManager) sendFrame(connID string, opcode byte, payload []byte) er
 	return m.enqueueFrame(connID, outboundFrame{opcode: opcode, payload: append([]byte(nil), payload...)})
 }
 
-func (m *socketManager) broadcast(topic string, payload []byte) {
-	for _, connID := range m.subscribers(topic) {
+func (m *socketManager) broadcast(site string, topic string, payload []byte) {
+	for _, connID := range m.subscribers(scopedTopic(site, topic)) {
 		_ = m.send(connID, payload)
 	}
+}
+
+func scopedTopic(site string, topic string) string {
+	return site + "\x00" + topic
 }
 
 func (m *socketManager) enqueueFrame(connID string, frame outboundFrame) error {

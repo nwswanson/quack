@@ -222,7 +222,7 @@ func TestSocketManagerBroadcastDoesNotBlockOnSlowSubscriber(t *testing.T) {
 	manager.attach(fastID, serverConn)
 	manager.subscribe(fastID, "topic")
 
-	manager.broadcast("topic", []byte("fast"))
+	manager.broadcast("foo", "topic", []byte("fast"))
 
 	frameCh := make(chan websocketFrame, 1)
 	errCh := make(chan error, 1)
@@ -245,6 +245,66 @@ func TestSocketManagerBroadcastDoesNotBlockOnSlowSubscriber(t *testing.T) {
 		t.Fatal("fast subscriber did not receive broadcast")
 	}
 	manager.unregister(fastID)
+}
+
+func TestSocketManagerScopesTopicsBySite(t *testing.T) {
+	manager := newSocketManager()
+	fooID, _, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.unregister(fooID)
+	barID, _, err := manager.reserve("bar", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.unregister(barID)
+
+	manager.subscribe(fooID, "topic")
+	manager.subscribe(barID, "topic")
+
+	fooSnapshots := manager.subscriberSnapshots("foo", "topic")
+	if len(fooSnapshots) != 1 || fooSnapshots[0].id != fooID {
+		t.Fatalf("foo snapshots = %#v, want only foo subscriber", fooSnapshots)
+	}
+	barSnapshots := manager.subscriberSnapshots("bar", "topic")
+	if len(barSnapshots) != 1 || barSnapshots[0].id != barID {
+		t.Fatalf("bar snapshots = %#v, want only bar subscriber", barSnapshots)
+	}
+}
+
+func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
+	runtime := &recordingRuntime{}
+	handler := New(runtime)
+	fooID, _, err := handler.sockets.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handler.sockets.unregister(fooID)
+	barID, _, err := handler.sockets.reserve("bar", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handler.sockets.unregister(barID)
+	handler.sockets.subscribe(fooID, "pixeldraw:canvas")
+	handler.sockets.subscribe(barID, "pixeldraw:canvas")
+
+	err = handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "pixeldraw:canvas",
+		Payload: []byte(`{"type":"pixels_updated"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.websocketRequests) != 1 {
+		t.Fatalf("websocket requests = %#v, want one same-site event", runtime.websocketRequests)
+	}
+	got := runtime.websocketRequests[0]
+	if got.Site != "foo" || got.ConnID != fooID || got.EventType != appruntime.WebSocketEventEvent {
+		t.Fatalf("event request = %#v, want foo event for foo subscriber", got)
+	}
 }
 
 func websocketPipe(t *testing.T, handler Handler, req appruntime.WebSocketInvocationRequest) (net.Conn, *bufio.Reader, <-chan struct{}) {

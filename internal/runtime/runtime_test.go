@@ -483,6 +483,59 @@ def on_event(ctx, event):
 	}
 }
 
+func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
+	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{"pixels.star": string(src)})
+	bundle := Bundle{
+		Site: "demo-pixeldraw", Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-pixeldraw", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pixeldraw:canvas" {
+		t.Fatalf("connect effects = %#v, want subscribe, ready, and snapshot", effects)
+	}
+	if got := string(effects[2].Payload); !strings.Contains(got, `"type":"canvas_snapshot"`) || !strings.Contains(got, `"width":48`) {
+		t.Fatalf("snapshot payload = %s, want pixeldraw canvas snapshot", got)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-pixeldraw", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"draw_pixels","pixels":[{"x":1,"y":2,"color":"red"},{"x":2,"y":2,"color":"blue"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw:canvas" {
+		t.Fatalf("draw effects = %#v, want publish effect", effects)
+	}
+	update := string(effects[0].Payload)
+	for _, want := range []string{`"type":"pixels_updated"`, `"revision":1`, `"color":"red"`, `"color":"blue"`} {
+		if !strings.Contains(update, want) {
+			t.Fatalf("draw payload = %s, want %s", update, want)
+		}
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-pixeldraw", Version: 1, Route: "/ws", ConnID: "c2", EventType: WebSocketEventEvent,
+		Event: WebSocketServerEvent{Topic: "pixeldraw:canvas", Payload: []byte(update)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectSend || string(effects[0].Payload) != update {
+		t.Fatalf("event effects = %#v, want update forwarded", effects)
+	}
+}
+
 func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {
 	svc := NewService(ServiceOptions{
 		Repository: newRuntimeRepo(RouteMetadata{
