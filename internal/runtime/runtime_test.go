@@ -131,6 +131,60 @@ func TestDemoStarlarkBundleExecutes(t *testing.T) {
 	}
 }
 
+func TestDemoStarlarkFSBundleExecutes(t *testing.T) {
+	app, err := os.ReadFile("../../demos/starlark-fs/api/app.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := os.ReadFile("../../demos/starlark-fs/data/profile.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes, err := os.ReadFile("../../demos/starlark-fs/data/notes.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../../demos/starlark-fs/data/raw.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"api/app.star":     string(app),
+		"data/profile.txt": string(profile),
+		"data/notes.md":    string(notes),
+		"data/raw.bin":     string(raw),
+	})
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "demo", Version: 1,
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "api/app.star"}},
+		Files: []BundleFile{
+			{Path: "data/profile.txt", BlobPath: "data/profile.txt", FileSHA: "profile-sha", Bytes: int64(len(profile))},
+			{Path: "data/notes.md", BlobPath: "data/notes.md", FileSHA: "notes-sha", Bytes: int64(len(notes))},
+			{Path: "data/raw.bin", BlobPath: "data/raw.bin", FileSHA: "raw-sha", Bytes: int64(len(raw))},
+		},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(resp.Body)
+	for _, want := range []string{
+		`"message": "Hello from an uploaded file read by Starlark."`,
+		`"data_dir": [`,
+		`"notes.md"`,
+		`"profile.txt"`,
+		`"raw.bin"`,
+		`"has_notes": true`,
+		`"has_missing_file": false`,
+		`"raw_size": 6`,
+		`"raw_text": "QUACK\n"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("demo fs body = %s, want %s", body, want)
+		}
+	}
+}
+
 func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {
 	svc := NewService(ServiceOptions{
 		Repository: newRuntimeRepo(RouteMetadata{

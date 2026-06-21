@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quack Starlark FS Demo</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #f6f4ef;
+        color: #202124;
+      }
+
+      main {
+        width: min(920px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 40px 0;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(2rem, 5vw, 4rem);
+        line-height: 1;
+      }
+
+      p {
+        margin: 0 0 24px;
+        color: #4f5a5f;
+      }
+
+      pre {
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid #ccd3d1;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #172027;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #151817;
+          color: #eef3ef;
+        }
+
+        p {
+          color: #b7c0bb;
+        }
+
+        pre {
+          border-color: #39433f;
+          background: #0f1211;
+          color: #e7eee9;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Starlark FS Demo</h1>
+      <p>This page calls <code>/api</code>, where Starlark reads uploaded bundle files through the read-only <code>fs</code> module.</p>
+      <pre id="output">Loading...</pre>
+    </main>
+    <script>
+      fetch("/api")
+        .then((response) => response.json())
+        .then((data) => {
+          document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+        })
+        .catch((error) => {
+          document.getElementById("output").textContent = String(error);
+        });
+    </script>
+  </body>
+</html>
