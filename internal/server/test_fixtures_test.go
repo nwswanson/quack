@@ -51,6 +51,7 @@ func (s fakeStorage) DeleteSiteVersion(ctx context.Context, siteSHA string, vers
 type fakeDatabase struct {
 	files                map[string]domain.UploadFileRecord
 	adminUser            domain.AdminUser
+	adminUsers           []domain.AdminUser
 	usersByToken         map[string]domain.AdminUser
 	sessions             map[string]domain.AdminUser
 	settings             domain.ServerSettings
@@ -175,11 +176,26 @@ func (db *fakeDatabase) DeleteAdminSession(ctx context.Context, token string) er
 }
 
 func (db *fakeDatabase) CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error) {
-	return domain.CreatedUser{
+	created := domain.CreatedUser{
 		User:     domain.AdminUser{ID: 99, Username: username, AdminPriv: adminPriv},
 		Password: "generated-password",
 		Token:    "generated-token",
-	}, nil
+	}
+	if db.adminUsers == nil && db.adminUser.ID > 0 {
+		db.adminUsers = []domain.AdminUser{db.adminUser}
+	}
+	db.adminUsers = append(db.adminUsers, created.User)
+	return created, nil
+}
+
+func (db *fakeDatabase) ListUsers(ctx context.Context) ([]domain.AdminUser, error) {
+	if db.adminUsers != nil {
+		return db.adminUsers, nil
+	}
+	if db.adminUser.ID > 0 {
+		return []domain.AdminUser{db.adminUser}, nil
+	}
+	return nil, nil
 }
 
 func (db *fakeDatabase) ListUserSites(ctx context.Context, userID int64) ([]domain.PublishedSite, error) {

@@ -87,11 +87,32 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if !strings.Contains(rootRec.Body.String(), "beta") || !strings.Contains(rootRec.Body.String(), "bob") {
 		t.Fatalf("body = %q, want beta by bob", rootRec.Body.String())
 	}
-	if !strings.Contains(rootRec.Body.String(), "Server Settings") {
-		t.Fatalf("body = %q, want server settings section", rootRec.Body.String())
+	if !strings.Contains(rootRec.Body.String(), `href="/users"`) || !strings.Contains(rootRec.Body.String(), `href="/settings"`) || !strings.Contains(rootRec.Body.String(), `href="/policy"`) {
+		t.Fatalf("body = %q, want admin navigation", rootRec.Body.String())
 	}
-	if !strings.Contains(rootRec.Body.String(), "Dynamic HTTP routes policy") {
-		t.Fatalf("body = %q, want dynamic HTTP routes policy control", rootRec.Body.String())
+
+	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	settingsReq.Host = "quack.example.com"
+	settingsReq.AddCookie(cookie)
+	settingsRec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(settingsRec, settingsReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d; body=%s", settingsRec.Code, http.StatusOK, settingsRec.Body.String())
+	}
+	if !strings.Contains(settingsRec.Body.String(), "Server Settings") || !strings.Contains(settingsRec.Body.String(), `aria-current="page">Server Settings`) {
+		t.Fatalf("body = %q, want server settings page", settingsRec.Body.String())
+	}
+
+	policyReq := httptest.NewRequest(http.MethodGet, "/policy", nil)
+	policyReq.Host = "quack.example.com"
+	policyReq.AddCookie(cookie)
+	policyRec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(policyRec, policyReq)
+	if policyRec.Code != http.StatusOK {
+		t.Fatalf("policy status = %d, want %d; body=%s", policyRec.Code, http.StatusOK, policyRec.Body.String())
+	}
+	if !strings.Contains(policyRec.Body.String(), "Policies") || !strings.Contains(policyRec.Body.String(), "Dynamic HTTP routes policy") {
+		t.Fatalf("body = %q, want policy page", policyRec.Body.String())
 	}
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
@@ -164,6 +185,11 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 			t.Fatalf("body = %q, want %q", body, want)
 		}
 	}
+	for _, want := range []string{"admin", "admin:*", "user"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %q, want users table with %q", body, want)
+		}
+	}
 }
 
 func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
@@ -226,7 +252,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
-	if got := rec.Header().Get("Location"); got != "/?message=Settings+saved." {
+	if got := rec.Header().Get("Location"); got != "/settings?message=Settings+saved." {
 		t.Fatalf("location = %q, want settings message redirect", got)
 	}
 	if db.settings.MaxUploadBytes != 1024 || db.settings.MaxUploadFiles != 12 {

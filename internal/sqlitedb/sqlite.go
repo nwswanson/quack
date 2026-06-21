@@ -332,6 +332,31 @@ func (d *Database) CreateUser(ctx context.Context, username string, adminPriv st
 	}, nil
 }
 
+func (d *Database) ListUsers(ctx context.Context) ([]domain.AdminUser, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT id, username, admin_priv
+		FROM users
+		ORDER BY username
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []domain.AdminUser
+	for rows.Next() {
+		var user domain.AdminUser
+		if err := rows.Scan(&user.ID, &user.Username, &user.AdminPriv); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list users rows: %w", err)
+	}
+	return users, nil
+}
+
 func (d *Database) ListUserSites(ctx context.Context, userID int64) ([]domain.PublishedSite, error) {
 	return d.listPublishedSites(ctx, userID, false)
 }

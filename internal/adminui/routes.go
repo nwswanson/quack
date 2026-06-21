@@ -30,6 +30,7 @@ var adminTemplates = template.Must(template.ParseFS(templateFS, "templates/*.htm
 type UserRepository interface {
 	AuthenticateAdmin(ctx context.Context, username string, password string) (domain.AdminUser, bool, error)
 	CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error)
+	ListUsers(ctx context.Context) ([]domain.AdminUser, error)
 }
 
 type SessionRepository interface {
@@ -75,7 +76,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleAdminLoginPage)
 	mux.HandleFunc("/login", h.handleAdminLogin)
 	mux.HandleFunc("/logout", h.handleAdminLogout)
-	mux.HandleFunc("/users", h.handleAdminCreateUser)
+	mux.HandleFunc("/users", h.handleAdminUsers)
 	mux.HandleFunc("/settings", h.handleAdminSettings)
 	mux.HandleFunc("/policy", h.handleAdminPolicy)
 }
@@ -98,7 +99,7 @@ func (h Handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 	data := adminPageData{User: user}
 	if loggedIn {
-		data, err = h.adminPageData(r, user)
+		data, err = h.adminPageData(r, user, adminPageSites)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -168,11 +169,41 @@ func (h Handler) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (h Handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+func (h Handler) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.handleAdminUsersPage(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	h.handleAdminCreateUser(w, r)
+}
+
+func (h Handler) handleAdminUsersPage(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !access.Can(user, "users.create") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := h.adminPageData(r, user, adminPageUsers)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin users page data failed", "username", user.Username, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
+	h.renderAdminPage(w, r, data)
+}
+
+func (h Handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAdminSameOrigin(w, r) {
 		return
 	}
@@ -187,17 +218,17 @@ func (h Handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.renderAdminPageWithMessage(w, r, user, "Unable to read user form.", "")
+		h.renderAdminPageWithMessage(w, r, user, adminPageUsers, "Unable to read user form.", "")
 		return
 	}
 	created, err := h.users.CreateUser(r.Context(), r.Form.Get("username"), r.Form.Get("admin_priv"))
 	if err != nil {
 		slog.WarnContext(r.Context(), "create admin user failed", "username", r.Form.Get("username"), "error", err)
-		h.renderAdminPageWithMessage(w, r, user, err.Error(), "")
+		h.renderAdminPageWithMessage(w, r, user, adminPageUsers, err.Error(), "")
 		return
 	}
 	slog.WarnContext(r.Context(), "admin user created", "created_username", created.User.Username, "created_by", user.Username)
-	data, err := h.adminPageData(r, user)
+	data, err := h.adminPageData(r, user, adminPageUsers)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -209,6 +240,10 @@ func (h Handler) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.handleAdminSettingsPage(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -227,12 +262,12 @@ func (h Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		redirectAdminMessage(w, r, "error", "Unable to read settings form.")
+		redirectAdminMessage(w, r, "/settings", "error", "Unable to read settings form.")
 		return
 	}
 	settings, err := parseServerSettingsForm(r)
 	if err != nil {
-		redirectAdminMessage(w, r, "error", err.Error())
+		redirectAdminMessage(w, r, "/settings", "error", err.Error())
 		return
 	}
 	if err := h.write.SaveServerSettings(r.Context(), settings); err != nil {
@@ -246,10 +281,36 @@ func (h Handler) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.WarnContext(r.Context(), "server settings updated", "username", user.Username, "max_upload_bytes", settings.MaxUploadBytes, "max_upload_files", settings.MaxUploadFiles, "max_retained_versions", settings.MaxRetainedVersions, "log_level", settings.LogLevel)
-	redirectAdminMessage(w, r, "message", "Settings saved.")
+	redirectAdminMessage(w, r, "/settings", "message", "Settings saved.")
+}
+
+func (h Handler) handleAdminSettingsPage(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !access.Can(user, "server.settings.edit") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := h.adminPageData(r, user, adminPageSettings)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin settings page data failed", "username", user.Username, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
+	h.renderAdminPage(w, r, data)
 }
 
 func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.handleAdminPolicyPage(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -268,17 +329,17 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		redirectAdminMessage(w, r, "error", "Unable to read policy form.")
+		redirectAdminMessage(w, r, "/policy", "error", "Unable to read policy form.")
 		return
 	}
 	databasePolicy, ok := policyFromForm(r, appsettings.SettingDatabaseFeature, "database_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "error", "Database policy must be inherit, allow, or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Database policy must be inherit, allow, or deny.")
 		return
 	}
 	runtimeHTTPPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPFeature, "runtime_http_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "error", "Dynamic HTTP routes policy must be inherit, allow, or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Dynamic HTTP routes policy must be inherit, allow, or deny.")
 		return
 	}
 	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy} {
@@ -293,7 +354,29 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	redirectAdminMessage(w, r, "message", "Policy saved.")
+	redirectAdminMessage(w, r, "/policy", "message", "Policy saved.")
+}
+
+func (h Handler) handleAdminPolicyPage(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !access.Can(user, "policy.edit") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := h.adminPageData(r, user, adminPagePolicy)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin policy page data failed", "username", user.Username, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
+	h.renderAdminPage(w, r, data)
 }
 
 func policyFromForm(r *http.Request, key string, prefix string, userID int64) (domain.PolicyRecord, bool) {
@@ -312,11 +395,28 @@ func policyFromForm(r *http.Request, key string, prefix string, userID int64) (d
 	}, true
 }
 
+const (
+	adminPageSites    = "sites"
+	adminPageUsers    = "users"
+	adminPageSettings = "settings"
+	adminPagePolicy   = "policy"
+)
+
+type adminNavItem struct {
+	Key   string
+	Label string
+	Path  string
+}
+
 type adminPageData struct {
 	User              domain.AdminUser
+	Page              string
+	Title             string
+	Nav               []adminNavItem
 	Error             string
 	Message           string
 	Sites             []domain.PublishedSite
+	Users             []domain.AdminUser
 	Settings          domain.ServerSettings
 	DatabasePolicy    domain.PolicyRecord
 	RuntimeHTTPPolicy domain.PolicyRecord
@@ -335,49 +435,93 @@ func (d adminPageData) HasCreatedUser() bool {
 	return d.CreatedUser.User.ID > 0
 }
 
+func (d adminPageData) ActivePage(page string) bool {
+	return d.Page == page
+}
+
 func (d adminPageData) AllowedHostsValue() string {
 	return appsettings.FormatAllowedHosts(d.Settings.AllowedHosts)
 }
 
-func (h Handler) adminPageData(r *http.Request, user domain.AdminUser) (adminPageData, error) {
-	siteList, err := h.releases.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
-	if err != nil {
-		return adminPageData{}, err
+func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page string) (adminPageData, error) {
+	data := adminPageData{
+		User:  user,
+		Page:  page,
+		Title: adminPageTitle(page),
+		Nav:   adminNav(user),
 	}
-	settings, err := h.read.ServerSettings(r.Context())
-	if err != nil {
-		return adminPageData{}, err
-	}
-	for i := range siteList {
-		decision, err := h.read.CurrentSiteServingStatus(r.Context(), siteList[i].Site)
+	switch page {
+	case adminPageSites:
+		siteList, err := h.releases.ListPublishedSites(r.Context(), user.ID, user.IsAdmin())
 		if err != nil {
 			return adminPageData{}, err
 		}
-		siteList[i].ServingStatus = decision.Status
-		if siteList[i].ServingStatus == "" {
-			siteList[i].ServingStatus = domain.SiteServingActive
+		for i := range siteList {
+			decision, err := h.read.CurrentSiteServingStatus(r.Context(), siteList[i].Site)
+			if err != nil {
+				return adminPageData{}, err
+			}
+			siteList[i].ServingStatus = decision.Status
+			if siteList[i].ServingStatus == "" {
+				siteList[i].ServingStatus = domain.SiteServingActive
+			}
+			siteList[i].PolicyReason = decision.Reason
 		}
-		siteList[i].PolicyReason = decision.Reason
+		data.Sites = siteList
+	case adminPageUsers:
+		users, err := h.users.ListUsers(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
+		data.Users = users
+	case adminPageSettings:
+		settings, err := h.read.ServerSettings(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
+		data.Settings = settings
+	case adminPagePolicy:
+		databasePolicy, err := h.read.SystemDatabasePolicy(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
+		runtimeHTTPPolicy, err := h.read.SystemRuntimeHTTPPolicy(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
+		data.DatabasePolicy = databasePolicy
+		data.RuntimeHTTPPolicy = runtimeHTTPPolicy
 	}
-	databasePolicy, err := h.read.SystemDatabasePolicy(r.Context())
-	if err != nil {
-		return adminPageData{}, err
-	}
-	runtimeHTTPPolicy, err := h.read.SystemRuntimeHTTPPolicy(r.Context())
-	if err != nil {
-		return adminPageData{}, err
-	}
-	return adminPageData{
-		User:              user,
-		Sites:             siteList,
-		Settings:          settings,
-		DatabasePolicy:    databasePolicy,
-		RuntimeHTTPPolicy: runtimeHTTPPolicy,
-	}, nil
+	return data, nil
 }
 
-func (h Handler) renderAdminPageWithMessage(w http.ResponseWriter, r *http.Request, user domain.AdminUser, errorMessage string, message string) {
-	data, err := h.adminPageData(r, user)
+func adminPageTitle(page string) string {
+	switch page {
+	case adminPageUsers:
+		return "Users"
+	case adminPageSettings:
+		return "Server Settings"
+	case adminPagePolicy:
+		return "Policies"
+	default:
+		return "Published Sites"
+	}
+}
+
+func adminNav(user domain.AdminUser) []adminNavItem {
+	nav := []adminNavItem{{Key: adminPageSites, Label: "Published Sites", Path: "/"}}
+	if user.IsAdmin() {
+		nav = append(nav,
+			adminNavItem{Key: adminPageUsers, Label: "Users", Path: "/users"},
+			adminNavItem{Key: adminPageSettings, Label: "Server Settings", Path: "/settings"},
+			adminNavItem{Key: adminPagePolicy, Label: "Policies", Path: "/policy"},
+		)
+	}
+	return nav
+}
+
+func (h Handler) renderAdminPageWithMessage(w http.ResponseWriter, r *http.Request, user domain.AdminUser, page string, errorMessage string, message string) {
+	data, err := h.adminPageData(r, user, page)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "load admin page data failed", "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -396,10 +540,10 @@ func (h Handler) renderAdminPage(w http.ResponseWriter, r *http.Request, data ad
 	}
 }
 
-func redirectAdminMessage(w http.ResponseWriter, r *http.Request, key string, message string) {
+func redirectAdminMessage(w http.ResponseWriter, r *http.Request, path string, key string, message string) {
 	values := url.Values{}
 	values.Set(key, message)
-	http.Redirect(w, r, "/?"+values.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, path+"?"+values.Encode(), http.StatusSeeOther)
 }
 
 func (h Handler) currentAdminUser(r *http.Request) (domain.AdminUser, bool, error) {

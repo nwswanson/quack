@@ -12,17 +12,73 @@
     body {
       margin: 0;
       min-height: 100vh;
-      padding: 32px 0;
       background: Canvas;
       color: CanvasText;
     }
-    main {
-      width: min(100% - 32px, 960px);
+    header {
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
+      background: color-mix(in srgb, CanvasText 3%, Canvas);
+    }
+    .header-inner {
+      width: min(100% - 32px, 1100px);
       margin: 0 auto;
+      padding: 18px 0 12px;
+    }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .brand {
+      display: grid;
+      gap: 2px;
+    }
+    .brand-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: CanvasText;
+      text-decoration: none;
+    }
+    .session {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: color-mix(in srgb, CanvasText 72%, Canvas);
+      font-size: 14px;
+    }
+    nav {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+    }
+    nav a {
+      padding: 9px 12px;
+      border-radius: 6px;
+      color: color-mix(in srgb, CanvasText 78%, Canvas);
+      text-decoration: none;
+      white-space: nowrap;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    nav a[aria-current="page"] {
+      background: color-mix(in srgb, #1677c8 18%, Canvas);
+      color: CanvasText;
+    }
+    main {
+      width: min(100% - 32px, 1100px);
+      margin: 0 auto;
+      padding: 28px 0 40px;
     }
     h1 {
-      margin: 0 0 8px;
+      margin: 0 0 20px;
       font-size: 28px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 20px;
       letter-spacing: 0;
     }
     p {
@@ -34,8 +90,20 @@
       gap: 14px;
     }
     section {
-      padding: 20px 0;
-      border-top: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
+      padding: 0;
+    }
+    section + section {
+      margin-top: 28px;
+    }
+    .panel {
+      display: grid;
+      gap: 16px;
+      max-width: 720px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      border-radius: 8px;
     }
     table {
       width: 100%;
@@ -46,6 +114,11 @@
       padding: 10px 8px;
       border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
       text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
     }
     code {
       word-break: break-all;
@@ -56,7 +129,7 @@
       font-size: 14px;
       font-weight: 600;
     }
-    input, textarea {
+    input, textarea, select {
       box-sizing: border-box;
       width: 100%;
       padding: 10px 12px;
@@ -80,6 +153,15 @@
       color: white;
       cursor: pointer;
     }
+    .logout-button {
+      padding: 7px 10px;
+      font-size: 14px;
+      background: color-mix(in srgb, CanvasText 10%, Canvas);
+      color: CanvasText;
+    }
+    .inline-form {
+      display: block;
+    }
     .error {
       margin: 0 0 14px;
       color: #b42318;
@@ -90,61 +172,123 @@
       color: #067647;
       font-weight: 600;
     }
+    @media (max-width: 640px) {
+      .masthead {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .session {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+    }
   </style>
 </head>
 <body>
+  <header>
+    <div class="header-inner">
+      <div class="masthead">
+        <div class="brand">
+          <a class="brand-title" href="/">Quack Admin</a>
+        </div>
+        {{if .LoggedIn}}
+          <div class="session">
+            <span>Signed in as {{.User.Username}}</span>
+            <form class="inline-form" method="post" action="/logout">
+              <button class="logout-button" type="submit">Log out</button>
+            </form>
+          </div>
+        {{end}}
+      </div>
+      {{if .LoggedIn}}
+        <nav aria-label="Admin sections">
+          {{range .Nav}}
+            <a href="{{.Path}}" {{if $.ActivePage .Key}}aria-current="page"{{end}}>{{.Label}}</a>
+          {{end}}
+        </nav>
+      {{end}}
+    </div>
+  </header>
+
   <main>
-    <h1>Quack Admin</h1>
     {{if .LoggedIn}}
-      <p>Signed in as {{.User.Username}}.</p>
-      <form method="post" action="/logout">
-        <button type="submit">Log out</button>
-      </form>
+      <h1>{{.Title}}</h1>
       {{if .Message}}<p class="message">{{.Message}}</p>{{end}}
       {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 
-      <section>
-        <h2>Published Sites</h2>
+      {{if .ActivePage "sites"}}
+        <section>
         {{if .Sites}}
-          <table>
-            <thead>
-              <tr>
-                <th>Site</th>
-                <th>Published by</th>
-                <th>Current</th>
-                <th>Versions</th>
-                <th>Files</th>
-                <th>Bytes</th>
-                <th>Live</th>
-                <th>Serving status</th>
-                <th>Policy reason</th>
-                <th>Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {{range .Sites}}
+          <div class="table-wrap">
+            <table>
+              <thead>
                 <tr>
-                  <td>{{.Site}}</td>
-                  <td>{{if .PublishedBy}}{{.PublishedBy}}{{else}}-{{end}}</td>
-                  <td>{{.CurrentVersion}}</td>
-                  <td>{{.VersionCount}}</td>
-                  <td>{{.FileCount}}</td>
-                  <td>{{.ByteCount}}</td>
-                  <td>{{if .LiveState}}{{.LiveState}}{{else}}-{{end}}</td>
-                  <td>{{.ServingStatus}}</td>
-                  <td>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</td>
-                  <td>{{.UpdatedAt}}</td>
+                  <th>Site</th>
+                  <th>Published by</th>
+                  <th>Current</th>
+                  <th>Versions</th>
+                  <th>Files</th>
+                  <th>Bytes</th>
+                  <th>Live</th>
+                  <th>Serving status</th>
+                  <th>Policy reason</th>
+                  <th>Updated</th>
                 </tr>
-              {{end}}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {{range .Sites}}
+                  <tr>
+                    <td>{{.Site}}</td>
+                    <td>{{if .PublishedBy}}{{.PublishedBy}}{{else}}-{{end}}</td>
+                    <td>{{.CurrentVersion}}</td>
+                    <td>{{.VersionCount}}</td>
+                    <td>{{.FileCount}}</td>
+                    <td>{{.ByteCount}}</td>
+                    <td>{{if .LiveState}}{{.LiveState}}{{else}}-{{end}}</td>
+                    <td>{{.ServingStatus}}</td>
+                    <td>{{if .PolicyReason}}{{.PolicyReason}}{{else}}-{{end}}</td>
+                    <td>{{.UpdatedAt}}</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
         {{else}}
           <p>No published sites yet.</p>
         {{end}}
-      </section>
+        </section>
+      {{end}}
 
-      {{if .IsAdmin}}
+      {{if and .IsAdmin (.ActivePage "users")}}
         <section>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Username</th>
+                  <th>Permission</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range .Users}}
+                  <tr>
+                    <td>{{.ID}}</td>
+                    <td>{{.Username}}</td>
+                    <td>{{.AdminPriv}}</td>
+                  </tr>
+                {{else}}
+                  <tr>
+                    <td colspan="3">No users yet.</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
           <h2>Create User</h2>
           {{if .HasCreatedUser}}
             <p class="message">Created {{.CreatedUser.User.Username}}. Save these credentials now.</p>
@@ -164,9 +308,10 @@
             <button type="submit">Create user</button>
           </form>
         </section>
+      {{end}}
 
-        <section>
-          <h2>Server Settings</h2>
+      {{if and .IsAdmin (.ActivePage "settings")}}
+        <section class="panel">
           <form method="post" action="/settings">
             <label>
               Max upload bytes
@@ -195,9 +340,10 @@
             <button type="submit">Save settings</button>
           </form>
         </section>
+      {{end}}
 
-        <section>
-          <h2>Policy</h2>
+      {{if and .IsAdmin (.ActivePage "policy")}}
+        <section class="panel">
           <form method="post" action="/policy">
             <label>
               Database feature policy
@@ -228,6 +374,7 @@
         </section>
       {{end}}
     {{else}}
+      <h1>Quack Admin</h1>
       <p>Sign in to manage Quack.</p>
       {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
       <form method="post" action="/login">

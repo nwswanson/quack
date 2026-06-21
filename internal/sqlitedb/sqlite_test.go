@@ -643,6 +643,13 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if !ok || user.Username != "alice" {
 		t.Fatalf("token user = (%#v, %v), want alice", user, ok)
 	}
+	users, err := db.ListUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].Username != "alice" || users[0].AdminPriv != "user" {
+		t.Fatalf("users = %#v, want alice user", users)
+	}
 
 	if err := db.InitializeServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 123, MaxUploadFiles: 4}); err != nil {
 		t.Fatal(err)
