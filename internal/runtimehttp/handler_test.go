@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	appruntime "quack/internal/runtime"
 )
@@ -166,6 +168,85 @@ func TestSocketManagerEnforcesConnectionLimits(t *testing.T) {
 	manager.unregister(first)
 }
 
+func TestSocketManagerClosesConnectionWhenSendQueueIsFull(t *testing.T) {
+	manager := newSocketManager()
+	connID, reserved, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil || !reserved {
+		t.Fatalf("reserve = (%q, %v, %v), want success", connID, reserved, err)
+	}
+	conn := newBlockingConn()
+	manager.attach(connID, conn)
+
+	var sendErr error
+	for i := 0; i < websocketSendQueueDepth+2; i++ {
+		sendErr = manager.send(connID, []byte("slow"))
+		if errors.Is(sendErr, appruntime.ErrBackpressure) {
+			break
+		}
+	}
+	if !errors.Is(sendErr, appruntime.ErrBackpressure) {
+		t.Fatalf("send error = %v, want back pressure", sendErr)
+	}
+	if !conn.waitClosed(time.Second) {
+		t.Fatal("slow connection was not closed after queue overflow")
+	}
+	manager.mu.Lock()
+	_, stillRegistered := manager.connections[connID]
+	manager.mu.Unlock()
+	if stillRegistered {
+		t.Fatal("slow connection remained registered after queue overflow")
+	}
+}
+
+func TestSocketManagerBroadcastDoesNotBlockOnSlowSubscriber(t *testing.T) {
+	manager := newSocketManager()
+	slowID, _, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slowConn := newBlockingConn()
+	manager.attach(slowID, slowConn)
+	manager.subscribe(slowID, "topic")
+	for i := 0; i < websocketSendQueueDepth+2; i++ {
+		if errors.Is(manager.send(slowID, []byte("fill")), appruntime.ErrBackpressure) {
+			break
+		}
+	}
+
+	fastID, _, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	manager.attach(fastID, serverConn)
+	manager.subscribe(fastID, "topic")
+
+	manager.broadcast("topic", []byte("fast"))
+
+	frameCh := make(chan websocketFrame, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		frame, err := readServerFrame(bufio.NewReader(clientConn))
+		if err != nil {
+			errCh <- err
+			return
+		}
+		frameCh <- frame
+	}()
+	select {
+	case frame := <-frameCh:
+		if frame.opcode != websocketOpcodeText || string(frame.payload) != "fast" {
+			t.Fatalf("frame = %#v payload=%q, want fast broadcast", frame, frame.payload)
+		}
+	case err := <-errCh:
+		t.Fatal(err)
+	case <-time.After(time.Second):
+		t.Fatal("fast subscriber did not receive broadcast")
+	}
+	manager.unregister(fastID)
+}
+
 func websocketPipe(t *testing.T, handler Handler, req appruntime.WebSocketInvocationRequest) (net.Conn, *bufio.Reader, <-chan struct{}) {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
@@ -286,3 +367,52 @@ func (r *recordingRuntime) InvokeWebSocket(ctx context.Context, req appruntime.W
 func (r *recordingRuntime) PumpWebSockets(ctx context.Context) error {
 	return nil
 }
+
+type blockingConn struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newBlockingConn() *blockingConn {
+	return &blockingConn{closed: make(chan struct{})}
+}
+
+func (c *blockingConn) Read([]byte) (int, error) {
+	<-c.closed
+	return 0, net.ErrClosed
+}
+
+func (c *blockingConn) Write([]byte) (int, error) {
+	<-c.closed
+	return 0, net.ErrClosed
+}
+
+func (c *blockingConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
+
+func (c *blockingConn) LocalAddr() net.Addr { return fakeAddr("local") }
+
+func (c *blockingConn) RemoteAddr() net.Addr { return fakeAddr("remote") }
+
+func (c *blockingConn) SetDeadline(time.Time) error { return nil }
+
+func (c *blockingConn) SetReadDeadline(time.Time) error { return nil }
+
+func (c *blockingConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *blockingConn) waitClosed(timeout time.Duration) bool {
+	select {
+	case <-c.closed:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+type fakeAddr string
+
+func (a fakeAddr) Network() string { return string(a) }
+
+func (a fakeAddr) String() string { return string(a) }

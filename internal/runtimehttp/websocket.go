@@ -15,13 +15,19 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"quack/internal/domain"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
 
-const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+const (
+	websocketGUID               = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	websocketSendQueueDepth     = 64
+	websocketWriteTimeout       = 5 * time.Second
+	websocketBackpressureStatus = 1013
+)
 
 func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req appruntime.WebSocketInvocationRequest) {
 	if r.Method != http.MethodGet {
@@ -100,6 +106,8 @@ func (h Handler) writeWebSocketRuntimeError(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "runtime concurrency limit reached", http.StatusTooManyRequests)
 	case errors.Is(err, appruntime.ErrConnectionLimit):
 		http.Error(w, "runtime websocket connection limit reached", http.StatusTooManyRequests)
+	case errors.Is(err, appruntime.ErrBackpressure):
+		http.Error(w, "runtime websocket back pressure limit reached", http.StatusTooManyRequests)
 	case errors.Is(err, appruntime.ErrRouteNotFound):
 		http.NotFound(w, r)
 	case errors.Is(err, appruntime.ErrInvocationFailure):
@@ -171,11 +179,7 @@ func (h Handler) applyEffects(ctx context.Context, effects []appruntime.WebSocke
 				return err
 			}
 		case appruntime.WebSocketEffectBroadcast:
-			for _, connID := range h.sockets.subscribers(effect.Topic) {
-				if err := h.sockets.send(connID, effect.Payload); err != nil {
-					return err
-				}
-			}
+			h.sockets.broadcast(effect.Topic, effect.Payload)
 		case appruntime.WebSocketEffectSubscribe:
 			h.sockets.subscribe(effect.ConnID, effect.Topic)
 		case appruntime.WebSocketEffectUnsubscribe:
@@ -212,10 +216,12 @@ func (h Handler) dispatchEvent(ctx context.Context, topic string, payload []byte
 			Event: appruntime.WebSocketServerEvent{Topic: topic, Payload: payload},
 		})
 		if err != nil {
-			return err
+			_ = h.sockets.close(snapshot.id, 1011, "runtime event invocation failed")
+			continue
 		}
 		if err := h.applyEffects(ctx, effects); err != nil {
-			return err
+			_ = h.sockets.close(snapshot.id, 1011, "runtime event effect failed")
+			continue
 		}
 	}
 	return nil
@@ -263,14 +269,22 @@ type socketManager struct {
 }
 
 type socketConnection struct {
-	id      string
-	site    string
-	version int64
-	route   string
-	query   string
-	headers map[string][]string
-	conn    net.Conn
-	writeMu sync.Mutex
+	id        string
+	site      string
+	version   int64
+	route     string
+	query     string
+	headers   map[string][]string
+	conn      net.Conn
+	outbound  chan outboundFrame
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+type outboundFrame struct {
+	opcode     byte
+	payload    []byte
+	closeAfter bool
 }
 
 type socketSnapshot struct {
@@ -304,7 +318,11 @@ func (m *socketManager) reserve(site string, version int64, route string, query 
 	for m.connections[id] != nil {
 		id = randomConnectionID()
 	}
-	m.connections[id] = &socketConnection{id: id, site: site, version: version, route: route, query: query, headers: cloneHeaders(headers)}
+	m.connections[id] = &socketConnection{
+		id: id, site: site, version: version, route: route, query: query, headers: cloneHeaders(headers),
+		outbound: make(chan outboundFrame, websocketSendQueueDepth),
+		done:     make(chan struct{}),
+	}
 	m.bySite[site]++
 	return id, true, nil
 }
@@ -314,6 +332,7 @@ func (m *socketManager) attach(connID string, conn net.Conn) {
 	defer m.mu.Unlock()
 	if c := m.connections[connID]; c != nil {
 		c.conn = conn
+		go m.writeLoop(c)
 	}
 }
 
@@ -336,8 +355,13 @@ func (m *socketManager) unregister(connID string) {
 		}
 	}
 	m.mu.Unlock()
-	if conn != nil && conn.conn != nil {
-		_ = conn.conn.Close()
+	if conn != nil {
+		conn.closeOnce.Do(func() {
+			close(conn.done)
+			if conn.conn != nil {
+				_ = conn.conn.Close()
+			}
+		})
 	}
 }
 
@@ -415,30 +439,64 @@ func (m *socketManager) sendControl(connID string, opcode byte, payload []byte) 
 }
 
 func (m *socketManager) close(connID string, code int, reason string) error {
-	m.mu.Lock()
-	conn := m.connections[connID]
-	m.mu.Unlock()
-	if conn == nil || conn.conn == nil {
-		return nil
+	err := m.enqueueFrame(connID, outboundFrame{opcode: websocketOpcodeClose, payload: closePayload(code, reason), closeAfter: true})
+	if errors.Is(err, appruntime.ErrBackpressure) {
+		m.unregister(connID)
 	}
-	payload := closePayload(code, reason)
-	conn.writeMu.Lock()
-	err := writeFrame(conn.conn, websocketOpcodeClose, payload)
-	conn.writeMu.Unlock()
-	_ = conn.conn.Close()
 	return err
 }
 
 func (m *socketManager) sendFrame(connID string, opcode byte, payload []byte) error {
+	return m.enqueueFrame(connID, outboundFrame{opcode: opcode, payload: append([]byte(nil), payload...)})
+}
+
+func (m *socketManager) broadcast(topic string, payload []byte) {
+	for _, connID := range m.subscribers(topic) {
+		_ = m.send(connID, payload)
+	}
+}
+
+func (m *socketManager) enqueueFrame(connID string, frame outboundFrame) error {
 	m.mu.Lock()
 	conn := m.connections[connID]
 	m.mu.Unlock()
 	if conn == nil || conn.conn == nil {
 		return nil
 	}
-	conn.writeMu.Lock()
-	defer conn.writeMu.Unlock()
-	return writeFrame(conn.conn, opcode, payload)
+	select {
+	case conn.outbound <- frame:
+		return nil
+	case <-conn.done:
+		return nil
+	default:
+		m.unregister(connID)
+		return appruntime.ErrBackpressure
+	}
+}
+
+func (m *socketManager) writeLoop(conn *socketConnection) {
+	for {
+		select {
+		case frame := <-conn.outbound:
+			if conn.conn == nil {
+				continue
+			}
+			if err := conn.conn.SetWriteDeadline(time.Now().Add(websocketWriteTimeout)); err != nil {
+				m.unregister(conn.id)
+				return
+			}
+			if err := writeFrame(conn.conn, frame.opcode, frame.payload); err != nil {
+				m.unregister(conn.id)
+				return
+			}
+			if frame.closeAfter {
+				m.unregister(conn.id)
+				return
+			}
+		case <-conn.done:
+			return
+		}
+	}
 }
 
 func cloneHeaders(headers map[string][]string) map[string][]string {

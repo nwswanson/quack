@@ -19,6 +19,7 @@ var (
 	ErrTimeout           = errors.New("runtime execution timed out")
 	ErrConcurrencyLimit  = errors.New("runtime concurrency limit reached")
 	ErrConnectionLimit   = errors.New("runtime websocket connection limit reached")
+	ErrBackpressure      = errors.New("runtime websocket back pressure limit reached")
 	ErrInvalidRuntime    = errors.New("invalid runtime configuration")
 	ErrInvocationFailure = errors.New("runtime invocation failed")
 )
