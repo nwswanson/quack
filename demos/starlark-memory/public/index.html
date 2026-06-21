@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quack Memory Store Demo</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Starlark runtime</p>
+          <h1>Memory Store Demo</h1>
+        </div>
+        <canvas id="usageCanvas" width="260" height="84" aria-label="Memory usage meter"></canvas>
+      </section>
+
+      <section class="status">
+        <div>
+          <span>Usage</span>
+          <strong id="usageValue">0 B</strong>
+        </div>
+        <div>
+          <span>Quota</span>
+          <strong id="quotaValue">0 B</strong>
+        </div>
+        <div>
+          <span>Keys</span>
+          <strong id="keysValue">0</strong>
+        </div>
+        <button id="refreshAll" type="button">Refresh</button>
+        <button id="clearAll" class="danger" type="button">Clear site memory</button>
+      </section>
+
+      <section class="grid">
+        <article class="panel" data-api="/api/kv">
+          <header>
+            <h2>Key Value</h2>
+            <code>get set delete</code>
+          </header>
+          <label>
+            Value
+            <input id="kvValue" value="hello from the browser">
+          </label>
+          <div class="actions">
+            <button data-action="kv:set">Set string</button>
+            <button data-action="kv:set_object">Set object</button>
+            <button data-action="kv:state">Get</button>
+            <button data-action="kv:delete">Delete</button>
+          </div>
+          <pre id="kvOut"></pre>
+        </article>
+
+        <article class="panel" data-api="/api/list">
+          <header>
+            <h2>List</h2>
+            <code>push pop len range delete</code>
+          </header>
+          <label>
+            Item
+            <input id="listValue" value="launch">
+          </label>
+          <div class="actions">
+            <button data-action="list:push_left">Push left</button>
+            <button data-action="list:push_right">Push right</button>
+            <button data-action="list:pop_left">Pop left</button>
+            <button data-action="list:pop_right">Pop right</button>
+            <button data-action="list:state">Range</button>
+            <button data-action="list:delete">Delete</button>
+          </div>
+          <pre id="listOut"></pre>
+        </article>
+
+        <article class="panel" data-api="/api/set">
+          <header>
+            <h2>Set</h2>
+            <code>add remove members contains delete</code>
+          </header>
+          <label>
+            Member
+            <input id="setValue" value="demo">
+          </label>
+          <div class="actions">
+            <button data-action="set:add">Add</button>
+            <button data-action="set:remove">Remove</button>
+            <button data-action="set:contains">Contains</button>
+            <button data-action="set:state">Members</button>
+            <button data-action="set:delete">Delete</button>
+          </div>
+          <pre id="setOut"></pre>
+        </article>
+
+        <article class="panel" data-api="/api/zset">
+          <header>
+            <h2>Sorted Set</h2>
+            <code>zadd zremove zrange zscore delete</code>
+          </header>
+          <div class="split">
+            <label>
+              Member
+              <input id="zsetValue" value="Ada">
+            </label>
+            <label>
+              Score
+              <select id="zsetScore">
+                <option>1</option>
+                <option>2</option>
+                <option>3</option>
+                <option>4</option>
+                <option>5</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button data-action="zset:add">Add/update</button>
+            <button data-action="zset:remove">Remove</button>
+            <button data-action="zset:score">Score</button>
+            <button data-action="zset:state">Range</button>
+            <button data-action="zset:delete">Delete</button>
+          </div>
+          <pre id="zsetOut"></pre>
+        </article>
+
+        <article class="panel" data-api="/api/counter">
+          <header>
+            <h2>Counter</h2>
+            <code>incr decr get delete</code>
+          </header>
+          <label>
+            Delta
+            <select id="counterDelta">
+              <option>1</option>
+              <option>5</option>
+              <option>10</option>
+              <option>25</option>
+            </select>
+          </label>
+          <div class="actions">
+            <button data-action="counter:incr">Increment</button>
+            <button data-action="counter:decr">Decrement</button>
+            <button data-action="counter:state">Get</button>
+            <button data-action="counter:delete">Delete</button>
+          </div>
+          <pre id="counterOut"></pre>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Everything Stored</h2>
+            <code>keys items usage quota clear</code>
+          </header>
+          <pre id="metaOut"></pre>
+        </article>
+      </section>
+    </main>
+
+    <script src="/app.a1d9sp.js"></script>
+  </body>
+</html>

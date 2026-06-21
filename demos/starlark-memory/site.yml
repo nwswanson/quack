@@ -1,0 +1,34 @@
+routes:
+  - path: /
+    kind: static
+    root: public
+  - path: /api/meta
+    kind: http
+    runtime: starlark
+    entrypoint: api/meta.star
+    methods: [GET, POST]
+  - path: /api/kv
+    kind: http
+    runtime: starlark
+    entrypoint: api/kv.star
+    methods: [GET, POST]
+  - path: /api/list
+    kind: http
+    runtime: starlark
+    entrypoint: api/list.star
+    methods: [GET, POST]
+  - path: /api/set
+    kind: http
+    runtime: starlark
+    entrypoint: api/set.star
+    methods: [GET, POST]
+  - path: /api/zset
+    kind: http
+    runtime: starlark
+    entrypoint: api/zset.star
+    methods: [GET, POST]
+  - path: /api/counter
+    kind: http
+    runtime: starlark
+    entrypoint: api/counter.star
+    methods: [GET, POST]
