@@ -1,208 +1,1823 @@
 # Quack
-![Duck](duck.png)
-Quack is a tiny publishing layer for AI-made tools, demos, dashboards, games, and static sites.
 
-The idea is simple: point Quack at a folder, give the site a name, and get something shareable back. No framework ceremony, no deployment pipeline, no project-shaped infrastructure detour. Just upload the files and serve the current version by hostname.
+Quack is a small self-hosted app server for publishing weird little web things instantly.
 
-This first version is intentionally small. Quack is a Go CLI and HTTP server: the CLI streams a directory as a tar archive, and the server validates the upload, stores files as hashed blobs, tracks versions in SQLite, and serves the active version for each site name.
+Point Quack at a directory, give it a site name, and it serves the current version by hostname. That is the main trick: easy static file hosting with versioning, rollback, and a tiny control plane.
 
-The long-term shape is "Geocities plus Firebase for the AI era": a low-friction place where generated or hand-built web artifacts can become real, hosted things, with a small set of backend primitives added only when they earn their keep.
+But Quack is not only a static file server. It also includes a small Starlark runtime, a site-scoped memory module, and WebSockets. Together, those pieces make it possible to build small realtime apps without reaching for a full platform stack.
 
-## What Quack Does
+Think less “formal production platform with RBAC and policies” (It has RBAC and policies if you want to run it at your company for internal demo hosting) and more “a 🤡🚗 full of 🦆s with 🐝🔫s.” Quack is meant to carry a surprising amount of stuff for its size, especially for strange, fun, useful, half-serious apps that should exist before you talk yourself out of deploying them.
 
-- Uploads a local folder directly to a Quack server.
-- Stores uploaded files as SHA-256-addressed blobs.
-- Tracks site versions and metadata in SQLite.
-- Serves the latest version of a site based on the request hostname.
-- Supports per-user bearer tokens for upload and delete operations.
-- Keeps the core model boring on purpose: files in, URL out.
+## What Quack is for
 
-## Run the Server
+Quack is designed for:
 
-Start the server:
+* Static sites
+* Tiny tools
+* Vibe-coded apps
+* AI-generated web artifacts
+* Personal dashboards
+* Internal tools
+* Corporate intranet toys
+* Indie-web projects
+* Realtime demos
+* Small multiplayer or collaborative apps
+* Homelab services
+* Little pages that are too real for localhost but too small for Kubernetes
 
-```bash
-go run ./cmd/quack-server -root ./data -database ./quack.sqlite
+If your app builds to a directory of files, Quack can probably host it.
+
+If your app needs just a little backend behavior, Quack can probably provide enough: a Starlark handler, a bit of memory, and a WebSocket route.
+
+## Current status
+
+Quack is experimental.
+
+It works, but it is still young. Names may change. Some features are intentionally small. Some operational knobs are more conservative than convenient. That is deliberate: Quack is open source and self-hosted, not an internal tool hiding inside someone else’s trust boundary.
+
+Uploads need limits. Runtime code needs policies. Admin surfaces need protection. Boring boundaries matter.
+
+## Core features
+
+Quack gives you:
+
+* Directory uploads from a CLI
+* Static file hosting
+* Hostname-based site routing
+* `site.yml` route declarations
+* Versioned deployments
+* Rollback
+* Publish, unpublish, and delete controls
+* A browser admin panel
+* User and token management
+* Server-wide settings
+* Policy gates for dynamic features
+* Starlark HTTP routes
+* Site-scoped memory
+* WebSocket routes
+* Optional memory snapshot persistence
+* HTTP cache controls
+* Host allowlisting
+
+The default path is intentionally simple:
+
+```text
+local folder -> quack-cli deploy -> quack-server -> public hostname
 ```
 
-On first startup, the server bootstraps an admin user and logs generated credentials. Use the admin UI to create users; each user gets a bearer token for CLI uploads and deletes.
+## Quick start
 
-For compatibility with older clients or scripts, `UPLOAD_TOKEN` can still be set as an additional shared bearer token:
-
-```bash
-UPLOAD_TOKEN=dev-token go run ./cmd/quack-server -root ./data -database ./quack.sqlite
-```
-
-For local throwaway development only, you can explicitly disable upload/delete authentication:
+Start a server:
 
 ```bash
-go run ./cmd/quack-server -root ./data -database ./quack.sqlite --allow-unauthenticated
+mkdir -p ./quack-data/blobs ./quack-data/memory
+
+PUBLIC_ADDR=:8080 ADMIN_ADDR=:8081 quack-server \
+  -root ./quack-data/blobs \
+  -database ./quack-data/quack.sqlite \
+  -memory-dir ./quack-data/memory
 ```
 
-The admin UI and `/v1` API listen on `:8080` by default. Public site traffic listens on `:8081` by default. Set `ADMIN_ADDR` and `PUBLIC_ADDR` to override them. The legacy `ADDR` environment variable still overrides the admin/API listener when `ADMIN_ADDR` is unset.
+Quack starts two listeners:
 
-The server applies DB-backed upload limits by default:
+```text
+:8080  public site traffic
+:8081  admin panel and control API
+```
 
-- `max_upload_bytes`, default `536870912` bytes, or 512 MiB.
-- `max_upload_files`, default `10000` regular files.
-- `max_retained_versions`, default `0`, meaning retain all published versions.
+On first boot, Quack creates an admin user and prints the generated username, password, and token to the server logs. Save those credentials.
 
-Use `0` for either upload limit to disable that limit. Set `max_retained_versions` to a positive number to prune older published versions after each successful upload. These settings, along with `log_level`, are initialized from code defaults only when missing and can be edited in the admin UI.
-
-## Run the CLI
-
-Upload a folder to a running server:
+Then log in from the CLI:
 
 ```bash
-go run ./cmd/quack deploy ./some-folder example \
-  --token dev-token \
-  --serverURL http://localhost:8080
+quack-cli login \
+  --serverURL http://localhost:8081 \
+  --token <admin-or-user-token>
 ```
 
-The uploader streams a tar archive directly into the HTTP request. It does not write a temporary archive to disk.
+Deploy a folder:
 
-You can exclude local files before upload with a top-level `exclude` list in `site.yml` or `site.yaml`:
+```bash
+quack-cli deploy ./dist mysite
+```
+
+Or deploy without saved login config:
+
+```bash
+quack-cli deploy ./dist mysite \
+  --serverURL http://localhost:8081 \
+  --token <admin-or-user-token>
+```
+
+The site is then served from the public listener using the request hostname. For example:
+
+```text
+mysite.example.com -> site name "mysite"
+```
+
+The important deployment detail is that the CLI talks to the admin/control port, while browsers normally talk to the public port.
+
+## CLI
+
+The CLI binary is `quack-cli`.
+
+### Log in
+
+```bash
+quack-cli login
+```
+
+Or pass values directly:
+
+```bash
+quack-cli login \
+  --serverURL http://localhost:8081 \
+  --token <token>
+```
+
+Login stores config in:
+
+```text
+~/.config/quack.json
+```
+
+Set `QUACK_CONFIG` to use a different config path.
+
+### Deploy
+
+```bash
+quack-cli deploy <directory> [site name]
+```
+
+Examples:
+
+```bash
+quack-cli deploy ./dist mysite
+quack-cli deploy ./mysite
+```
+
+When the directory is a simple relative name, Quack can infer the site name from it. For paths like `.` or `./dist`, pass the site name explicitly.
+
+The deploy command streams a tar archive directly to the server. It does not write a temporary archive to disk.
+
+### List sites
+
+```bash
+quack-cli sites
+```
+
+List every site visible to an admin:
+
+```bash
+quack-cli sites --all
+```
+
+List sites for a specific user:
+
+```bash
+quack-cli sites <username>
+```
+
+### Revisions and rollback
+
+Show revisions:
+
+```bash
+quack-cli revisions mysite
+```
+
+Roll back to the previous version:
+
+```bash
+quack-cli rollback mysite
+```
+
+### Publish and unpublish
+
+Unpublish a site without deleting its stored revisions:
+
+```bash
+quack-cli unpublish mysite
+```
+
+Publish it again:
+
+```bash
+quack-cli publish mysite
+```
+
+### Default site
+
+Set a fallback static site:
+
+```bash
+quack-cli default-site homepage
+```
+
+Clear the default site:
+
+```bash
+quack-cli default-site --clear
+```
+
+Default-site fallback only applies when the requested site does not exist. It does not replace missing files on an existing site, and it does not currently apply to runtime routes.
+
+### Delete
+
+```bash
+quack-cli delete mysite
+```
+
+Delete removes the site and its stored data. Use unpublish when you only want to take a site offline temporarily.
+
+## Project layout
+
+A minimal Quack site can be just this:
+
+```text
+dist/
+  index.html
+  app.css
+  app.js
+```
+
+Deploy it:
+
+```bash
+quack-cli deploy ./dist mysite
+```
+
+For routing, add a `site.yml` or `site.yaml` at the root of the uploaded directory:
+
+```text
+my-app/
+  site.yml
+  public/
+    index.html
+    app.css
+    app.js
+  api/
+    app.star
+    socket.star
+```
+
+Example `site.yml`:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
+
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/socket.star
+```
+
+The manifest file is consumed during upload and is not served as a public file.
+
+## Routing
+
+Quack routes public requests by hostname first.
+
+For a request like this:
+
+```text
+https://foo.example.com/
+```
+
+Quack derives the site name:
+
+```text
+foo
+```
+
+Examples:
+
+```text
+foo.example.com       -> foo
+www.foo.example.com   -> foo
+foo:8080              -> foo
+foo.                  -> foo
+```
+
+The path does not normally select the site. Quack is host-centric.
+
+After Quack knows the site name, it looks at the current release for that site and chooses the best route. Route matching uses longest prefix wins.
+
+Example:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+
+  - path: /api/admin
+    kind: http
+    runtime: starlark
+    entrypoint: api/admin.star
+```
+
+Matching behavior:
+
+```text
+/                 -> / static route
+/about            -> / static route
+/api              -> /api HTTP route
+/api/users        -> /api HTTP route
+/api/admin        -> /api/admin HTTP route
+/api/admin/users  -> /api/admin HTTP route
+```
+
+### Static routes
+
+A static route exposes uploaded files.
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+```
+
+With `root: public`, this request:
+
+```text
+/
+```
+
+serves:
+
+```text
+public/index.html
+```
+
+And this request:
+
+```text
+/app.css
+```
+
+serves:
+
+```text
+public/app.css
+```
+
+The static root is not a URL prefix. It is the archive subtree that becomes the public root. So this request:
+
+```text
+/public/app.css
+```
+
+looks for:
+
+```text
+public/public/app.css
+```
+
+Static routes can also expose one exact file as a public alias:
+
+```yaml
+routes:
+  - path: /favicon.ico
+    kind: static
+    file: media/favicon.ico
+```
+
+That serves `media/favicon.ico` at `/favicon.ico`.
+
+### Directory indexes
+
+Quack follows ordinary directory-index behavior:
+
+```text
+/              -> index.html
+/index.html    -> index.html
+/docs/         -> docs/index.html
+```
+
+If `/docs` has no exact file but `docs/index.html` exists, Quack redirects to:
+
+```text
+/docs/
+```
+
+### HTTP routes
+
+HTTP routes run Starlark:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
+```
+
+The route path is a prefix. A request to `/api/todos` is handled by the `/api` route, and Starlark receives the route-relative path.
+
+### WebSocket routes
+
+WebSocket routes also use longest-prefix matching:
+
+```yaml
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/socket.star
+```
+
+A request to `/ws/room/123` matches the `/ws` route, and Starlark sees:
+
+```text
+/room/123
+```
+
+## Starlark HTTP routes
+
+Starlark routes are small server-side scripts. They are good for JSON endpoints, form handlers, counters, tiny APIs, and small app backends.
+
+A Starlark HTTP route defines `handle(req)`:
+
+```python
+def handle(req):
+    method, path, query, headers, body = req
+
+    count = memory.incr("counter:hits")
+
+    return (
+        200,
+        {"content-type": "application/json"},
+        json.encode({
+            "ok": True,
+            "path": path,
+            "hits": count,
+        }),
+    )
+```
+
+The request is a tuple:
+
+```python
+(method, path, query, headers, body)
+```
+
+Where:
+
+```text
+method   HTTP method
+path     route-relative path
+query    raw query string
+headers  sanitized request headers
+body     request body bytes
+```
+
+A handler returns:
+
+```python
+(status, headers, body)
+```
+
+Where:
+
+```text
+status   HTTP status code
+headers  response headers
+body     string, bytes, or None
+```
+
+Quack filters sensitive and hop-by-hop headers at the runtime boundary. Public requests do not hand raw cookies, authorization headers, forwarding headers, or transport headers directly to Starlark.
+
+### Available Starlark modules
+
+HTTP and WebSocket routes receive host-provided modules, including:
+
+```python
+json
+request
+uuid
+memory
+```
+
+HTTP routes can also opt into a read-only uploaded-file view with `filesystem`:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    filesystem:
+      root: data
+```
+
+Then the route can use `fs`:
+
+```python
+def handle(req):
+    files = fs.listdir("/")
+    text = fs.read("message.txt")
+
+    return (
+        200,
+        {"content-type": "application/json"},
+        json.encode({
+            "files": files,
+            "message": text,
+        }),
+    )
+```
+
+The filesystem module is read-only and scoped to the configured uploaded subtree.
+
+## Memory module
+
+Every Starlark HTTP and WebSocket route gets a `memory` module.
+
+Memory is a small site-scoped store. It is useful for counters, UI state, presence, leaderboards, recent events, small documents, and demo data.
+
+It is not Redis. It is intentionally smaller than Redis. It is also much easier to carry around in a tiny app server.
+
+Memory is scoped by site name:
+
+```text
+site "foo" memory != site "bar" memory
+```
+
+Different routes in the same site share memory. Different deployed versions of the same site also share memory.
+
+### Memory quota
+
+The default per-site memory quota is 32 MiB.
+
+```python
+memory.usage()
+memory.quota()
+```
+
+Writes that would exceed the quota fail by returning `False` and leave the old value untouched.
+
+### Key-value storage
+
+```python
+memory.get("name", "anonymous")
+memory.set("name", "Quack")
+memory.delete("name")
+```
+
+Inspect memory:
+
+```python
+memory.type("name")
+memory.keys()
+memory.items()
+memory.clear()
+```
+
+### Counters
+
+```python
+memory.incr("hits")
+memory.incr("hits", 5)
+memory.decr("hits")
+```
+
+Counters are signed 64-bit integers.
+
+### Lists
+
+```python
+memory.list_push("events", {"type": "join"})
+memory.list_push("events", {"type": "leave"}, side = "left")
+
+memory.list_pop("events")
+memory.list_len("events")
+memory.list_range("events", -10, -1)
+```
+
+List ranges are inclusive and support negative indexes.
+
+### Sets
+
+```python
+memory.set_add("online", "alice")
+memory.set_remove("online", "alice")
+memory.set_contains("online", "alice")
+memory.set_members("online")
+```
+
+### Sorted sets
+
+```python
+memory.zadd("leaderboard", 42.0, "alice")
+memory.zscore("leaderboard", "alice")
+memory.zrange("leaderboard", 0, 9, with_scores = True)
+memory.zremove("leaderboard", "alice")
+```
+
+Sorted sets are useful for leaderboards, rankings, priority queues, and “top N” lists.
+
+### Example
+
+```python
+def handle(req):
+    count = memory.incr("counter:hits")
+    memory.list_push("events", {
+        "type": "hit",
+        "count": count,
+    })
+    memory.zadd("leaderboard", float(count), "latest")
+
+    return (
+        200,
+        {"content-type": "application/json"},
+        json.encode({
+            "count": count,
+            "recent": memory.list_range("events", -5, -1),
+            "leaders": memory.zrange("leaderboard", 0, 9, with_scores = True),
+            "usage": memory.usage(),
+            "quota": memory.quota(),
+        }),
+    )
+```
+
+### Persistence
+
+Memory is process-local runtime state. By default, it is not persisted.
+
+Quack can optionally save memory snapshots. Enable this from the admin settings by setting memory persistence mode to `snapshot`.
+
+Snapshot persistence is useful for small durable state, but it is not a replicated database. It does not make WebSocket events cross-node, and it does not turn Quack memory into a clustered service.
+
+For small homelab and single-server deployments, that is often exactly the right tradeoff.
+
+## WebSockets
+
+Quack has a Starlark-based WebSocket runtime for small realtime apps.
+
+The design rule is:
+
+```text
+Go owns sockets, connection state, subscriptions, event routing, queues, and timers.
+
+Starlark handles one event at a time and returns declarative effects.
+```
+
+Starlark does not receive a raw socket. It does not install long-running callbacks. It does not keep a live listener around.
+
+Instead, Starlark returns effects like:
+
+```python
+ws.send(...)
+ws.subscribe(...)
+events.publish(...)
+```
+
+The Go host validates and applies those effects.
+
+### Declare a WebSocket route
+
+```yaml
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/socket.star
+```
+
+Dynamic WebSocket routes are policy-gated. An administrator must allow dynamic WebSocket routes before sites can deploy or execute them.
+
+### Handler shape
+
+A WebSocket Starlark file can define any of these functions:
+
+```python
+def on_connect(ctx):
+    return []
+
+def on_message(ctx, msg):
+    return []
+
+def on_event(ctx, event):
+    return []
+
+def on_disconnect(ctx):
+    return []
+```
+
+All handlers are optional. Missing handlers are treated as no-ops.
+
+Each handler returns one of:
+
+```text
+None
+a single effect
+a list of effects
+a tuple of effects
+```
+
+### Context
+
+Handlers receive a `ctx` object:
+
+```python
+ctx.site
+ctx.version
+ctx.route
+ctx.path
+ctx.query
+ctx.headers
+ctx.conn_id
+ctx.params
+ctx.user
+```
+
+### Messages
+
+When a client sends a message:
+
+* JSON messages become Starlark values.
+* Non-JSON messages become strings.
+* Empty messages become `None`.
+
+For example, this client message:
+
+```json
+{"type":"edit","doc_id":"123","content":"hello"}
+```
+
+can be read in Starlark as:
+
+```python
+msg["type"]
+msg["doc_id"]
+msg["content"]
+```
+
+### Effects
+
+Send to one connection:
+
+```python
+ws.send(ctx.conn_id, {"type": "ready"})
+```
+
+Subscribe a connection to a topic:
+
+```python
+ws.subscribe(ctx.conn_id, "doc:123")
+```
+
+Broadcast to a topic:
+
+```python
+ws.broadcast("doc:123", {"type": "changed"})
+```
+
+Publish an event:
+
+```python
+events.publish("doc:123", {
+    "type": "changed",
+    "doc_id": "123",
+})
+```
+
+Close a connection:
+
+```python
+ws.close(ctx.conn_id, code = 1000, reason = "bye")
+```
+
+Unsubscribe:
+
+```python
+ws.unsubscribe(ctx.conn_id, "doc:123")
+ws.unsubscribe_all(ctx.conn_id)
+```
+
+### Example: collaborative document updates
+
+```python
+def on_connect(ctx):
+    doc_id = ctx.path.strip("/") or "default"
+    topic = "doc:" + doc_id
+
+    return [
+        ws.subscribe(ctx.conn_id, topic),
+        ws.send(ctx.conn_id, {
+            "type": "ready",
+            "doc_id": doc_id,
+        }),
+    ]
+
+def on_message(ctx, msg):
+    if msg["type"] == "edit":
+        doc_id = msg["doc_id"]
+
+        memory.set("doc:" + doc_id, msg["content"])
+
+        return [
+            events.publish("doc:" + doc_id, {
+                "type": "document_updated",
+                "doc_id": doc_id,
+                "content": msg["content"],
+            }),
+        ]
+
+    return []
+
+def on_event(ctx, event):
+    if event.payload["type"] == "document_updated":
+        return [
+            ws.send(ctx.conn_id, event.payload),
+        ]
+
+    return []
+
+def on_disconnect(ctx):
+    return [
+        ws.unsubscribe_all(ctx.conn_id),
+    ]
+```
+
+`events.publish` is a local live event. It is not durable, not replayed, and not cross-node. It reaches currently connected local subscribers.
+
+### Back pressure
+
+Quack protects the host from slow clients.
+
+Each connection has a bounded outbound queue. If a client cannot keep up, Quack can close and unregister that client instead of letting one slow socket block a broadcast or Starlark invocation.
+
+Broadcast delivery is best-effort.
+
+## Admin panel
+
+The admin panel runs on the admin listener, separate from public site traffic.
+
+By default:
+
+```text
+public:  :8080
+admin:   :8081
+```
+
+Open the admin panel:
+
+```text
+http://localhost:8081/
+```
+
+The admin panel lets you:
+
+* View sites
+* See current version, file count, byte count, memory usage, and WebSocket count
+* Publish and unpublish sites
+* Roll back versions
+* Delete sites
+* Create users
+* Save generated user tokens
+* Change server settings
+* Configure policies for dynamic features
+
+### Why the admin panel is on a different port
+
+The public port serves user sites.
+
+The admin port can create users, accept uploads, delete sites, change settings, and enable dynamic code execution.
+
+Those are very different security surfaces.
+
+By keeping them on separate listeners, you can expose public sites to the internet while keeping admin behind something stricter:
+
+```text
+public port -> internet
+admin port  -> localhost, VPN, private network, tunnel auth, or firewall
+```
+
+For production, do not casually expose the admin port to the public internet.
+
+## Server configuration
+
+Start `quack-server` with:
+
+```bash
+quack-server \
+  -root /var/lib/quack/blobs \
+  -database /var/lib/quack/quack.sqlite \
+  -memory-dir /var/lib/quack/memory
+```
+
+Required flags:
+
+```text
+-root       blob storage directory
+-database   SQLite database path
+```
+
+Optional flags:
+
+```text
+-memory-dir              memory snapshot directory
+-allow-unauthenticated   allow unauthenticated /v1 API access; development only
+```
+
+Environment variables:
+
+```text
+PUBLIC_ADDR   public listener, default :8080
+ADMIN_ADDR    admin listener, default :8081
+UPLOAD_TOKEN  legacy upload token
+```
+
+If `-memory-dir` is omitted, Quack stores memory snapshots beside the database under a `memory` directory.
+
+## Important server settings
+
+Most operational settings can be managed from the admin panel.
+
+| Setting                            | What it does                                                        |
+| ---------------------------------- | ------------------------------------------------------------------- |
+| Max upload bytes                   | Maximum size of an uploaded archive.                                |
+| Max upload files                   | Maximum number of regular files in an upload.                       |
+| Max retained versions              | How many old versions to keep. `0` means no pruning.                |
+| Default site                       | Static fallback site when a requested site does not exist.          |
+| Allowed hosts                      | Hostname allowlist for public requests. Empty means allow any host. |
+| Log level                          | Server log verbosity.                                               |
+| HTTP cache mode                    | Static file cache behavior.                                         |
+| HTTP cache max age seconds         | Max-age value when using max-age cache mode.                        |
+| Max runtime duration ms            | Runtime execution time limit.                                       |
+| Max WebSocket connections          | Total live WebSocket connection limit.                              |
+| Max WebSocket connections per site | Per-site WebSocket connection limit.                                |
+| Memory persistence mode            | `off` or `snapshot`.                                                |
+| Memory snapshot save rules         | Rules for when dirty memory should be snapshotted.                  |
+| Memory snapshot min interval ms    | Minimum time between memory snapshots.                              |
+| Memory snapshot max concurrency    | Maximum concurrent memory snapshot writes.                          |
+| Memory shutdown flush timeout ms   | Flush timeout during shutdown.                                      |
+
+### Allowed hosts
+
+In production, set an allowed-hosts list.
+
+Example:
+
+```text
+example.com
+*.example.com
+```
+
+This prevents Quack from responding to arbitrary hostnames pointed at the same server.
+
+Allowed hosts are hostnames only. Do not include schemes, ports, or paths.
+
+Use:
+
+```text
+*.example.com
+```
+
+not:
+
+```text
+https://*.example.com:443/
+```
+
+### Cache modes
+
+Quack supports three static HTTP cache modes.
+
+`revalidate` asks browsers and CDNs to revalidate before reuse. This is a safe default for frequently updated small sites.
+
+`anti_cache` aggressively disables caching.
+
+`max_age` sets a public max-age using `HTTP cache max age seconds`.
+
+For hashed frontend assets, `max_age` can be useful. For experimental apps that change constantly, `revalidate` is usually easier.
+
+### Runtime policies
+
+Dynamic HTTP routes and dynamic WebSocket routes are policy-gated.
+
+That means an uploaded `site.yml` can declare runtime routes, but Quack will reject or deny them unless policy allows the required capability.
+
+The major dynamic policies are:
+
+```text
+Dynamic HTTP routes
+Dynamic WebSocket routes
+Database feature
+```
+
+Each policy can be set to:
+
+```text
+inherit
+allow
+deny
+```
+
+with an optional reason.
+
+By default, keep dynamic features denied until you explicitly need them.
+
+## Deploying Quack
+
+A typical production shape looks like this:
+
+```text
+internet
+  -> reverse proxy / tunnel / load balancer
+  -> quack-server public port
+
+private admin access
+  -> quack-server admin port
+```
+
+For example:
+
+```text
+*.example.com        -> quack public listener
+quack-admin.internal -> quack admin listener
+```
+
+The public proxy must preserve the original `Host` header, because Quack uses it to derive the site name.
+
+```text
+foo.example.com -> foo
+bar.example.com -> bar
+```
+
+### Files to persist
+
+Persist these together:
+
+```text
+SQLite database
+blob storage root
+memory snapshot directory, if enabled
+```
+
+For example:
+
+```text
+/var/lib/quack/quack.sqlite
+/var/lib/quack/blobs/
+/var/lib/quack/memory/
+```
+
+Back them up as one unit. The database knows which blobs and versions exist.
+
+### Example systemd service
+
+```ini
+[Unit]
+Description=Quack app server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=quack
+Group=quack
+Environment=PUBLIC_ADDR=:8080
+Environment=ADMIN_ADDR=127.0.0.1:8081
+ExecStart=/usr/local/bin/quack-server \
+  -root /var/lib/quack/blobs \
+  -database /var/lib/quack/quack.sqlite \
+  -memory-dir /var/lib/quack/memory
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+This example binds the admin listener to localhost and the public listener to all interfaces.
+
+### Example container run
+
+For a container image that includes `quack-server`:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -p 127.0.0.1:8081:8081 \
+  -e PUBLIC_ADDR=:8080 \
+  -e ADMIN_ADDR=:8081 \
+  -v quack-data:/var/lib/quack \
+  quack-server:dev \
+  -root /var/lib/quack/blobs \
+  -database /var/lib/quack/quack.sqlite \
+  -memory-dir /var/lib/quack/memory
+```
+
+This exposes the public port normally and binds the admin port only on localhost.
+
+## Maintaining a Quack server
+
+### Keep the admin plane private
+
+The admin listener is where uploads, deletes, users, settings, and policies live. Treat it like infrastructure, not like a public website.
+
+Good options:
+
+```text
+localhost only
+VPN only
+private network only
+identity-aware proxy
+SSH tunnel
+Cloudflare Access or similar
+```
+
+### Back up state
+
+Back up:
+
+```text
+database
+blob root
+memory snapshots
+```
+
+Do not back up only the blobs. Do not back up only the database.
+
+### Prune old versions when needed
+
+Use `Max retained versions` to stop old deployments from growing forever.
+
+Use rollback-friendly retention for important sites. Use smaller retention for throwaway demos.
+
+### Be intentional with dynamic code
+
+Static hosting is the safest Quack mode.
+
+Starlark HTTP and WebSocket routes are more powerful. Enable them when you want dynamic behavior, and use policy settings to keep that power scoped.
+
+### Watch memory usage
+
+Memory is meant for small app state, not large datasets.
+
+Use:
+
+```python
+memory.usage()
+memory.quota()
+```
+
+inside routes when building dashboards or debugging state.
+
+If a site needs a real database, give it a real database. Quack memory is for tiny state that benefits from being close to the app.
+
+### Remember that realtime is local
+
+WebSocket subscriptions and event delivery are local to the running server process.
+
+`events.publish` is not a durable queue. It is not replayed. It is not cross-node.
+
+That is fine for a single-server homelab app. It is not the same as a distributed realtime backend.
+
+### Preserve the public/admin split
+
+When changing Quack or deploying it in a new environment, keep this boundary:
+
+```text
+public traffic -> sites and runtime
+admin traffic  -> control, users, settings, uploads
+```
+
+That split is one of Quack’s most important safety features.
+
+## `site.yml`
+
+`site.yml` is Quack’s upload manifest. Put it at the root of the directory you deploy:
+
+```text
+my-app/
+  site.yml
+  public/
+    index.html
+    app.css
+  api/
+    app.star
+    socket.star
+```
+
+Quack also accepts `site.yaml`. The manifest is read during upload and is not served as a public file.
+
+A minimal static site does not need a manifest at all. Without `site.yml`, Quack serves uploaded files from the upload root. Add `site.yml` when you want to choose a public static root, define runtime routes, expose a read-only filesystem to Starlark, or declare feature requirements.
+
+A typical manifest looks like this:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
+    filesystem:
+      root: data
+
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/socket.star
+
+exclude:
+  - node_modules/
+  - .git/
+  - "*.log"
+```
+
+Quack validates `site.yml` strictly. Unknown fields fail the upload. This is intentional: typos should break loudly instead of silently deploying something different from what you meant.
+
+### Top-level fields
+
+The supported top-level fields are:
+
+```yaml
+routes: []
+exclude: []
+features:
+  database:
+    enabled: false
+    required: false
+```
+
+### `routes`
+
+`routes` tells Quack how public requests should map to static files, Starlark HTTP handlers, and Starlark WebSocket handlers.
+
+Each route has this shape:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+```
+
+Supported route fields:
+
+| Field        | Used by             | Meaning                                                              |
+| ------------ | ------------------- | -------------------------------------------------------------------- |
+| `path`       | all routes          | Required public route prefix.                                        |
+| `kind`       | all routes          | `static`, `http`, or `websocket`. Defaults to `static` when omitted. |
+| `root`       | static only         | Uploaded directory to expose at this route.                          |
+| `file`       | static only         | Uploaded file to expose at exactly this route path.                  |
+| `runtime`    | HTTP/WebSocket only | Currently only `starlark`.                                           |
+| `entrypoint` | runtime routes      | Starlark file to execute. Required when `runtime` is set.            |
+| `methods`    | HTTP routes         | Optional list of allowed HTTP methods. Empty means all methods.      |
+| `filesystem` | Starlark HTTP only  | Optional read-only uploaded-file access for the route.               |
+
+Route paths are normalized. `api` and `/api` both behave like `/api`. Matching uses longest prefix wins.
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+
+  - path: /api/admin
+    kind: http
+    runtime: starlark
+    entrypoint: api/admin.star
+```
+
+Request behavior:
+
+```text
+/                 -> / static route
+/about            -> / static route
+/api              -> /api HTTP route
+/api/users        -> /api HTTP route
+/api/admin        -> /api/admin HTTP route
+/api/admin/users  -> /api/admin HTTP route
+/apiary           -> / static route
+```
+
+`/apiary` does not match `/api`; a route matches the exact path or paths underneath it.
+
+### Static routes
+
+Static routes serve uploaded files.
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+```
+
+With this archive:
+
+```text
+site.yml
+public/index.html
+public/app.css
+public/docs/index.html
+data/private.json
+```
+
+Requests behave like this:
+
+```text
+/              -> public/index.html
+/app.css       -> public/app.css
+/docs/         -> public/docs/index.html
+/data/private.json -> usually 404
+/public/app.css    -> usually 404
+```
+
+`root` is the uploaded directory that becomes public. It is not part of the URL.
+
+So this:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+```
+
+means:
+
+```text
+URL /app.css -> uploaded file public/app.css
+```
+
+not:
+
+```text
+URL /public/app.css -> uploaded file public/app.css
+```
+
+`root` must be a relative archive path. Absolute paths and `..` are rejected.
+
+A static route can also expose one exact file:
+
+```yaml
+routes:
+  - path: /favicon.ico
+    kind: static
+    file: media/favicon.ico
+```
+
+That serves:
+
+```text
+/favicon.ico -> media/favicon.ico
+```
+
+It does not match paths underneath it:
+
+```text
+/favicon.ico/details -> not this file route
+```
+
+A static route may use `root` or `file`, but not both.
+
+### Static routes under a prefix
+
+Static routes do not have to be mounted at `/`.
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /assets
+    kind: static
+    root: build/assets
+```
+
+Then:
+
+```text
+/                 -> public/index.html
+/about            -> public/about or public/about/index.html
+/assets/app.js    -> build/assets/app.js
+/assets/icons/x.svg -> build/assets/icons/x.svg
+```
+
+### HTTP Starlark routes
+
+HTTP routes run a Starlark file for matching requests.
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
+```
+
+The entrypoint is relative to the upload root and must exist in the deployed directory.
+
+A route at `/api` matches:
+
+```text
+/api
+/api/todos
+/api/todos/123
+```
+
+Inside Starlark, the handler sees the path under the route. For example, a request to `/api/todos/123` under the `/api` route is exposed as `/todos/123`.
+
+`methods` is optional:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
+```
+
+If `methods` is omitted or empty, all methods are allowed by the route declaration.
+
+Dynamic HTTP routes are policy-gated. The server administrator must allow dynamic HTTP runtime routes before sites can deploy or execute them.
+
+### Starlark HTTP filesystem access
+
+By default, a Starlark route executes its entrypoint but does not get open access to all uploaded files. To give a route read-only file access, add a `filesystem` block:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    filesystem:
+      root: data
+```
+
+With this upload:
+
+```text
+site.yml
+api/app.star
+data/profile.json
+data/messages/welcome.txt
+```
+
+the Starlark route can read files through the `fs` module:
+
+```python
+def handle(req):
+    profile = fs.read("profile.json")
+    welcome = fs.read("messages/welcome.txt")
+
+    return (200, {"content-type": "application/json"}, profile)
+```
+
+`filesystem.root` is relative to the upload root. A root of `data` exposes the uploaded `data/` directory as `/` inside the Starlark filesystem.
+
+These are equivalent ways to expose the whole uploaded archive:
+
+```yaml
+filesystem:
+  root: .
+```
+
+```yaml
+filesystem:
+  root: /
+```
+
+```yaml
+filesystem:
+  root: ""
+```
+
+Paths are still sandboxed. Leading slashes are normalized away, `..` traversal is rejected, and host filesystem paths are never exposed.
+
+The `filesystem` block is currently only supported for Starlark HTTP routes, not static routes or WebSocket routes.
+
+### WebSocket Starlark routes
+
+WebSocket routes declare a Starlark entrypoint that handles socket lifecycle events.
+
+```yaml
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/socket.star
+```
+
+A route at `/ws` matches:
+
+```text
+/ws
+/ws/room/123
+/ws/room/abc
+```
+
+Inside Starlark, the path is route-relative. For example:
+
+```text
+/ws/room/123 -> /room/123
+```
+
+A WebSocket Starlark file can define:
+
+```python
+def on_connect(ctx):
+    return []
+
+def on_message(ctx, msg):
+    return []
+
+def on_event(ctx, event):
+    return []
+
+def on_disconnect(ctx):
+    return []
+```
+
+All handlers are optional.
+
+Dynamic WebSocket routes are policy-gated separately from HTTP routes. The server administrator must allow dynamic WebSocket runtime routes before sites can deploy or execute them.
+
+### `exclude`
+
+`exclude` removes files from the upload before Quack stores them.
 
 ```yaml
 exclude:
-  - "*.swp"
-  - "node_modules"
+  - node_modules/
+  - .git/
+  - dist/**/*.map
+  - "*.log"
 ```
 
-Exclusions are evaluated by the CLI before the archive is streamed. Patterns use slash-separated paths relative to the site root; basename-only patterns such as `*.swp` match at any depth, and matching files are not sent to the server.
+Exclude patterns are relative to the upload root. Absolute patterns are rejected. Patterns cannot contain `..`.
 
-If the directory is a simple folder name, Quack can infer the site name:
+A pattern with a slash matches against the uploaded path:
 
-```bash
-go run ./cmd/quack deploy my-site \
-  --token dev-token \
-  --serverURL http://localhost:8080
+```yaml
+exclude:
+  - private/*.json
 ```
 
-Path-like directories such as `.`, `./my-site`, or `../my-site` still require an explicit site name.
+A pattern without a slash matches by basename:
 
-List sites available to the authenticated user:
-
-```bash
-go run ./cmd/quack sites \
-  --token dev-token \
-  --serverURL http://localhost:8080
+```yaml
+exclude:
+  - "*.log"
 ```
 
-Admins can list one user's sites with `quack sites <username>` or every site with `quack sites --all`.
+Directory-style patterns exclude the tree:
 
-Delete a site and its stored blobs:
-
-```bash
-go run ./cmd/quack delete example \
-  --token dev-token \
-  --serverURL http://localhost:8080
+```yaml
+exclude:
+  - node_modules/
+  - .git/
 ```
 
-List retained revisions for a site:
+The manifest itself is never excluded by `exclude`, because Quack needs it during upload and does not serve it afterward.
 
-```bash
-go run ./cmd/quack revisions example \
-  --token dev-token \
-  --serverURL http://localhost:8080
+### `features`
+
+The currently supported top-level feature declaration is `features.database`.
+
+```yaml
+features:
+  database:
+    enabled: true
+    required: false
 ```
 
-Roll back a site to its previous retained revision:
+This declares that the site wants the database feature. Policy determines whether that is allowed.
 
-```bash
-go run ./cmd/quack rollback example \
-  --token dev-token \
-  --serverURL http://localhost:8080
+`required` controls how Quack treats policy denial:
+
+```yaml
+features:
+  database:
+    enabled: true
+    required: true
 ```
 
-Unpublish a site without deleting its retained versions or blobs:
+If `required` is true, the feature must be allowed for the site to serve correctly. `required: true` is invalid unless `enabled: true` is also set.
 
-```bash
-go run ./cmd/quack unpublish example \
-  --token dev-token \
-  --serverURL http://localhost:8080
+Most small Quack apps do not need this block. The Starlark `memory` module does not require `features.database`; memory is its own runtime module.
+
+### Complete examples
+
+#### Static app with a public root
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
 ```
 
-Publish an unpublished site again:
-
-```bash
-go run ./cmd/quack publish example \
-  --token dev-token \
-  --serverURL http://localhost:8080
-```
-
-Set the default site used when a requested site name does not exist:
-
-```bash
-go run ./cmd/quack default-site home \
-  --token dev-token \
-  --serverURL http://localhost:8080
-```
-
-Clear it with `quack default-site --clear`.
-
-## Serve Uploaded Files
-
-Quack serves the current version of uploaded files from the public listener based on the request host's left-most label.
-
-For example, a site named `foo` matches:
+Good for:
 
 ```text
-foo.bar.domain.com
+public/index.html
+public/assets/app.js
+public/assets/app.css
 ```
 
-A site named `domain` matches:
-
-```text
-domain.com
-```
-
-It does not match:
-
-```text
-foo.domain.com
-```
-
-Requests for `/` serve `index.html` when present. If the current site has no `index.html`, the server returns a blank `200 OK` page. Other paths, such as `/file.js`, are served directly when present.
-
-You can also bypass host matching by serving through:
-
-```text
-/serve/<site>
-```
-
-For example, `/serve/foo/file.js` serves the current `file.js` for site `foo`, regardless of the request host. `/serve/foo` and `/serve/foo/` use the same `index.html` default behavior.
-
-## Docker
-
-Build the server image:
+Deploy with:
 
 ```bash
-docker build -t quack-server:dev .
+quack-cli deploy ./my-app mysite
 ```
 
-Run it locally with ephemeral in-container SQLite and blob storage:
+#### Static frontend plus Starlark API
 
-```bash
-docker run --rm -p 8080:8080 \
-  -p 8081:8081 \
-  quack-server:dev
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
 ```
 
-The image starts `quack-server` with:
+Good for:
 
 ```text
--root /var/lib/quack -database /var/lib/quack/quack.sqlite
+public/index.html
+public/app.js
+api/app.star
 ```
 
-That directory is writable inside the container, but it is not persistent unless you mount a volume:
+Request behavior:
 
-```bash
-docker run --rm -p 8080:8080 \
-  -p 8081:8081 \
-  -v quack-data:/var/lib/quack \
-  quack-server:dev
+```text
+/              -> static
+/app.js        -> static
+/api           -> Starlark
+/api/todos     -> Starlark
 ```
+
+#### Static frontend plus API plus WebSocket
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    methods: [GET, POST]
+
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/socket.star
+```
+
+Good for small realtime apps where the frontend is static, the API is Starlark, and live updates happen through WebSockets.
+
+#### Static app with private data files for Starlark
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    filesystem:
+      root: data
+
+exclude:
+  - node_modules/
+  - .git/
+  - "*.log"
+```
+
+With this layout:
+
+```text
+public/index.html
+api/app.star
+data/config.json
+data/messages/welcome.txt
+```
+
+The `public/` directory is served to browsers. The `data/` directory is not public through the static route, but the `/api` Starlark route can read it through `fs`.
+
+### Common mistakes
+
+Do not use the old top-level `static` shape:
+
+```yaml
+static:
+  root: public
+```
+
+Use route-level static roots instead:
+
+```yaml
+routes:
+  - path: /
+    kind: static
+    root: public
+```
+
+Do not put `root` on an HTTP or WebSocket route:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    root: public
+```
+
+Use `filesystem` for Starlark file access:
+
+```yaml
+routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    filesystem:
+      root: data
+```
+
+Do not set both `root` and `file` on the same static route:
+
+```yaml
+routes:
+  - path: /favicon.ico
+    kind: static
+    root: public
+    file: media/favicon.ico
+```
+
+Choose one:
+
+```yaml
+routes:
+  - path: /favicon.ico
+    kind: static
+    file: media/favicon.ico
+```
+
+Do not assume `/apiary` matches `/api`. Route prefix matching is path-segment aware:
+
+```text
+/api/users -> matches /api
+/apiary    -> does not match /api
+```
+
+Do not include absolute paths or `..` in manifest paths:
+
+```yaml
+root: /var/www
+entrypoint: ../app.star
+filesystem:
+  root: ../data
+```
+
+Manifest paths should be relative to the uploaded directory.
 
 ## Cloudflare Tunnel
 
@@ -275,21 +1890,28 @@ foo.example.com -> site foo
 bar.example.com -> site bar
 ```
 
-## Current Limitations
-
-- Files are stored as SHA-256-addressed blobs under `blobs/site:<site-sha>/<version>/file:<file-sha>`.
-- Upload metadata is saved through a database adapter. The current concrete implementation uses SQLite via `modernc.org/sqlite`.
-- Symlinks and unusual filesystem entries are skipped by the client.
-- Symlinks and unsupported tar entries are rejected by the server.
-- There is no compression, chunking, resumable upload, deduplication, TLS setup, custom backend, scheduled jobs, or user account system.
-
 ## Roadmap
 
-Quack should stay small, but a few pieces are natural next steps:
+Quack’s roadmap has two moods.
 
-- Persistent storage behind the existing storage interface.
-- Resumable and chunked uploads.
-- Optional compression.
-- Content-addressed storage and deduplication.
-- File serving and metadata APIs.
-- Configuration files and production deployment options.
+The fun mood:
+
+* More small-app primitives
+* More realtime helpers
+* Better local-first patterns
+* GPIO experiments
+* Weird homelab integrations
+* Strange indie-web toys
+
+The boring mood:
+
+* RBAC
+* Auth improvements
+* Better security policies
+* Better multi-user deployment controls
+* More locked-down admin workflows
+* Safer defaults for semi-public servers
+
+Both moods matter.
+
+Quack should stay small, but it should not stay timid.
