@@ -909,7 +909,7 @@ func TestServiceTimesOutRunawayStarlark(t *testing.T) {
 		Policies: allowRuntimeHTTPPolicy(),
 		Executor: newTestStarlarkExecutor(t, map[string]string{"app.star": `
 def handle(req):
-    while True:
+    for _ in range(1000000000):
         pass
     return (200, {}, "never")
 `}),
@@ -919,6 +919,29 @@ def handle(req):
 	_, err := svc.InvokeHTTP(context.Background(), InvocationRequest{Site: "foo", Version: 1, Route: "/api", Method: http.MethodGet})
 	if !errors.Is(err, ErrInvocationFailure) && !errors.Is(err, ErrTimeout) {
 		t.Fatalf("InvokeHTTP error = %v, want timeout or step-limit invocation failure", err)
+	}
+}
+
+func TestServiceAppliesServerRuntimeDurationSetting(t *testing.T) {
+	svc := NewService(ServiceOptions{
+		Repository: newRuntimeRepo(RouteMetadata{
+			Site: "foo", Version: 1, RoutePath: "/api", RouteKind: RouteHTTP, RuntimeKind: RuntimeStarlark,
+			BundleObjectKey: "app.star", ResourceLimits: ResourceLimits{MaxDurationMillis: 60_000},
+		}),
+		Policies: allowRuntimeHTTPPolicy(),
+		Executor: newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    for _ in range(1000000000):
+        pass
+    return (200, {}, "never")
+`}),
+		Settings:        runtimeSettings{settings: domain.ServerSettings{MaxRuntimeDurationMillis: 1}},
+		EnableExecution: true,
+	})
+
+	_, err := svc.InvokeHTTP(context.Background(), InvocationRequest{Site: "foo", Version: 1, Route: "/api", Method: http.MethodGet})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("InvokeHTTP error = %v, want timeout from server runtime duration setting", err)
 	}
 }
 
@@ -990,6 +1013,14 @@ func (r runtimeRepo) ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetad
 
 func (r runtimeRepo) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
 	return append([]domain.UploadFileRecord(nil), r.files...), true, nil
+}
+
+type runtimeSettings struct {
+	settings domain.ServerSettings
+}
+
+func (s runtimeSettings) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
+	return s.settings, nil
 }
 
 type runtimePolicyLoader struct {

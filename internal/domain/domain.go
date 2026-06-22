@@ -62,6 +62,7 @@ type ServerSettings struct {
 	MaxUploadBytes                 int64
 	MaxUploadFiles                 int64
 	MaxRetainedVersions            int64
+	MaxRuntimeDurationMillis       int64
 	MaxWebSocketConnections        int64
 	MaxWebSocketConnectionsPerSite int64
 	HTTPCacheMode                  string

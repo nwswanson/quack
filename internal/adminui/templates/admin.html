@@ -470,6 +470,10 @@
               <input name="max_retained_versions" type="number" min="0" value="{{.Settings.MaxRetainedVersions}}" required>
             </label>
             <label>
+              Max runtime duration ms
+              <input name="max_runtime_duration_millis" type="number" min="1" value="{{.Settings.MaxRuntimeDurationMillis}}" required>
+            </label>
+            <label>
               Max WebSocket connections
               <input name="max_websocket_connections" type="number" min="0" value="{{.Settings.MaxWebSocketConnections}}" required>
             </label>

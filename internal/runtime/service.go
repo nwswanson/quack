@@ -19,6 +19,7 @@ type service struct {
 	metrics     Metrics
 	sem         chan struct{}
 	defaults    ResourceLimits
+	settings    SettingsReader
 	executionOn bool
 }
 
@@ -42,6 +43,7 @@ func NewService(opts ServiceOptions) Service {
 		metrics:     metrics,
 		sem:         make(chan struct{}, positiveOr(opts.MaxConcurrency, DefaultMaxConcurrentInvocations)),
 		defaults:    opts.DefaultLimits.withDefaults(),
+		settings:    opts.Settings,
 		executionOn: true,
 	}
 }
@@ -146,6 +148,9 @@ func (s *service) prepareHTTPInvocation(ctx context.Context, req InvocationReque
 		return RouteMetadata{}, ResourceLimits{}, err
 	}
 	limits := route.ResourceLimits.withFallback(s.defaults)
+	if err := s.applyServerRuntimeSettings(ctx, &limits); err != nil {
+		return RouteMetadata{}, ResourceLimits{}, err
+	}
 	if int64(len(req.Body)) > limits.MaxRequestBytes {
 		return RouteMetadata{}, ResourceLimits{}, ErrRequestTooLarge
 	}
@@ -164,6 +169,9 @@ func (s *service) prepareWebSocketInvocation(ctx context.Context, req WebSocketI
 		return RouteMetadata{}, ResourceLimits{}, err
 	}
 	limits := route.ResourceLimits.withFallback(s.defaults)
+	if err := s.applyServerRuntimeSettings(ctx, &limits); err != nil {
+		return RouteMetadata{}, ResourceLimits{}, err
+	}
 	if req.EventType == WebSocketEventMessage && int64(len(req.Message)) > limits.MaxRequestBytes {
 		return RouteMetadata{}, ResourceLimits{}, ErrRequestTooLarge
 	}
@@ -171,6 +179,20 @@ func (s *service) prepareWebSocketInvocation(ctx context.Context, req WebSocketI
 		return RouteMetadata{}, ResourceLimits{}, ErrRequestTooLarge
 	}
 	return route, limits, nil
+}
+
+func (s *service) applyServerRuntimeSettings(ctx context.Context, limits *ResourceLimits) error {
+	if s.settings == nil {
+		return nil
+	}
+	settings, err := s.settings.GetServerSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if settings.MaxRuntimeDurationMillis > 0 {
+		limits.MaxDurationMillis = settings.MaxRuntimeDurationMillis
+	}
+	return nil
 }
 func validateHTTPRoute(route RouteMetadata, method string) error {
 	switch {

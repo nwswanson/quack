@@ -657,6 +657,7 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		MaxUploadBytes:                 appsettings.DefaultMaxUploadBytes,
 		MaxUploadFiles:                 appsettings.DefaultMaxUploadFiles,
 		MaxRetainedVersions:            0,
+		MaxRuntimeDurationMillis:       appsettings.DefaultRuntimeMaxDurationMillis,
 		MaxWebSocketConnections:        appsettings.DefaultMaxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: appsettings.DefaultMaxWebSocketConnectionsPerSite,
 		HTTPCacheMode:                  appsettings.Default(appsettings.SettingHTTPCacheMode),
@@ -708,6 +709,12 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxRetainedVersions = n
+		case appsettings.SettingRuntimeMaxDurationMillis:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxRuntimeDurationMillis = n
 		case "runtime.websocket.max_connections":
 			n, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
@@ -778,6 +785,9 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.MaxRetainedVersions < 0 {
 		return fmt.Errorf("max retained versions must be >= 0")
 	}
+	if settings.MaxRuntimeDurationMillis < 0 {
+		return fmt.Errorf("max runtime duration must be >= 0")
+	}
 	if settings.MaxWebSocketConnections < 0 {
 		return fmt.Errorf("max websocket connections must be >= 0")
 	}
@@ -787,6 +797,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.HTTPCacheMaxAgeSeconds < 0 {
 		return fmt.Errorf("http cache max age seconds must be >= 0")
 	}
+	normalizeRuntimeServerSettings(&settings)
 	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
 	if err := validateMemoryServerSettings(settings); err != nil {
@@ -812,6 +823,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 		"max_upload_bytes":                                     strconv.FormatInt(settings.MaxUploadBytes, 10),
 		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		appsettings.SettingRuntimeMaxDurationMillis:            strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
 		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
 		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
 		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
@@ -860,6 +872,9 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.MaxRetainedVersions < 0 {
 		return fmt.Errorf("max retained versions must be >= 0")
 	}
+	if settings.MaxRuntimeDurationMillis < 0 {
+		return fmt.Errorf("max runtime duration must be >= 0")
+	}
 	if settings.MaxWebSocketConnections < 0 {
 		return fmt.Errorf("max websocket connections must be >= 0")
 	}
@@ -869,6 +884,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.HTTPCacheMaxAgeSeconds < 0 {
 		return fmt.Errorf("http cache max age seconds must be >= 0")
 	}
+	normalizeRuntimeServerSettings(&settings)
 	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
 	if err := validateMemoryServerSettings(settings); err != nil {
@@ -888,6 +904,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		"max_upload_bytes":                                     strconv.FormatInt(settings.MaxUploadBytes, 10),
 		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		appsettings.SettingRuntimeMaxDurationMillis:            strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
 		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
 		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
 		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
@@ -913,6 +930,12 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		}
 	}
 	return nil
+}
+
+func normalizeRuntimeServerSettings(settings *domain.ServerSettings) {
+	if settings.MaxRuntimeDurationMillis <= 0 {
+		settings.MaxRuntimeDurationMillis = appsettings.DefaultRuntimeMaxDurationMillis
+	}
 }
 
 func normalizeHTTPCacheServerSettings(settings *domain.ServerSettings) {

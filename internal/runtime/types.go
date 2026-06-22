@@ -112,6 +112,9 @@ type Repository interface {
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetadata, error)
 	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
 }
+type SettingsReader interface {
+	GetServerSettings(ctx context.Context) (domain.ServerSettings, error)
+}
 type ScriptLoader interface {
 	OpenScript(ctx context.Context, objectKey string) (io.ReadCloser, error)
 }
@@ -145,6 +148,7 @@ type ServiceOptions struct {
 	WebSocketExecutor WebSocketExecutor
 	MaxConcurrency    int64
 	DefaultLimits     ResourceLimits
+	Settings          SettingsReader
 	Metrics           Metrics
 	EnableExecution   bool
 }

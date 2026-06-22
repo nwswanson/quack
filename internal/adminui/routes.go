@@ -785,6 +785,13 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if err != nil {
 		return domain.ServerSettings{}, err
 	}
+	maxRuntimeDurationMillis, err := parseNonNegativeInt64(r.Form.Get("max_runtime_duration_millis"), "max runtime duration")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if maxRuntimeDurationMillis == 0 {
+		maxRuntimeDurationMillis = parseDefaultInt64(appsettings.SettingRuntimeMaxDurationMillis)
+	}
 	maxWebSocketConnections, err := parseNonNegativeInt64(r.Form.Get("max_websocket_connections"), "max websocket connections")
 	if err != nil {
 		return domain.ServerSettings{}, err
@@ -859,6 +866,7 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		MaxUploadBytes:                 maxUploadBytes,
 		MaxUploadFiles:                 maxUploadFiles,
 		MaxRetainedVersions:            maxRetainedVersions,
+		MaxRuntimeDurationMillis:       maxRuntimeDurationMillis,
 		MaxWebSocketConnections:        maxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: maxWebSocketConnectionsPerSite,
 		HTTPCacheMode:                  httpCacheMode,

@@ -12,6 +12,7 @@ import (
 const (
 	DefaultMaxUploadBytes                 int64 = 512 << 20
 	DefaultMaxUploadFiles                 int64 = 10000
+	DefaultRuntimeMaxDurationMillis       int64 = 500
 	DefaultMaxWebSocketConnections        int64 = 1024
 	DefaultMaxWebSocketConnectionsPerSite int64 = 128
 	DefaultHTTPCacheMaxAgeSeconds         int64 = 3600
@@ -58,6 +59,7 @@ const (
 	SettingDatabaseFeatureRequired               = "features.database.required"
 	SettingRuntimeHTTPFeature                    = "features.runtime.http.enabled"
 	SettingRuntimeWebSocketFeature               = "features.runtime.websocket.enabled"
+	SettingRuntimeMaxDurationMillis              = "runtime.max_duration_ms"
 	SettingRuntimeMemoryMaxBytes                 = "runtime.memory.max_bytes"
 	SettingRuntimeMemoryWipe                     = "runtime.memory.wipe"
 	SettingRuntimeMemoryPersistenceMode          = "runtime.memory.persistence_mode"
@@ -121,6 +123,10 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeWebSocketFeature: {
 		Key: SettingRuntimeWebSocketFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingRuntimeMaxDurationMillis: {
+		Key: SettingRuntimeMaxDurationMillis, Type: SettingTypeInt64, DefaultValue: "500",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingRuntimeMemoryMaxBytes: {
 		Key: SettingRuntimeMemoryMaxBytes, Type: SettingTypeInt64, DefaultValue: "33554432",

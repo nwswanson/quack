@@ -14,6 +14,7 @@ func TestValidateSettingValue(t *testing.T) {
 		"valid bool":               {key: SettingDatabaseFeature, value: "true"},
 		"valid runtime":            {key: SettingRuntimeHTTPFeature, value: "false"},
 		"valid websocket runtime":  {key: SettingRuntimeWebSocketFeature, value: "true"},
+		"valid runtime duration":   {key: SettingRuntimeMaxDurationMillis, value: "1000"},
 		"valid websocket max":      {key: SettingRuntimeWebSocketMaxConnections, value: "32"},
 		"valid websocket site max": {key: SettingRuntimeWebSocketMaxConnectionsPerSite, value: "8"},
 		"valid http cache mode":    {key: SettingHTTPCacheMode, value: "anti_cache"},

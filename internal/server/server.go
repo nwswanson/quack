@@ -96,6 +96,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Repository:      hot,
 		Policies:        hot,
 		Executor:        starlarkExecutor,
+		Settings:        hot,
 		Metrics:         metrics,
 		EnableExecution: true,
 	})

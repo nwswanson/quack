@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"quack/internal/domain"
 	appruntime "quack/internal/runtime"
+	appsettings "quack/internal/settings"
 	"quack/internal/storage"
 	"strconv"
 	"strings"
@@ -276,11 +277,12 @@ func (db *fakeDatabase) LinkUserSite(ctx context.Context, userID int64, siteSHA 
 func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	if db.settings.MaxUploadBytes == 0 && db.settings.MaxUploadFiles == 0 && db.settings.LogLevel == "" {
 		return domain.ServerSettings{
-			MaxUploadBytes:         DefaultMaxUploadBytes,
-			MaxUploadFiles:         DefaultMaxUploadFiles,
-			HTTPCacheMode:          "revalidate",
-			HTTPCacheMaxAgeSeconds: 3600,
-			LogLevel:               "warn",
+			MaxUploadBytes:           DefaultMaxUploadBytes,
+			MaxUploadFiles:           DefaultMaxUploadFiles,
+			MaxRuntimeDurationMillis: appsettings.DefaultRuntimeMaxDurationMillis,
+			HTTPCacheMode:            "revalidate",
+			HTTPCacheMaxAgeSeconds:   3600,
+			LogLevel:                 "warn",
 		}, nil
 	}
 	if db.settings.LogLevel == "" {
@@ -291,6 +293,9 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSet
 	}
 	if db.settings.HTTPCacheMaxAgeSeconds == 0 {
 		db.settings.HTTPCacheMaxAgeSeconds = 3600
+	}
+	if db.settings.MaxRuntimeDurationMillis == 0 {
+		db.settings.MaxRuntimeDurationMillis = appsettings.DefaultRuntimeMaxDurationMillis
 	}
 	return db.settings, nil
 }
