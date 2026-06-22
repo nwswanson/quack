@@ -1008,7 +1008,7 @@ Quack supports three static HTTP cache modes.
 
 `max_age` sets a public max-age using `HTTP cache max age seconds`.
 
-For hashed frontend assets, `max_age` can be useful. For experimental apps that change constantly, `revalidate` is usually easier.
+For hashed frontend assets, `max_age` can be useful. For experimental apps that change constantly, `anti_cache` is usually easier.
 
 ### Runtime policies
 
