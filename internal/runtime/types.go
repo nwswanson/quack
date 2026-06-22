@@ -132,6 +132,7 @@ type InvocationEvent struct {
 	StatusCode  int
 	Duration    time.Duration
 	Error       string
+	ErrorKind   string
 }
 type NoopMetrics struct{}
 

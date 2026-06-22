@@ -67,6 +67,11 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		}
 	}
 
+	var metricsDB metricsRepository
+	if repo, ok := db.(metricsRepository); ok {
+		metricsDB = repo
+	}
+
 	controlapi.New(controlapi.Options{
 		Token:                token,
 		AllowUnauthenticated: opts.AllowUnauthenticated,
@@ -86,13 +91,16 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	if err != nil {
 		starlarkExecutor = nil
 	}
+	metrics := newPrometheusMetrics(metricsDB, runtimehttp.Handler{})
 	runtimeService := appruntime.NewService(appruntime.ServiceOptions{
 		Repository:      hot,
 		Policies:        hot,
 		Executor:        starlarkExecutor,
+		Metrics:         metrics,
 		EnableExecution: true,
 	})
 	runtimeHandler := runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot))
+	metrics.runtime = prometheusRuntimeStats{runtime: runtimeHandler}
 
 	adminui.New(adminui.Options{
 		Users:       db,
@@ -107,6 +115,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
 		},
 	}).Register(adminMux)
+	adminMux.HandleFunc("/metrics", metrics.handle)
 
 	publichttp.New(
 		staticHandler,
@@ -118,11 +127,11 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	return Servers{
 		Admin: &http.Server{
 			Addr:    adminAddr,
-			Handler: requestLogger(adminMux),
+			Handler: requestLoggerWithMetrics(adminMux, "admin", metrics),
 		},
 		Public: &http.Server{
 			Addr:    publicAddr,
-			Handler: requestLogger(publicMux),
+			Handler: requestLoggerWithMetrics(publicMux, "public", metrics),
 		},
 	}
 }

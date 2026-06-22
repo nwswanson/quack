@@ -357,6 +357,196 @@ func (d *Database) ListUsers(ctx context.Context) ([]domain.AdminUser, error) {
 	return users, nil
 }
 
+func (d *Database) MetricsSnapshot(ctx context.Context) (domain.MetricsSnapshot, error) {
+	var out domain.MetricsSnapshot
+	if err := d.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&out.UserCount); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric users: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN live_state = 'live' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN live_state = 'unpublished' THEN 1 ELSE 0 END), 0)
+		FROM sites
+	`).Scan(&out.SiteCount, &out.LiveSiteCount, &out.UnpublishedSiteCount); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric sites: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN state = ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN state = ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN state = ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN state = ? THEN bytes ELSE 0 END), 0)
+		FROM uploads
+	`, string(domain.UploadStateFinished), string(domain.UploadStateUploading), string(domain.UploadStateError), string(domain.UploadStateFinished)).Scan(
+		&out.UploadCount,
+		&out.FinishedUploadCount,
+		&out.UploadingUploadCount,
+		&out.FailedUploadCount,
+		&out.UploadBytes,
+	); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric uploads: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(u.bytes), 0)
+		FROM sites s
+		JOIN uploads u
+			ON u.site_sha = s.site_sha
+			AND u.version = s.current_version
+			AND u.state = ?
+		WHERE s.current_version > 0
+	`, string(domain.UploadStateFinished)).Scan(&out.CurrentSiteBytes); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric current site bytes: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM upload_files uf
+		JOIN uploads u ON u.id = uf.upload_id AND u.state = ?
+	`, string(domain.UploadStateFinished)).Scan(&out.UploadFileCount); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric upload files: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN rr.route_kind = 'http' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rr.route_kind = 'websocket' THEN 1 ELSE 0 END), 0)
+		FROM runtime_routes rr
+		JOIN uploads u
+			ON u.site_sha = rr.site_sha
+			AND u.version = rr.upload_version
+			AND u.state = ?
+	`, string(domain.UploadStateFinished)).Scan(
+		&out.RuntimeRouteCount,
+		&out.RuntimeHTTPRouteCount,
+		&out.RuntimeWebSocketRouteCount,
+	); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric runtime routes: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM sites s
+		JOIN runtime_routes rr
+			ON rr.site_sha = s.site_sha
+			AND rr.upload_version = s.current_version
+		JOIN uploads u
+			ON u.site_sha = rr.site_sha
+			AND u.version = rr.upload_version
+			AND u.state = ?
+		WHERE s.current_version > 0 AND s.live_state = 'live'
+	`, string(domain.UploadStateFinished)).Scan(&out.CurrentRuntimeRouteCount); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric current runtime routes: %w", err)
+	}
+	if err := d.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END), 0)
+		FROM site_policy_violations
+	`).Scan(&out.PolicyViolationCount, &out.UnresolvedPolicyViolationCount); err != nil {
+		return domain.MetricsSnapshot{}, fmt.Errorf("count metric policy violations: %w", err)
+	}
+
+	users, err := d.metricUsers(ctx)
+	if err != nil {
+		return domain.MetricsSnapshot{}, err
+	}
+	out.Users = users
+	sites, err := d.metricSites(ctx)
+	if err != nil {
+		return domain.MetricsSnapshot{}, err
+	}
+	out.Sites = sites
+	return out, nil
+}
+
+func (d *Database) metricUsers(ctx context.Context) ([]domain.UserMetrics, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT u.id,
+			u.username,
+			COUNT(DISTINCT us.site_sha) AS site_count,
+			COUNT(up.id) AS version_count,
+			COALESCE(SUM(up.bytes), 0) AS bytes
+		FROM users u
+		LEFT JOIN user_sites us ON us.user_id = u.id
+		LEFT JOIN uploads up
+			ON up.site_sha = us.site_sha
+			AND up.state = ?
+		GROUP BY u.id, u.username
+		ORDER BY u.username ASC
+	`, string(domain.UploadStateFinished))
+	if err != nil {
+		return nil, fmt.Errorf("list metric users: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.UserMetrics
+	for rows.Next() {
+		var user domain.UserMetrics
+		if err := rows.Scan(&user.ID, &user.Username, &user.SiteCount, &user.VersionCount, &user.Bytes); err != nil {
+			return nil, fmt.Errorf("scan metric user: %w", err)
+		}
+		out = append(out, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate metric users: %w", err)
+	}
+	return out, nil
+}
+
+func (d *Database) metricSites(ctx context.Context) ([]domain.SiteMetrics, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT s.site,
+			s.site_sha,
+			s.live_state,
+			COALESCE(up.version_count, 0) AS version_count,
+			COALESCE(up.upload_bytes, 0) AS upload_bytes,
+			COALESCE(cur.bytes, 0) AS current_bytes,
+			COALESCE(cur.files, 0) AS current_files,
+			COALESCE(rr.runtime_routes, 0) AS runtime_routes
+		FROM sites s
+		LEFT JOIN (
+			SELECT site_sha, COUNT(*) AS version_count, COALESCE(SUM(bytes), 0) AS upload_bytes
+			FROM uploads
+			WHERE state = ?
+			GROUP BY site_sha
+		) up ON up.site_sha = s.site_sha
+		LEFT JOIN uploads cur
+			ON cur.site_sha = s.site_sha
+			AND cur.version = s.current_version
+			AND cur.state = ?
+		LEFT JOIN (
+			SELECT rr.site_sha, COUNT(*) AS runtime_routes
+			FROM runtime_routes rr
+			JOIN uploads u
+				ON u.site_sha = rr.site_sha
+				AND u.version = rr.upload_version
+				AND u.state = ?
+			GROUP BY rr.site_sha
+		) rr ON rr.site_sha = s.site_sha
+		ORDER BY s.site ASC
+	`, string(domain.UploadStateFinished), string(domain.UploadStateFinished), string(domain.UploadStateFinished))
+	if err != nil {
+		return nil, fmt.Errorf("list metric sites: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.SiteMetrics
+	for rows.Next() {
+		var site domain.SiteMetrics
+		if err := rows.Scan(
+			&site.Site,
+			&site.SiteSHA,
+			&site.LiveState,
+			&site.VersionCount,
+			&site.UploadBytes,
+			&site.CurrentBytes,
+			&site.CurrentFiles,
+			&site.RuntimeRoutes,
+		); err != nil {
+			return nil, fmt.Errorf("scan metric site: %w", err)
+		}
+		out = append(out, site)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate metric sites: %w", err)
+	}
+	return out, nil
+}
+
 func (d *Database) ListUserSites(ctx context.Context, userID int64) ([]domain.PublishedSite, error) {
 	return d.listPublishedSites(ctx, userID, false)
 }

@@ -32,6 +32,10 @@ func MemoryUsage(site string) int64 {
 	return globalMemory.memoryUsage(site)
 }
 
+func MemoryUsageBySite() map[string]int64 {
+	return globalMemory.memoryUsageBySite()
+}
+
 type memoryStore struct {
 	mu          sync.Mutex
 	sites       map[string]*siteMemory
@@ -191,6 +195,15 @@ func (s *memoryStore) memoryUsage(site string) int64 {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.used
+}
+
+func (s *memoryStore) memoryUsageBySite() map[string]int64 {
+	sites := s.siteNames()
+	out := make(map[string]int64, len(sites))
+	for _, site := range sites {
+		out[site] = s.memoryUsage(site)
+	}
+	return out
 }
 
 func (m *memoryModule) usage(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

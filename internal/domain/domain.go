@@ -157,6 +157,47 @@ type UploadFileRecord struct {
 	Bytes        int64
 }
 
+type MetricsSnapshot struct {
+	UserCount                      int64
+	SiteCount                      int64
+	LiveSiteCount                  int64
+	UnpublishedSiteCount           int64
+	UploadCount                    int64
+	FinishedUploadCount            int64
+	UploadingUploadCount           int64
+	FailedUploadCount              int64
+	UploadBytes                    int64
+	CurrentSiteBytes               int64
+	UploadFileCount                int64
+	RuntimeRouteCount              int64
+	CurrentRuntimeRouteCount       int64
+	RuntimeHTTPRouteCount          int64
+	RuntimeWebSocketRouteCount     int64
+	PolicyViolationCount           int64
+	UnresolvedPolicyViolationCount int64
+	Users                          []UserMetrics
+	Sites                          []SiteMetrics
+}
+
+type UserMetrics struct {
+	ID           int64
+	Username     string
+	SiteCount    int64
+	VersionCount int64
+	Bytes        int64
+}
+
+type SiteMetrics struct {
+	Site          string
+	SiteSHA       string
+	LiveState     string
+	VersionCount  int64
+	UploadBytes   int64
+	CurrentBytes  int64
+	CurrentFiles  int64
+	RuntimeRoutes int64
+}
+
 type EffectiveValue[T any] struct {
 	Value    T
 	Source   string

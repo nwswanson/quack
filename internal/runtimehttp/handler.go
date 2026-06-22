@@ -50,6 +50,20 @@ func (h Handler) ActiveWebSockets(site string) int64 {
 	return h.sockets.activeBySite(site)
 }
 
+func (h Handler) ActiveWebSocketsTotal() int64 {
+	if h.sockets == nil {
+		return 0
+	}
+	return h.sockets.activeTotal()
+}
+
+func (h Handler) ActiveWebSocketsBySite() map[string]int64 {
+	if h.sockets == nil {
+		return nil
+	}
+	return h.sockets.activeBySiteSnapshot()
+}
+
 func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appruntime.InvocationRequest) {
 	limits := req.Limits
 	if limits.MaxRequestBytes <= 0 {

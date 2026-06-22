@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+type httpRequestRecorder interface {
+	RecordHTTPRequest(surface string, method string, status int, duration time.Duration)
+}
+
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	status int
@@ -48,6 +52,10 @@ func (w *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func requestLogger(next http.Handler) http.Handler {
+	return requestLoggerWithMetrics(next, "", nil)
+}
+
+func requestLoggerWithMetrics(next http.Handler, surface string, metrics httpRequestRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		lrw := &loggingResponseWriter{ResponseWriter: w}
@@ -57,6 +65,10 @@ func requestLogger(next http.Handler) http.Handler {
 		status := lrw.status
 		if status == 0 {
 			status = http.StatusOK
+		}
+		duration := time.Since(start)
+		if metrics != nil {
+			metrics.RecordHTTPRequest(surface, r.Method, status, duration)
 		}
 
 		level := slog.LevelInfo
@@ -74,7 +86,7 @@ func requestLogger(next http.Handler) http.Handler {
 			slog.String("remote_addr", r.RemoteAddr),
 			slog.Int("status", status),
 			slog.Int64("bytes", lrw.bytes),
-			slog.Duration("duration", time.Since(start)),
+			slog.Duration("duration", duration),
 		)
 	})
 }

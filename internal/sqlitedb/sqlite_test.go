@@ -242,6 +242,91 @@ func TestRuntimeRoutesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMetricsSnapshotCountsUsersSitesBytesAndRoutes(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	alice, err := db.CreateUser(ctx, "alice", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := db.CreateUser(ctx, "bob", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v1, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveRuntimeRoutes(ctx, v1.SiteSHA, v1.Version, []appruntime.RouteMetadata{{
+		RoutePath: "/api", RouteKind: appruntime.RouteHTTP, RuntimeKind: appruntime.RuntimeStarlark,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	v1.Files = []domain.UploadFileRecord{{RelativePath: "index.html", BlobPath: "blob-v1", FileSHA: "sha-v1", Bytes: 10}}
+	if err := db.FinishUpload(ctx, v1); err != nil {
+		t.Fatal(err)
+	}
+
+	v2, err := db.BeginUpload(ctx, "example", "site-sha", alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveRuntimeRoutes(ctx, v2.SiteSHA, v2.Version, []appruntime.RouteMetadata{
+		{RoutePath: "/api", RouteKind: appruntime.RouteHTTP, RuntimeKind: appruntime.RuntimeStarlark},
+		{RoutePath: "/ws", RouteKind: appruntime.RouteWebSocket, RuntimeKind: appruntime.RuntimeStarlark},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	v2.Files = []domain.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blob-v2a", FileSHA: "sha-v2a", Bytes: 20},
+		{RelativePath: "app.js", BlobPath: "blob-v2b", FileSHA: "sha-v2b", Bytes: 5},
+	}
+	if err := db.FinishUpload(ctx, v2); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.LinkUserSite(ctx, alice.User.ID, "site-sha"); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := db.MetricsSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.UserCount != 2 || snapshot.SiteCount != 1 || snapshot.LiveSiteCount != 1 {
+		t.Fatalf("snapshot user/site counts = %#v", snapshot)
+	}
+	if snapshot.UploadCount != 2 || snapshot.FinishedUploadCount != 2 || snapshot.UploadBytes != 35 || snapshot.CurrentSiteBytes != 25 || snapshot.UploadFileCount != 3 {
+		t.Fatalf("snapshot upload counts = %#v", snapshot)
+	}
+	if snapshot.RuntimeRouteCount != 3 || snapshot.RuntimeHTTPRouteCount != 2 || snapshot.RuntimeWebSocketRouteCount != 1 || snapshot.CurrentRuntimeRouteCount != 2 {
+		t.Fatalf("snapshot route counts = %#v", snapshot)
+	}
+
+	users := map[string]domain.UserMetrics{}
+	for _, user := range snapshot.Users {
+		users[user.Username] = user
+	}
+	if got := users["alice"]; got.ID != alice.User.ID || got.SiteCount != 1 || got.VersionCount != 2 || got.Bytes != 35 {
+		t.Fatalf("alice metrics = %#v, want linked site storage bytes", got)
+	}
+	if got := users["bob"]; got.ID != bob.User.ID || got.SiteCount != 0 || got.VersionCount != 0 || got.Bytes != 0 {
+		t.Fatalf("bob metrics = %#v, want zero linked storage", got)
+	}
+	if len(snapshot.Sites) != 1 {
+		t.Fatalf("site metrics = %#v, want one site", snapshot.Sites)
+	}
+	site := snapshot.Sites[0]
+	if site.Site != "example" || site.VersionCount != 2 || site.UploadBytes != 35 || site.CurrentBytes != 25 || site.CurrentFiles != 2 || site.RuntimeRoutes != 3 {
+		t.Fatalf("site metrics = %#v, want byte and route totals", site)
+	}
+}
+
 func TestListCurrentRuntimeRoutesUsesCurrentLiveVersion(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

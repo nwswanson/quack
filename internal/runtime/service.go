@@ -55,6 +55,7 @@ func (s *service) InvokeHTTP(ctx context.Context, req InvocationRequest) (resp I
 		event.Duration = time.Since(start)
 		if err != nil {
 			event.Error = err.Error()
+			event.ErrorKind = invocationErrorKind(err)
 		}
 		event.StatusCode = resp.StatusCode
 		s.metrics.RecordInvocation(ctx, event)
@@ -90,6 +91,7 @@ func (s *service) InvokeWebSocket(ctx context.Context, req WebSocketInvocationRe
 		event.Duration = time.Since(start)
 		if err != nil {
 			event.Error = err.Error()
+			event.ErrorKind = invocationErrorKind(err)
 		}
 		s.metrics.RecordInvocation(ctx, event)
 	}()
@@ -200,6 +202,38 @@ func invocationError(ctx context.Context, err error) error {
 		return ErrTimeout
 	}
 	return err
+}
+func invocationErrorKind(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrDisabled):
+		return "disabled"
+	case errors.Is(err, ErrRouteNotFound):
+		return "route_not_found"
+	case errors.Is(err, ErrCapabilityDenied):
+		return "capability_denied"
+	case errors.Is(err, ErrMethodNotAllowed):
+		return "method_not_allowed"
+	case errors.Is(err, ErrRequestTooLarge):
+		return "request_too_large"
+	case errors.Is(err, ErrResponseTooLarge):
+		return "response_too_large"
+	case errors.Is(err, ErrTimeout):
+		return "timeout"
+	case errors.Is(err, ErrConcurrencyLimit):
+		return "concurrency_limit"
+	case errors.Is(err, ErrConnectionLimit):
+		return "connection_limit"
+	case errors.Is(err, ErrBackpressure):
+		return "backpressure"
+	case errors.Is(err, ErrInvalidRuntime):
+		return "invalid_runtime"
+	case errors.Is(err, ErrInvocationFailure):
+		return "invocation_failure"
+	default:
+		return "other"
+	}
 }
 func validateResponse(resp InvocationResponse, limits ResourceLimits) (InvocationResponse, error) {
 	if int64(len(resp.Body)) > limits.MaxResponseBytes {

@@ -31,6 +31,48 @@ func TestAdminSurfaceServesAPIAndUI(t *testing.T) {
 	}
 }
 
+func TestAdminSurfaceServesPrometheusMetrics(t *testing.T) {
+	db := &fakeDatabase{
+		adminUsers: []domain.AdminUser{
+			{ID: 1, Username: "admin", AdminPriv: "admin:*"},
+			{ID: 2, Username: "alice", AdminPriv: "user"},
+		},
+		sites: []domain.PublishedSite{
+			{Site: "alpha", SiteSHA: "sha-alpha", VersionCount: 2, FileCount: 3, ByteCount: 123, LiveState: "live"},
+		},
+	}
+	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootRec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rootRec, rootReq)
+	if rootRec.Code != http.StatusOK {
+		t.Fatalf("root status = %d, want %d", rootRec.Code, http.StatusOK)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; version=0.0.4; charset=utf-8" {
+		t.Fatalf("content-type = %q, want prometheus text", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"# TYPE quack_up gauge",
+		"quack_users_total 2",
+		"quack_sites_total 1",
+		`quack_site_storage_bytes{live_state="live",site="alpha",site_sha="sha-alpha"} 246`,
+		`quack_http_requests_total{method="GET",status="200",surface="admin"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestServerAddressDefaultsAndOverrides(t *testing.T) {
 	defaults := New("", "", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 	if defaults.Admin.Addr != ":8081" {

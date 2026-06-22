@@ -216,6 +216,42 @@ func (db *fakeDatabase) ListUsers(ctx context.Context) ([]domain.AdminUser, erro
 	return nil, nil
 }
 
+func (db *fakeDatabase) MetricsSnapshot(ctx context.Context) (domain.MetricsSnapshot, error) {
+	users, err := db.ListUsers(ctx)
+	if err != nil {
+		return domain.MetricsSnapshot{}, err
+	}
+	out := domain.MetricsSnapshot{
+		UserCount: int64(len(users)),
+		SiteCount: int64(len(db.sites)),
+	}
+	for _, user := range users {
+		out.Users = append(out.Users, domain.UserMetrics{ID: user.ID, Username: user.Username})
+	}
+	for _, site := range db.sites {
+		if site.LiveState == "live" {
+			out.LiveSiteCount++
+		}
+		if site.LiveState == "unpublished" {
+			out.UnpublishedSiteCount++
+		}
+		out.CurrentSiteBytes += site.ByteCount
+		out.FinishedUploadCount += site.VersionCount
+		out.UploadBytes += site.ByteCount * site.VersionCount
+		out.Sites = append(out.Sites, domain.SiteMetrics{
+			Site:         site.Site,
+			SiteSHA:      site.SiteSHA,
+			LiveState:    site.LiveState,
+			VersionCount: site.VersionCount,
+			UploadBytes:  site.ByteCount * site.VersionCount,
+			CurrentBytes: site.ByteCount,
+			CurrentFiles: site.FileCount,
+		})
+	}
+	out.UploadCount = out.FinishedUploadCount
+	return out, nil
+}
+
 func (db *fakeDatabase) ListUserSites(ctx context.Context, userID int64) ([]domain.PublishedSite, error) {
 	return db.sites, nil
 }

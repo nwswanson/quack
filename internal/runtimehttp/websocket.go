@@ -444,6 +444,22 @@ func (m *socketManager) activeBySite(site string) int64 {
 	return m.bySite[site]
 }
 
+func (m *socketManager) activeTotal() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return int64(len(m.connections))
+}
+
+func (m *socketManager) activeBySiteSnapshot() map[string]int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]int64, len(m.bySite))
+	for site, count := range m.bySite {
+		out[site] = count
+	}
+	return out
+}
+
 func (m *socketManager) send(connID string, payload []byte) error {
 	return m.sendFrame(connID, websocketOpcodeText, payload)
 }
