@@ -1,5 +1,10 @@
 const DEFAULT_WIDTH = 48;
 const DEFAULT_HEIGHT = 48;
+const SPRAY_DROPS = 2;
+const SPRAY_MOVE_BOOST = 1;
+const SPRAY_MAX_BOOST = 2;
+const SPRAY_SIZE = 4;
+const SPRAY_INTERVAL_MS = 125;
 
 const canvas = document.querySelector("#canvas");
 const ctx = canvas.getContext("2d");
@@ -20,6 +25,7 @@ const state = {
   colors: [],
   colorsByCode: new Map(),
   color: 0,
+  brush: "square",
   brushSize: 1,
   drawingId: "",
   drawings: [],
@@ -27,8 +33,11 @@ const state = {
   socket: null,
   retryTimer: 0,
   flushTimer: 0,
+  sprayTimer: 0,
   drawing: false,
   lastCell: null,
+  sprayCell: null,
+  sprayBoost: 0,
   pending: new Map(),
 };
 
@@ -261,7 +270,7 @@ function paintCell(x, y) {
   state.pending.set(i, { x, y, color: state.color });
 }
 
-function paintStamp(x, y) {
+function paintSquareStamp(x, y) {
   const offset = Math.floor((state.brushSize - 1) / 2);
   const startX = x - offset;
   const startY = y - offset;
@@ -272,6 +281,50 @@ function paintStamp(x, y) {
       if (stampX < 0 || stampX >= state.width) continue;
       paintCell(stampX, stampY);
     }
+  }
+}
+
+function paintRoundStamp(x, y) {
+  const offset = Math.floor((state.brushSize - 1) / 2);
+  const startX = x - offset;
+  const startY = y - offset;
+  const center = (state.brushSize - 1) / 2;
+  const radius = center + 0.25;
+
+  for (let stampY = 0; stampY < state.brushSize; stampY += 1) {
+    const yDistance = stampY - center;
+    for (let stampX = 0; stampX < state.brushSize; stampX += 1) {
+      const xDistance = stampX - center;
+      if (Math.hypot(xDistance, yDistance) > radius) continue;
+
+      const paintX = startX + stampX;
+      const paintY = startY + stampY;
+      if (paintX < 0 || paintX >= state.width || paintY < 0 || paintY >= state.height) continue;
+      paintCell(paintX, paintY);
+    }
+  }
+}
+
+function paintSprayStamp(x, y, drops = SPRAY_DROPS) {
+  const offset = Math.floor((SPRAY_SIZE - 1) / 2);
+  const startX = x - offset;
+  const startY = y - offset;
+
+  for (let i = 0; i < drops; i += 1) {
+    const sprayX = startX + Math.floor(Math.random() * SPRAY_SIZE);
+    const sprayY = startY + Math.floor(Math.random() * SPRAY_SIZE);
+    if (sprayX < 0 || sprayX >= state.width || sprayY < 0 || sprayY >= state.height) continue;
+    paintCell(sprayX, sprayY);
+  }
+}
+
+function paintStamp(x, y, sprayDrops = SPRAY_DROPS) {
+  if (state.brush === "spray") {
+    paintSprayStamp(x, y, sprayDrops);
+  } else if (state.brush === "round") {
+    paintRoundStamp(x, y);
+  } else {
+    paintSquareStamp(x, y);
   }
   scheduleFlush();
   render();
@@ -325,6 +378,24 @@ function flushPixels() {
   }));
 }
 
+function startSpray(cell) {
+  if (state.brush !== "spray") return;
+  state.sprayCell = cell;
+  window.clearInterval(state.sprayTimer);
+  state.sprayTimer = window.setInterval(() => {
+    if (!state.drawing || !state.sprayCell) return;
+    paintStamp(state.sprayCell.x, state.sprayCell.y, SPRAY_DROPS + state.sprayBoost);
+    state.sprayBoost = Math.max(0, state.sprayBoost - 1);
+  }, SPRAY_INTERVAL_MS);
+}
+
+function stopSpray() {
+  window.clearInterval(state.sprayTimer);
+  state.sprayTimer = 0;
+  state.sprayCell = null;
+  state.sprayBoost = 0;
+}
+
 palette.addEventListener("click", (event) => {
   const button = event.target.closest(".swatch");
   if (!button) return;
@@ -343,8 +414,10 @@ brushes.addEventListener("click", (event) => {
   const button = event.target.closest(".brush-button");
   if (!button) return;
 
+  const brush = button.dataset.brush;
   const size = Number.parseInt(button.dataset.size, 10);
-  if (![1, 4].includes(size)) return;
+  if (!["square", "round", "spray"].includes(brush) || ![1, 2, 4].includes(size)) return;
+  state.brush = brush;
   state.brushSize = size;
   for (const brush of brushes.querySelectorAll(".brush-button")) {
     const active = brush === button;
@@ -380,6 +453,7 @@ canvas.addEventListener("pointerdown", (event) => {
   state.drawing = true;
   state.lastCell = cell;
   paintStamp(cell.x, cell.y);
+  startSpray(cell);
 });
 
 canvas.addEventListener("pointermove", (event) => {
@@ -387,6 +461,15 @@ canvas.addEventListener("pointermove", (event) => {
   const cell = cellFromEvent(event);
   if (!cell) return;
   event.preventDefault();
+  if (state.brush === "spray") {
+    const movedCell = !state.lastCell || state.lastCell.x !== cell.x || state.lastCell.y !== cell.y;
+    state.lastCell = cell;
+    state.sprayCell = cell;
+    if (movedCell) {
+      state.sprayBoost = Math.min(SPRAY_MAX_BOOST, state.sprayBoost + SPRAY_MOVE_BOOST);
+    }
+    return;
+  }
   paintLine(state.lastCell, cell);
   state.lastCell = cell;
 });
@@ -395,6 +478,7 @@ function endStroke() {
   if (!state.drawing) return;
   state.drawing = false;
   state.lastCell = null;
+  stopSpray();
   flushPixels();
 }
 

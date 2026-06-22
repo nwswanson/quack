@@ -216,14 +216,34 @@ h1 {
   height: 7px;
 }
 
-.brush-preview-4 {
-  width: 28px;
-  height: 28px;
+.brush-preview-2 {
+  width: 18px;
+  height: 18px;
   background:
     linear-gradient(var(--line) 1px, transparent 1px),
     linear-gradient(90deg, var(--line) 1px, transparent 1px),
     var(--text);
-  background-size: 7px 7px;
+  background-size: 9px 9px;
+}
+
+.brush-preview-round {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.brush-preview-spray {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  background:
+    radial-gradient(circle at 46% 48%, var(--text) 0 2px, transparent 2px),
+    radial-gradient(circle at 32% 24%, var(--text) 0 2px, transparent 2px),
+    radial-gradient(circle at 64% 26%, var(--text) 0 1.5px, transparent 1.5px),
+    radial-gradient(circle at 22% 58%, var(--text) 0 1.5px, transparent 1.5px),
+    radial-gradient(circle at 72% 56%, var(--text) 0 2px, transparent 2px),
+    radial-gradient(circle at 42% 76%, var(--text) 0 1.5px, transparent 1.5px),
+    radial-gradient(circle at 82% 80%, var(--text) 0 1.5px, transparent 1.5px);
 }
 
 .palette {
