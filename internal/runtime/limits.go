@@ -1,14 +1,17 @@
 package runtime
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 const (
 	DefaultMaxRequestBytes                int64  = 1 << 20
 	DefaultMaxResponseBytes               int64  = 1 << 20
-	DefaultMaxDuration                           = 250 * time.Millisecond
+	DefaultMaxDuration                           = 500 * time.Millisecond
 	DefaultMaxMemoryBytes                 int64  = 32 << 20
 	DefaultMaxConcurrentInvocations       int64  = 8
-	DefaultMaxExecutionSteps              uint64 = 100_000
+	DefaultMaxExecutionSteps              uint64 = math.MaxUint64
 	DefaultMaxScriptBytes                 int64  = 256 << 10
 	DefaultMaxWebSocketConnections        int64  = 1024
 	DefaultMaxWebSocketConnectionsPerSite int64  = 128
