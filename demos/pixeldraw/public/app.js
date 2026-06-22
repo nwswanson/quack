@@ -8,6 +8,7 @@ const statusText = document.querySelector("#statusText");
 const revisionEl = document.querySelector("#revision");
 const gridSizeEl = document.querySelector("#gridSize");
 const palette = document.querySelector("#palette");
+const brushes = document.querySelector("#brushes");
 const tabsEl = document.querySelector("#tabs");
 const newDrawingButton = document.querySelector("#newDrawing");
 const deleteDrawingButton = document.querySelector("#deleteDrawing");
@@ -19,6 +20,7 @@ const state = {
   colors: [],
   colorsByCode: new Map(),
   color: 0,
+  brushSize: 1,
   drawingId: "",
   drawings: [],
   revision: 0,
@@ -257,13 +259,27 @@ function paintCell(x, y) {
   const i = y * state.width + x;
   state.pixels[i] = state.color;
   state.pending.set(i, { x, y, color: state.color });
+}
+
+function paintStamp(x, y) {
+  const offset = Math.floor((state.brushSize - 1) / 2);
+  const startX = x - offset;
+  const startY = y - offset;
+
+  for (let stampY = startY; stampY < startY + state.brushSize; stampY += 1) {
+    if (stampY < 0 || stampY >= state.height) continue;
+    for (let stampX = startX; stampX < startX + state.brushSize; stampX += 1) {
+      if (stampX < 0 || stampX >= state.width) continue;
+      paintCell(stampX, stampY);
+    }
+  }
   scheduleFlush();
   render();
 }
 
 function paintLine(from, to) {
   if (!from) {
-    paintCell(to.x, to.y);
+    paintStamp(to.x, to.y);
     return;
   }
 
@@ -278,7 +294,7 @@ function paintLine(from, to) {
   let err = dx + dy;
 
   for (;;) {
-    paintCell(x0, y0);
+    paintStamp(x0, y0);
     if (x0 === x1 && y0 === y1) break;
     const e2 = 2 * err;
     if (e2 >= dy) {
@@ -323,6 +339,20 @@ palette.addEventListener("click", (event) => {
   }
 });
 
+brushes.addEventListener("click", (event) => {
+  const button = event.target.closest(".brush-button");
+  if (!button) return;
+
+  const size = Number.parseInt(button.dataset.size, 10);
+  if (![1, 4].includes(size)) return;
+  state.brushSize = size;
+  for (const brush of brushes.querySelectorAll(".brush-button")) {
+    const active = brush === button;
+    brush.classList.toggle("is-active", active);
+    brush.setAttribute("aria-checked", active ? "true" : "false");
+  }
+});
+
 tabsEl.addEventListener("click", (event) => {
   const button = event.target.closest(".tab");
   if (!button) return;
@@ -349,7 +379,7 @@ canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
   state.drawing = true;
   state.lastCell = cell;
-  paintCell(cell.x, cell.y);
+  paintStamp(cell.x, cell.y);
 });
 
 canvas.addEventListener("pointermove", (event) => {

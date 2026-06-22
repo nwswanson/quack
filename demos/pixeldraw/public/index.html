@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PixelDraw</title>
-    <link rel="stylesheet" href="/styles.css?v=drawings-1">
+    <link rel="stylesheet" href="/styles.css?v=brushes-1">
   </head>
   <body>
     <main>
@@ -29,6 +29,15 @@
 
       <section class="workspace" aria-label="Pixel canvas">
         <aside class="tools" aria-label="Color tools">
+          <div class="brushes" id="brushes" role="radiogroup" aria-label="Brush size">
+            <button class="brush-button is-active" type="button" role="radio" data-size="1" title="1 x 1 brush" aria-label="1 x 1 brush" aria-checked="true">
+              <span class="brush-preview brush-preview-1" aria-hidden="true"></span>
+            </button>
+            <button class="brush-button" type="button" role="radio" data-size="4" title="4 x 4 brush" aria-label="4 x 4 brush" aria-checked="false">
+              <span class="brush-preview brush-preview-4" aria-hidden="true"></span>
+            </button>
+          </div>
+
           <div class="palette" id="palette" role="radiogroup" aria-label="Paint color"></div>
 
           <dl class="meta">
@@ -49,6 +58,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=drawings-1"></script>
+    <script src="/app.js?v=brushes-1"></script>
   </body>
 </html>

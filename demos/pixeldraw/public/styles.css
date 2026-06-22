@@ -179,6 +179,53 @@ h1 {
   gap: 14px;
 }
 
+.brushes {
+  display: grid;
+  grid-template-columns: repeat(2, 48px);
+  gap: 8px;
+}
+
+.brush-button {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.5) inset;
+}
+
+.brush-button.is-active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent), transparent 70%),
+    0 1px 0 rgb(255 255 255 / 0.5) inset;
+}
+
+.brush-preview {
+  display: block;
+  background-color: var(--text);
+  image-rendering: pixelated;
+}
+
+.brush-preview-1 {
+  width: 7px;
+  height: 7px;
+}
+
+.brush-preview-4 {
+  width: 28px;
+  height: 28px;
+  background:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px),
+    var(--text);
+  background-size: 7px 7px;
+}
+
 .palette {
   display: grid;
   grid-template-columns: repeat(2, 48px);
@@ -290,12 +337,21 @@ canvas {
   }
 
   .tools {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr;
     align-items: start;
   }
 
+  .brushes {
+    grid-template-columns: repeat(2, 44px);
+  }
+
+  .brush-button {
+    width: 44px;
+    height: 44px;
+  }
+
   .palette {
-    grid-template-columns: repeat(6, 44px);
+    grid-template-columns: repeat(auto-fit, 44px);
     gap: 8px;
   }
 
