@@ -387,9 +387,20 @@ runtime.events.max_dead_letter_bytes_per_site
 runtime.events.max_worker_concurrency
 ```
 
-For MQTT, broker connection profiles should be admin-owned server settings or
-server config, not uploaded site secrets. A site can request a binding to an
-allowed profile and topic pattern, but the host owns credentials.
+`ingress:` should not replace normal HTTP routing. HTTP-shaped ingress such as
+webhooks can stay as standard Starlark runtime routes. That gives the site a
+normal request handler for validation, cleanup, authentication decisions,
+payload reshaping, and explicit `events.enqueue` calls.
+
+Use `ingress:` first as a place to declare named pipeline resources. A simple
+pipe resource has no external listener; it is just an admitted topic/queue that
+Starlark or host services may publish into.
+
+Use adapter-shaped `ingress:` entries only for producers that are not naturally
+Quack HTTP routes, such as MQTT broker subscriptions. For MQTT, broker
+connection profiles should be admin-owned server settings or server config, not
+uploaded site secrets. A site can request a binding to an allowed profile and
+topic pattern, but the host owns credentials.
 
 Sketch:
 
@@ -401,8 +412,21 @@ events:
       entrypoint: api/sensors.star
       durability: durable_queue
 
+routes:
+  - path: /hooks/temperature
+    kind: http
+    runtime: starlark
+    entrypoint: api/temperature_hook.star
+    methods: [POST]
+
 ingress:
-  - kind: mqtt
+  - name: sensors.temperature
+    kind: pipe
+    topic: sensors.temperature
+    durability: durable_queue
+
+  - name: building-a-mqtt
+    kind: mqtt
     profile: building-a
     subscribe: sensors/+/temperature
     publish_to: sensors.temperature
@@ -410,10 +434,20 @@ ingress:
     key: "{{ mqtt.topic }}"
 ```
 
+The webhook route can do whatever cleanup is needed and then publish into the
+pipe:
+
+```python
+def handle(req):
+    payload = json.decode(req.body)
+    cleaned = normalize_temperature(payload)
+    return events.enqueue("sensors.temperature", cleaned)
+```
+
 Because `site.yml` uses strict known-field validation today, these fields must
 be added deliberately to `internal/manifest` before users can deploy them.
-Upload should persist normalized pipeline and ingress metadata the same way
-runtime route metadata is persisted today.
+Upload should persist normalized pipeline, consumer, and non-HTTP adapter
+metadata the same way runtime route metadata is persisted today.
 
 ## MQTT Adapter Example
 
