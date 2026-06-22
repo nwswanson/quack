@@ -1,8 +1,5 @@
 const DEFAULT_WIDTH = 48;
 const DEFAULT_HEIGHT = 48;
-const COLORS = {
-  white: "#ffffff",
-};
 
 const canvas = document.querySelector("#canvas");
 const ctx = canvas.getContext("2d");
@@ -11,23 +8,19 @@ const statusText = document.querySelector("#statusText");
 const revisionEl = document.querySelector("#revision");
 const gridSizeEl = document.querySelector("#gridSize");
 const palette = document.querySelector("#palette");
-
-function loadPaletteColors() {
-  for (const swatch of palette.querySelectorAll(".swatch")) {
-    const color = swatch.dataset.color;
-    const chip = swatch.querySelector("span");
-    const value = chip && (chip.getAttribute("style") || "").match(/background:\s*([^;]+)/);
-    if (color && value) {
-      COLORS[color] = value[1].trim();
-    }
-  }
-}
+const tabsEl = document.querySelector("#tabs");
+const newDrawingButton = document.querySelector("#newDrawing");
+const deleteDrawingButton = document.querySelector("#deleteDrawing");
 
 const state = {
   width: DEFAULT_WIDTH,
   height: DEFAULT_HEIGHT,
-  pixels: new Array(DEFAULT_WIDTH * DEFAULT_HEIGHT).fill("white"),
-  color: "white",
+  pixels: new Array(DEFAULT_WIDTH * DEFAULT_HEIGHT).fill(0),
+  colors: [],
+  colorsByCode: new Map(),
+  color: 0,
+  drawingId: "",
+  drawings: [],
   revision: 0,
   socket: null,
   retryTimer: 0,
@@ -45,6 +38,78 @@ function socketUrl() {
 function setStatus(mode, label) {
   statusEl.dataset.state = mode;
   statusText.textContent = label;
+}
+
+function colorHex(code) {
+  return state.colorsByCode.get(code)?.hex || "#ffffff";
+}
+
+function colorLabel(color) {
+  return color.id
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function loadColors() {
+  const response = await fetch("/api/colors", { headers: { accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error(`colors request failed with ${response.status}`);
+  }
+  const body = await response.json();
+  const colors = Array.isArray(body.colors) ? body.colors : [];
+  state.colors = colors
+    .filter((color) => Number.isInteger(color.code) && typeof color.hex === "string")
+    .sort((a, b) => a.code - b.code);
+  state.colorsByCode = new Map(state.colors.map((color) => [color.code, color]));
+  state.color = state.colors[0]?.code ?? 0;
+  renderPalette();
+}
+
+function renderPalette() {
+  palette.replaceChildren();
+  for (const color of state.colors) {
+    const button = document.createElement("button");
+    button.className = "swatch";
+    button.type = "button";
+    button.dataset.color = String(color.code);
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", color.code === state.color ? "true" : "false");
+    button.title = colorLabel(color);
+
+    const chip = document.createElement("span");
+    chip.style.background = color.hex;
+    button.append(chip);
+    if (color.code === state.color) {
+      button.classList.add("is-active");
+    }
+    palette.append(button);
+  }
+}
+
+function setDrawings(drawings) {
+  state.drawings = Array.isArray(drawings)
+    ? drawings.filter((id) => typeof id === "string" && id.length > 0)
+    : [];
+  renderTabs();
+}
+
+function renderTabs() {
+  tabsEl.replaceChildren();
+  for (const drawingId of state.drawings) {
+    const button = document.createElement("button");
+    button.className = "tab";
+    button.type = "button";
+    button.dataset.drawingId = drawingId;
+    button.textContent = `tab ${drawingId.slice(0, 5)}`;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", drawingId === state.drawingId ? "true" : "false");
+    if (drawingId === state.drawingId) {
+      button.classList.add("is-active");
+    }
+    tabsEl.append(button);
+  }
+  deleteDrawingButton.disabled = state.drawings.length <= 1 || !state.drawingId;
 }
 
 function connect() {
@@ -84,11 +149,15 @@ function handleMessage(msg) {
   if (msg.type === "canvas_snapshot") {
     state.width = msg.width || DEFAULT_WIDTH;
     state.height = msg.height || DEFAULT_HEIGHT;
-    state.pixels = new Array(state.width * state.height).fill("white");
+    state.drawingId = typeof msg.drawing_id === "string" ? msg.drawing_id : "";
+    setDrawings(msg.drawings);
+    state.pending.clear();
+    state.pixels = new Array(state.width * state.height).fill(0);
     if (Array.isArray(msg.pixels)) {
       for (const pixel of msg.pixels) {
-        if (Number.isInteger(pixel.i) && COLORS[pixel.color]) {
-          state.pixels[pixel.i] = pixel.color;
+        const color = normalizeColor(pixel.color);
+        if (Number.isInteger(pixel.i) && state.colorsByCode.has(color)) {
+          state.pixels[pixel.i] = color;
         }
       }
     }
@@ -99,16 +168,30 @@ function handleMessage(msg) {
     return;
   }
 
+  if (msg.type === "drawings_changed") {
+    setDrawings(msg.drawings);
+    if (state.drawingId && !state.drawings.includes(state.drawingId)) {
+      requestDrawing(state.drawings[0]);
+    }
+    return;
+  }
+
   if (msg.type === "pixels_updated" && Array.isArray(msg.pixels)) {
+    if (msg.drawing_id !== state.drawingId) return;
     for (const pixel of msg.pixels) {
-      if (Number.isInteger(pixel.i) && COLORS[pixel.color]) {
-        state.pixels[pixel.i] = pixel.color;
+      const color = normalizeColor(pixel.color);
+      if (Number.isInteger(pixel.i) && state.colorsByCode.has(color)) {
+        state.pixels[pixel.i] = color;
       }
     }
     state.revision = msg.revision || state.revision;
     revisionEl.textContent = String(state.revision);
     render();
   }
+}
+
+function normalizeColor(value) {
+  return Number.isInteger(value) ? value : Number.parseInt(value, 10);
 }
 
 function resizeCanvas() {
@@ -126,14 +209,14 @@ function render() {
   const size = canvas.width;
   const cell = size / state.width;
 
-  ctx.fillStyle = COLORS.white;
+  ctx.fillStyle = colorHex(0);
   ctx.fillRect(0, 0, size, size);
 
   for (let y = 0; y < state.height; y += 1) {
     for (let x = 0; x < state.width; x += 1) {
       const color = state.pixels[y * state.width + x];
-      if (color === "white") continue;
-      ctx.fillStyle = COLORS[color] || COLORS.white;
+      if (color === 0) continue;
+      ctx.fillStyle = colorHex(color);
       ctx.fillRect(Math.floor(x * cell), Math.floor(y * cell), Math.ceil(cell), Math.ceil(cell));
     }
   }
@@ -163,8 +246,14 @@ function isOpen() {
   return state.socket && state.socket.readyState === WebSocket.OPEN;
 }
 
+function requestDrawing(drawingId) {
+  if (!isOpen() || !drawingId || drawingId === state.drawingId) return;
+  state.pending.clear();
+  state.socket.send(JSON.stringify({ type: "get_drawing", drawing_id: drawingId }));
+}
+
 function paintCell(x, y) {
-  if (!isOpen()) return;
+  if (!isOpen() || !state.drawingId) return;
   const i = y * state.width + x;
   state.pixels[i] = state.color;
   state.pending.set(i, { x, y, color: state.color });
@@ -210,22 +299,47 @@ function scheduleFlush() {
 
 function flushPixels() {
   state.flushTimer = 0;
-  if (!isOpen() || state.pending.size === 0) return;
+  if (!isOpen() || state.pending.size === 0 || !state.drawingId) return;
   const pixels = Array.from(state.pending.values());
   state.pending.clear();
-  state.socket.send(JSON.stringify({ type: "draw_pixels", pixels }));
+  state.socket.send(JSON.stringify({
+    type: "draw_pixels",
+    drawing_id: state.drawingId,
+    pixels,
+  }));
 }
 
 palette.addEventListener("click", (event) => {
   const button = event.target.closest(".swatch");
   if (!button) return;
 
-  state.color = button.dataset.color;
+  const color = normalizeColor(button.dataset.color);
+  if (!state.colorsByCode.has(color)) return;
+  state.color = color;
   for (const swatch of palette.querySelectorAll(".swatch")) {
     const active = swatch === button;
     swatch.classList.toggle("is-active", active);
     swatch.setAttribute("aria-checked", active ? "true" : "false");
   }
+});
+
+tabsEl.addEventListener("click", (event) => {
+  const button = event.target.closest(".tab");
+  if (!button) return;
+  flushPixels();
+  requestDrawing(button.dataset.drawingId);
+});
+
+newDrawingButton.addEventListener("click", () => {
+  if (!isOpen()) return;
+  flushPixels();
+  state.socket.send(JSON.stringify({ type: "create_drawing" }));
+});
+
+deleteDrawingButton.addEventListener("click", () => {
+  if (!isOpen() || !state.drawingId || state.drawings.length <= 1) return;
+  state.pending.clear();
+  state.socket.send(JSON.stringify({ type: "delete_drawing", drawing_id: state.drawingId }));
 });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -258,7 +372,16 @@ canvas.addEventListener("pointerup", endStroke);
 canvas.addEventListener("pointercancel", endStroke);
 canvas.addEventListener("lostpointercapture", endStroke);
 
-loadPaletteColors();
-new ResizeObserver(resizeCanvas).observe(canvas);
-resizeCanvas();
-connect();
+async function init() {
+  try {
+    await loadColors();
+  } catch (error) {
+    setStatus("closed", "Colors failed");
+    return;
+  }
+  new ResizeObserver(resizeCanvas).observe(canvas);
+  resizeCanvas();
+  connect();
+}
+
+init();

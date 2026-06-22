@@ -488,7 +488,29 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := newTestStarlarkExecutor(t, map[string]string{"pixels.star": string(src)})
+	colorsSrc, err := os.ReadFile("../../demos/pixeldraw/api/colors.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"pixels.star": string(src),
+		"colors.star": string(colorsSrc),
+	})
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "demo-pixeldraw", Version: 1,
+		Routes: []Route{{Path: "/api/colors", Kind: RouteHTTP, Entrypoint: "colors.star"}},
+	}, InvocationRequest{
+		Site: "demo-pixeldraw", Version: 1, Route: "/api/colors", Method: http.MethodGet,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"colors"`, `"id": "red"`, `"code": 5`, `"hex": "#2469d8"`} {
+		if !strings.Contains(string(resp.Body), want) {
+			t.Fatalf("colors payload = %s, want %s", resp.Body, want)
+		}
+	}
+
 	bundle := Bundle{
 		Site: "demo-pixeldraw", Version: 1,
 		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
@@ -518,7 +540,7 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 		t.Fatalf("draw effects = %#v, want publish effect", effects)
 	}
 	update := string(effects[0].Payload)
-	for _, want := range []string{`"type":"pixels_updated"`, `"revision":1`, `"color":"red"`, `"color":"blue"`} {
+	for _, want := range []string{`"type":"pixels_updated"`, `"revision":1`, `"drawing_id":`, `"color":5`, `"color":13`} {
 		if !strings.Contains(update, want) {
 			t.Fatalf("draw payload = %s, want %s", update, want)
 		}
@@ -534,6 +556,161 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 	if len(effects) != 1 || effects[0].Type != WebSocketEffectSend || string(effects[0].Payload) != update {
 		t.Fatalf("event effects = %#v, want update forwarded", effects)
 	}
+}
+
+func TestDemoPixeldrawIgnoresLegacyCanvasKeys(t *testing.T) {
+	site := "demo-pixeldraw-legacy-noise"
+	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"pixels.star": string(src),
+		"seed.star": `
+def handle(req):
+    memory.clear()
+    memory.set("pixeldraw:drawings", ["old-drawing"])
+    for i in range(48 * 48):
+        memory.set("pixeldraw:px:" + str(i), "red")
+    memory.set("pixeldraw:revision", 9)
+    return (200, {}, "seeded")
+`,
+	})
+
+	_, err = executor.Invoke(context.Background(), Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/seed", Kind: RouteHTTP, Entrypoint: "seed.star"}},
+		Limits: ResourceLimits{MaxExecutionSteps: 1_000_000},
+	}, InvocationRequest{Site: site, Version: 1, Route: "/seed", Method: http.MethodPost})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
+	}, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", ConnID: "legacy", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 3 {
+		t.Fatalf("connect effects = %#v, want subscribe, ready, and snapshot", effects)
+	}
+	snapshot := string(effects[2].Payload)
+	for _, want := range []string{`"type":"canvas_snapshot"`, `"revision":0`, `"pixels":[]`} {
+		if !strings.Contains(snapshot, want) {
+			t.Fatalf("snapshot payload = %s, want %s", snapshot, want)
+		}
+	}
+}
+
+func TestDemoPixeldrawDrawIgnoresPlainRevisionValue(t *testing.T) {
+	site := "demo-pixeldraw-plain-revision"
+	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"pixels.star": string(src),
+		"seed.star": `
+def handle(req):
+    memory.clear()
+    memory.set("pixeldraw:drawings", ["old-drawing"])
+    memory.set("pixeldraw:drawing:old-drawing:revision", 9)
+    return (200, {}, "seeded")
+`,
+	})
+
+	_, err = executor.Invoke(context.Background(), Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/seed", Kind: RouteHTTP, Entrypoint: "seed.star"}},
+	}, InvocationRequest{Site: site, Version: 1, Route: "/seed", Method: http.MethodPost})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
+	}, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"draw_pixels","drawing_id":"old-drawing","pixels":[{"x":1,"y":2,"color":"red"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish {
+		t.Fatalf("draw effects = %#v, want publish effect", effects)
+	}
+	update := string(effects[0].Payload)
+	for _, want := range []string{`"type":"pixels_updated"`, `"revision":1`, `"drawing_id":"old-drawing"`, `"color":5`} {
+		if !strings.Contains(update, want) {
+			t.Fatalf("draw payload = %s, want %s", update, want)
+		}
+	}
+}
+
+func TestDemoPixeldrawSnapshotIncludesPersistedPixels(t *testing.T) {
+	site := "demo-pixeldraw-persisted-pixels"
+	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{"pixels.star": string(src)})
+	bundle := Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := string(effects[2].Payload)
+	drawingID := jsonStringField(t, snapshot, "drawing_id")
+	if drawingID == "" {
+		t.Fatalf("snapshot payload = %s, want drawing_id", snapshot)
+	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"draw_pixels","drawing_id":"` + drawingID + `","pixels":[{"x":1,"y":2,"color":"red"}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", ConnID: "c2", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := string(effects[2].Payload)
+	for _, want := range []string{`"drawing_id":"` + drawingID + `"`, `"revision":1`, `"i":97`, `"color":5`} {
+		if !strings.Contains(persisted, want) {
+			t.Fatalf("snapshot payload = %s, want %s", persisted, want)
+		}
+	}
+}
+
+func jsonStringField(t *testing.T, body, field string) string {
+	t.Helper()
+	needle := `"` + field + `":"`
+	start := strings.Index(body, needle)
+	if start < 0 {
+		return ""
+	}
+	start += len(needle)
+	end := strings.Index(body[start:], `"`)
+	if end < 0 {
+		return ""
+	}
+	return body[start : start+end]
 }
 
 func TestServiceInvokesStarlarkBehindPolicyGate(t *testing.T) {

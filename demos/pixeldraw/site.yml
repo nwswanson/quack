@@ -6,3 +6,8 @@ routes:
     kind: websocket
     runtime: starlark
     entrypoint: api/pixels.star
+  - path: /api/colors
+    kind: http
+    runtime: starlark
+    entrypoint: api/colors.star
+    methods: [GET]
