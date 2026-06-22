@@ -120,12 +120,11 @@ def _snapshot_pixels(drawing_id):
     out = []
     pixels = _read_pixels(drawing_id)
     normalized = {}
-    dirty = False
+    dirty = len(pixels) > WIDTH * HEIGHT
 
-    for index_key in pixels:
-        i = _as_int(index_key)
-        if i < 0 or i >= WIDTH * HEIGHT:
-            dirty = True
+    for i in range(WIDTH * HEIGHT):
+        index_key = _pixel_index_key(i)
+        if index_key not in pixels:
             continue
         stored = pixels[index_key]
         code = _valid_color_code(stored)
@@ -138,6 +137,8 @@ def _snapshot_pixels(drawing_id):
         if stored != code:
             dirty = True
 
+    if len(normalized) != len(pixels):
+        dirty = True
     if dirty:
         _write_pixels(drawing_id, normalized)
     return out

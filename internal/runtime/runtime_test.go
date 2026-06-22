@@ -698,6 +698,55 @@ func TestDemoPixeldrawSnapshotIncludesPersistedPixels(t *testing.T) {
 	}
 }
 
+func TestDemoPixeldrawSnapshotIgnoresOversizedPixelKeys(t *testing.T) {
+	site := "demo-pixeldraw-oversized-pixel-key"
+	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"pixels.star": string(src),
+		"seed.star": `
+def handle(req):
+    memory.clear()
+    memory.set("pixeldraw:drawings", ["old-drawing"])
+    memory.set("pixeldraw:drawing:old-drawing:pixels", {
+        "97": "red",
+        "9" * 20000: 5,
+    })
+    return (200, {}, "seeded")
+`,
+	})
+
+	_, err = executor.Invoke(context.Background(), Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/seed", Kind: RouteHTTP, Entrypoint: "seed.star"}},
+	}, InvocationRequest{Site: site, Version: 1, Route: "/seed", Method: http.MethodPost})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
+		Limits: ResourceLimits{MaxExecutionSteps: 1_000_000},
+	}, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 3 {
+		t.Fatalf("connect effects = %#v, want subscribe, ready, and snapshot", effects)
+	}
+	snapshot := string(effects[2].Payload)
+	for _, want := range []string{`"type":"canvas_snapshot"`, `"drawing_id":"old-drawing"`, `"i":97`, `"color":5`} {
+		if !strings.Contains(snapshot, want) {
+			t.Fatalf("snapshot payload = %s, want %s", snapshot, want)
+		}
+	}
+}
+
 func jsonStringField(t *testing.T, body, field string) string {
 	t.Helper()
 	needle := `"` + field + `":"`

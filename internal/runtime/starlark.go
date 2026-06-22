@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 
 	"quack/internal/runtime/modules"
@@ -120,7 +121,9 @@ func (e *StarlarkExecutor) readScript(ctx context.Context, objectKey string, lim
 }
 func starlarkThread(ctx context.Context, name string, maxSteps uint64) (*starlark.Thread, func()) {
 	thread := &starlark.Thread{Name: name}
-	thread.SetMaxExecutionSteps(maxSteps)
+	if maxSteps != 0 && maxSteps != math.MaxUint64 {
+		thread.SetMaxExecutionSteps(maxSteps)
+	}
 	done := make(chan struct{})
 	go func() {
 		select {
