@@ -275,10 +275,22 @@ func (db *fakeDatabase) LinkUserSite(ctx context.Context, userID int64, siteSHA 
 
 func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
 	if db.settings.MaxUploadBytes == 0 && db.settings.MaxUploadFiles == 0 && db.settings.LogLevel == "" {
-		return domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"}, nil
+		return domain.ServerSettings{
+			MaxUploadBytes:         DefaultMaxUploadBytes,
+			MaxUploadFiles:         DefaultMaxUploadFiles,
+			HTTPCacheMode:          "revalidate",
+			HTTPCacheMaxAgeSeconds: 3600,
+			LogLevel:               "warn",
+		}, nil
 	}
 	if db.settings.LogLevel == "" {
 		db.settings.LogLevel = "warn"
+	}
+	if db.settings.HTTPCacheMode == "" {
+		db.settings.HTTPCacheMode = "revalidate"
+	}
+	if db.settings.HTTPCacheMaxAgeSeconds == 0 {
+		db.settings.HTTPCacheMaxAgeSeconds = 3600
 	}
 	return db.settings, nil
 }

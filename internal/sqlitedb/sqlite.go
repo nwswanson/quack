@@ -659,6 +659,8 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		MaxRetainedVersions:            0,
 		MaxWebSocketConnections:        appsettings.DefaultMaxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: appsettings.DefaultMaxWebSocketConnectionsPerSite,
+		HTTPCacheMode:                  appsettings.Default(appsettings.SettingHTTPCacheMode),
+		HTTPCacheMaxAgeSeconds:         mustParseDefaultInt64(appsettings.SettingHTTPCacheMaxAgeSeconds),
 		MemoryPersistenceMode:          appsettings.Default(appsettings.SettingRuntimeMemoryPersistenceMode),
 		MemorySnapshotSave:             appsettings.Default(appsettings.SettingRuntimeMemorySnapshotSave),
 		MemorySnapshotMinIntervalMS:    mustParseDefaultInt64(appsettings.SettingRuntimeMemorySnapshotMinIntervalMS),
@@ -718,6 +720,14 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxWebSocketConnectionsPerSite = n
+		case appsettings.SettingHTTPCacheMode:
+			settings.HTTPCacheMode = appsettings.ParseHTTPCacheMode(value)
+		case appsettings.SettingHTTPCacheMaxAgeSeconds:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.HTTPCacheMaxAgeSeconds = n
 		case appsettings.SettingRuntimeMemoryPersistenceMode:
 			settings.MemoryPersistenceMode = appsettings.ParseMemoryPersistenceMode(value)
 		case appsettings.SettingRuntimeMemorySnapshotSave:
@@ -774,6 +784,10 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.MaxWebSocketConnectionsPerSite < 0 {
 		return fmt.Errorf("max websocket connections per site must be >= 0")
 	}
+	if settings.HTTPCacheMaxAgeSeconds < 0 {
+		return fmt.Errorf("http cache max age seconds must be >= 0")
+	}
+	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
 	if err := validateMemoryServerSettings(settings); err != nil {
 		return err
@@ -800,6 +814,8 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
 		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
 		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
+		appsettings.SettingHTTPCacheMaxAgeSeconds:              strconv.FormatInt(settings.HTTPCacheMaxAgeSeconds, 10),
 		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
 		appsettings.SettingRuntimeMemorySnapshotSave:           strings.TrimSpace(settings.MemorySnapshotSave),
 		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
@@ -850,6 +866,10 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.MaxWebSocketConnectionsPerSite < 0 {
 		return fmt.Errorf("max websocket connections per site must be >= 0")
 	}
+	if settings.HTTPCacheMaxAgeSeconds < 0 {
+		return fmt.Errorf("http cache max age seconds must be >= 0")
+	}
+	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
 	if err := validateMemoryServerSettings(settings); err != nil {
 		return err
@@ -870,6 +890,8 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
 		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
 		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
+		appsettings.SettingHTTPCacheMaxAgeSeconds:              strconv.FormatInt(settings.HTTPCacheMaxAgeSeconds, 10),
 		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
 		appsettings.SettingRuntimeMemorySnapshotSave:           strings.TrimSpace(settings.MemorySnapshotSave),
 		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
@@ -891,6 +913,17 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		}
 	}
 	return nil
+}
+
+func normalizeHTTPCacheServerSettings(settings *domain.ServerSettings) {
+	mode := appsettings.ParseHTTPCacheMode(settings.HTTPCacheMode)
+	if mode == "" {
+		mode = appsettings.Default(appsettings.SettingHTTPCacheMode)
+	}
+	settings.HTTPCacheMode = mode
+	if settings.HTTPCacheMaxAgeSeconds <= 0 {
+		settings.HTTPCacheMaxAgeSeconds = mustParseDefaultInt64(appsettings.SettingHTTPCacheMaxAgeSeconds)
+	}
 }
 
 func normalizeMemoryServerSettings(settings *domain.ServerSettings) {

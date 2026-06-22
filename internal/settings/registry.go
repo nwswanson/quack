@@ -14,6 +14,7 @@ const (
 	DefaultMaxUploadFiles                 int64 = 10000
 	DefaultMaxWebSocketConnections        int64 = 1024
 	DefaultMaxWebSocketConnectionsPerSite int64 = 128
+	DefaultHTTPCacheMaxAgeSeconds         int64 = 3600
 )
 
 type SettingType string
@@ -51,6 +52,8 @@ const (
 	SettingDefaultSite                           = "default_site"
 	SettingAllowedHosts                          = "allowed_hosts"
 	SettingLogLevel                              = "log_level"
+	SettingHTTPCacheMode                         = "http.cache.mode"
+	SettingHTTPCacheMaxAgeSeconds                = "http.cache.max_age_seconds"
 	SettingDatabaseFeature                       = "features.database.enabled"
 	SettingDatabaseFeatureRequired               = "features.database.required"
 	SettingRuntimeHTTPFeature                    = "features.runtime.http.enabled"
@@ -94,6 +97,14 @@ var registry = map[string]SettingDefinition{
 	SettingLogLevel: {
 		Key: SettingLogLevel, Type: SettingTypeEnum, DefaultValue: "warn",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindEnum,
+	},
+	SettingHTTPCacheMode: {
+		Key: SettingHTTPCacheMode, Type: SettingTypeEnum, DefaultValue: "revalidate",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindEnum,
+	},
+	SettingHTTPCacheMaxAgeSeconds: {
+		Key: SettingHTTPCacheMaxAgeSeconds, Type: SettingTypeInt64, DefaultValue: "3600",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingDatabaseFeature: {
 		Key: SettingDatabaseFeature, Type: SettingTypeBool, DefaultValue: "false",
@@ -196,6 +207,9 @@ func Validate(key, value string) error {
 		if key == SettingLogLevel && ParseLogLevel(value) == "" {
 			return fmt.Errorf("log level must be debug, info, warn, or error")
 		}
+		if key == SettingHTTPCacheMode && ParseHTTPCacheMode(value) == "" {
+			return fmt.Errorf("%s must be revalidate, anti_cache, or max_age", key)
+		}
 		if key == SettingRuntimeMemoryPersistenceMode && ParseMemoryPersistenceMode(value) == "" {
 			return fmt.Errorf("%s must be off or snapshot", key)
 		}
@@ -232,6 +246,19 @@ func ParseLogLevel(value string) string {
 func ParseBool(value string) bool {
 	b, _ := strconv.ParseBool(strings.TrimSpace(value))
 	return b
+}
+
+func ParseHTTPCacheMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "revalidate", "no-cache", "no_cache":
+		return "revalidate"
+	case "anti_cache", "anti-cache", "no-store", "no_store":
+		return "anti_cache"
+	case "max_age", "max-age":
+		return "max_age"
+	default:
+		return ""
+	}
 }
 
 func ParseMemoryPersistenceMode(value string) string {

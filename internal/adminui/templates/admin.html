@@ -478,6 +478,18 @@
               <input name="max_websocket_connections_per_site" type="number" min="0" value="{{.Settings.MaxWebSocketConnectionsPerSite}}" required>
             </label>
             <label>
+              HTTP cache mode
+              <select name="http_cache_mode">
+                <option value="revalidate" {{if eq .Settings.HTTPCacheMode "revalidate"}}selected{{end}}>revalidate</option>
+                <option value="anti_cache" {{if eq .Settings.HTTPCacheMode "anti_cache"}}selected{{end}}>anti_cache</option>
+                <option value="max_age" {{if eq .Settings.HTTPCacheMode "max_age"}}selected{{end}}>max_age</option>
+              </select>
+            </label>
+            <label>
+              HTTP cache max age seconds
+              <input name="http_cache_max_age_seconds" type="number" min="0" value="{{.Settings.HTTPCacheMaxAgeSeconds}}" required>
+            </label>
+            <label>
               Memory persistence mode
               <select name="memory_persistence_mode">
                 <option value="off" {{if eq .Settings.MemoryPersistenceMode "off"}}selected{{end}}>off</option>

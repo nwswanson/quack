@@ -64,6 +64,8 @@ type ServerSettings struct {
 	MaxRetainedVersions            int64
 	MaxWebSocketConnections        int64
 	MaxWebSocketConnectionsPerSite int64
+	HTTPCacheMode                  string
+	HTTPCacheMaxAgeSeconds         int64
 	MemoryPersistenceMode          string
 	MemorySnapshotSave             string
 	MemorySnapshotMinIntervalMS    int64

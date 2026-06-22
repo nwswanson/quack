@@ -2,14 +2,17 @@ package statichttp
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"quack/internal/domain"
 	"quack/internal/protocol"
+	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 )
@@ -50,6 +53,7 @@ func (h handler) ServeSiteFile(w http.ResponseWriter, r *http.Request, req Reque
 	case sites.ServeSiteFileDirectoryRedirect:
 		http.Redirect(w, r, sites.DirectoryRedirectPath(r, "", req.URLPath), http.StatusMovedPermanently)
 	case sites.ServeSiteFileEmptyIndex:
+		h.applyCacheHeaders(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 	case sites.ServeSiteFileNotFound:
@@ -74,11 +78,57 @@ func (h handler) serveBlob(w http.ResponseWriter, r *http.Request, site string, 
 	}
 	defer blob.Close()
 
-	w.Header().Set("Cache-Control", "no-cache")
+	h.applyCacheHeaders(w, r)
 	if etag := fileETag(file); etag != "" {
 		w.Header().Set("ETag", etag)
 	}
 	http.ServeContent(w, r, relativePath, time.Time{}, blob)
+}
+
+func (h handler) applyCacheHeaders(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.read.ServerSettings(r.Context())
+	if err != nil {
+		slog.WarnContext(r.Context(), "load static cache settings failed", "error", err)
+		settings = defaultCacheSettings()
+	}
+	applyCacheHeaders(w.Header(), settings)
+}
+
+func applyCacheHeaders(header http.Header, settings domain.ServerSettings) {
+	mode := appsettings.ParseHTTPCacheMode(settings.HTTPCacheMode)
+	if mode == "" {
+		mode = appsettings.ParseHTTPCacheMode(appsettings.Default(appsettings.SettingHTTPCacheMode))
+	}
+	maxAge := settings.HTTPCacheMaxAgeSeconds
+	if maxAge <= 0 {
+		maxAge = appsettings.DefaultHTTPCacheMaxAgeSeconds
+	}
+
+	switch mode {
+	case "anti_cache":
+		header.Set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate")
+		header.Set("CDN-Cache-Control", "no-store")
+		header.Set("Cloudflare-CDN-Cache-Control", "no-store")
+		header.Set("Pragma", "no-cache")
+		header.Set("Expires", "0")
+	case "max_age":
+		value := fmt.Sprintf("public, max-age=%d", maxAge)
+		header.Set("Cache-Control", value)
+		header.Set("CDN-Cache-Control", value)
+		header.Set("Cloudflare-CDN-Cache-Control", value)
+	default:
+		header.Set("Cache-Control", "public, no-cache, must-revalidate")
+		header.Set("CDN-Cache-Control", "no-cache")
+		header.Set("Cloudflare-CDN-Cache-Control", "no-cache")
+	}
+}
+
+func defaultCacheSettings() domain.ServerSettings {
+	maxAge, _ := strconv.ParseInt(appsettings.Default(appsettings.SettingHTTPCacheMaxAgeSeconds), 10, 64)
+	return domain.ServerSettings{
+		HTTPCacheMode:          appsettings.Default(appsettings.SettingHTTPCacheMode),
+		HTTPCacheMaxAgeSeconds: maxAge,
+	}
 }
 
 func fileETag(file domain.UploadFileRecord) string {

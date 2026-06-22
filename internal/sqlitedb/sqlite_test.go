@@ -763,6 +763,9 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
 		t.Fatalf("settings = %#v, want initialized values", settings)
 	}
+	if settings.HTTPCacheMode != "revalidate" || settings.HTTPCacheMaxAgeSeconds != 3600 {
+		t.Fatalf("http cache settings = (%q, %d), want revalidate and 3600", settings.HTTPCacheMode, settings.HTTPCacheMaxAgeSeconds)
+	}
 	if err := db.InitializeServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 999, MaxUploadFiles: 999}); err != nil {
 		t.Fatal(err)
 	}
@@ -773,7 +776,13 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if settings.MaxUploadBytes != 123 || settings.MaxUploadFiles != 4 {
 		t.Fatalf("settings = %#v, initialize should not overwrite", settings)
 	}
-	if err := db.SaveServerSettings(ctx, domain.ServerSettings{MaxUploadBytes: 2048, MaxUploadFiles: 8, AllowedHosts: []string{"*.example.com", "admin.example.com"}}); err != nil {
+	if err := db.SaveServerSettings(ctx, domain.ServerSettings{
+		MaxUploadBytes:         2048,
+		MaxUploadFiles:         8,
+		HTTPCacheMode:          "max_age",
+		HTTPCacheMaxAgeSeconds: 14400,
+		AllowedHosts:           []string{"*.example.com", "admin.example.com"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	settings, err = db.GetServerSettings(ctx)
@@ -782,6 +791,9 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	}
 	if settings.MaxUploadBytes != 2048 || settings.MaxUploadFiles != 8 || len(settings.AllowedHosts) != 2 || settings.AllowedHosts[0] != "*.example.com" || settings.AllowedHosts[1] != "admin.example.com" {
 		t.Fatalf("settings = %#v, want saved values", settings)
+	}
+	if settings.HTTPCacheMode != "max_age" || settings.HTTPCacheMaxAgeSeconds != 14400 {
+		t.Fatalf("http cache settings = (%q, %d), want max_age and 14400", settings.HTTPCacheMode, settings.HTTPCacheMaxAgeSeconds)
 	}
 }
 

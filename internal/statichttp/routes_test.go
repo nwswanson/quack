@@ -39,8 +39,14 @@ func TestHandlerServesBlobForStaticRequest(t *testing.T) {
 	if rec.Body.String() != "site index" {
 		t.Fatalf("body = %q, want site index", rec.Body.String())
 	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("cache-control = %q, want no-cache", got)
+	if got := rec.Header().Get("Cache-Control"); got != "public, no-cache, must-revalidate" {
+		t.Fatalf("cache-control = %q, want revalidate policy", got)
+	}
+	if got := rec.Header().Get("CDN-Cache-Control"); got != "no-cache" {
+		t.Fatalf("cdn-cache-control = %q, want no-cache", got)
+	}
+	if got := rec.Header().Get("Cloudflare-CDN-Cache-Control"); got != "no-cache" {
+		t.Fatalf("cloudflare-cdn-cache-control = %q, want no-cache", got)
 	}
 	if got := rec.Header().Get("ETag"); got != `"index-sha"` {
 		t.Fatalf("etag = %q, want %q", got, `"index-sha"`)
@@ -73,11 +79,81 @@ func TestHandlerRevalidatesStaticBlobWithETag(t *testing.T) {
 	if rec.Body.Len() != 0 {
 		t.Fatalf("body length = %d, want 0", rec.Body.Len())
 	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("cache-control = %q, want no-cache", got)
+	if got := rec.Header().Get("Cache-Control"); got != "public, no-cache, must-revalidate" {
+		t.Fatalf("cache-control = %q, want revalidate policy", got)
 	}
 	if got := rec.Header().Get("ETag"); got != `"app-sha"` {
 		t.Fatalf("etag = %q, want %q", got, `"app-sha"`)
+	}
+}
+
+func TestHandlerCanServeStaticBlobWithAntiCacheHeaders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app-blob"), []byte("console.log('fresh')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(testStore{root: root}, testReadService{
+		settings: domain.ServerSettings{HTTPCacheMode: "anti_cache"},
+		decision: sites.ServeSiteFileDecision{
+			Status:       sites.ServeSiteFileFound,
+			Site:         "foo",
+			RelativePath: "app.js",
+			File:         domain.UploadFileRecord{BlobPath: "app-blob", FileSHA: "app-sha"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeSiteFile(rec, req, Request{Site: "foo", URLPath: "/app.js"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, no-cache, max-age=0, must-revalidate" {
+		t.Fatalf("cache-control = %q, want anti-cache policy", got)
+	}
+	if got := rec.Header().Get("CDN-Cache-Control"); got != "no-store" {
+		t.Fatalf("cdn-cache-control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Cloudflare-CDN-Cache-Control"); got != "no-store" {
+		t.Fatalf("cloudflare-cdn-cache-control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("pragma = %q, want no-cache", got)
+	}
+	if got := rec.Header().Get("Expires"); got != "0" {
+		t.Fatalf("expires = %q, want 0", got)
+	}
+}
+
+func TestHandlerCanServeStaticBlobWithMaxAgeHeaders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app-blob"), []byte("console.log('fresh')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(testStore{root: root}, testReadService{
+		settings: domain.ServerSettings{HTTPCacheMode: "max_age", HTTPCacheMaxAgeSeconds: 14400},
+		decision: sites.ServeSiteFileDecision{
+			Status:       sites.ServeSiteFileFound,
+			Site:         "foo",
+			RelativePath: "app.js",
+			File:         domain.UploadFileRecord{BlobPath: "app-blob", FileSHA: "app-sha"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeSiteFile(rec, req, Request{Site: "foo", URLPath: "/app.js"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	for _, header := range []string{"Cache-Control", "CDN-Cache-Control", "Cloudflare-CDN-Cache-Control"} {
+		if got := rec.Header().Get(header); got != "public, max-age=14400" {
+			t.Fatalf("%s = %q, want public, max-age=14400", header, got)
+		}
 	}
 }
 
@@ -102,11 +178,12 @@ func TestHandlerPreservesDirectoryRedirect(t *testing.T) {
 }
 
 type testReadService struct {
+	settings domain.ServerSettings
 	decision sites.ServeSiteFileDecision
 }
 
 func (r testReadService) ServerSettings(ctx context.Context) (domain.ServerSettings, error) {
-	return domain.ServerSettings{}, nil
+	return r.settings, nil
 }
 
 func (r testReadService) UploadPolicy(ctx context.Context, actor domain.AdminUser, site string) (domain.UploadPolicy, error) {

@@ -327,7 +327,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	}
 	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
-	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12&http_cache_mode=anti_cache&http_cache_max_age_seconds=14400"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
@@ -343,6 +343,9 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	}
 	if db.settings.MaxUploadBytes != 1024 || db.settings.MaxUploadFiles != 12 {
 		t.Fatalf("settings = %#v, want updated values", db.settings)
+	}
+	if db.settings.HTTPCacheMode != "anti_cache" || db.settings.HTTPCacheMaxAgeSeconds != 14400 {
+		t.Fatalf("http cache settings = (%q, %d), want anti_cache and 14400", db.settings.HTTPCacheMode, db.settings.HTTPCacheMaxAgeSeconds)
 	}
 
 	get := httptest.NewRequest(http.MethodGet, rec.Header().Get("Location"), nil)

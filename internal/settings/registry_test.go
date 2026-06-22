@@ -16,6 +16,11 @@ func TestValidateSettingValue(t *testing.T) {
 		"valid websocket runtime":  {key: SettingRuntimeWebSocketFeature, value: "true"},
 		"valid websocket max":      {key: SettingRuntimeWebSocketMaxConnections, value: "32"},
 		"valid websocket site max": {key: SettingRuntimeWebSocketMaxConnectionsPerSite, value: "8"},
+		"valid http cache mode":    {key: SettingHTTPCacheMode, value: "anti_cache"},
+		"invalid http cache mode": {
+			key: SettingHTTPCacheMode, value: "sometimes", wantErr: true,
+		},
+		"valid http cache max age": {key: SettingHTTPCacheMaxAgeSeconds, value: "14400"},
 		"valid memory cap":         {key: SettingRuntimeMemoryMaxBytes, value: "1024"},
 		"valid memory wipe":        {key: SettingRuntimeMemoryWipe, value: "true"},
 		"valid memory persistence": {key: SettingRuntimeMemoryPersistenceMode, value: "snapshot"},
@@ -65,6 +70,9 @@ func TestParseSettingHelpers(t *testing.T) {
 	}
 	if got := ParseMemoryPersistenceMode("rdb"); got != "snapshot" {
 		t.Fatalf("ParseMemoryPersistenceMode = %q, want snapshot", got)
+	}
+	if got := ParseHTTPCacheMode("no-store"); got != "anti_cache" {
+		t.Fatalf("ParseHTTPCacheMode = %q, want anti_cache", got)
 	}
 	rules, err := ParseMemorySnapshotSaveRules("2s 3\n1 1")
 	if err != nil {

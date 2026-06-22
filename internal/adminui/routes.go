@@ -836,6 +836,21 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if logLevel == "" {
 		return domain.ServerSettings{}, fmt.Errorf("log level must be debug, info, warn, or error")
 	}
+	httpCacheModeValue := strings.TrimSpace(r.Form.Get("http_cache_mode"))
+	if httpCacheModeValue == "" {
+		httpCacheModeValue = appsettings.Default(appsettings.SettingHTTPCacheMode)
+	}
+	httpCacheMode := appsettings.ParseHTTPCacheMode(httpCacheModeValue)
+	if httpCacheMode == "" {
+		return domain.ServerSettings{}, fmt.Errorf("http cache mode must be revalidate, anti_cache, or max_age")
+	}
+	httpCacheMaxAgeSeconds, err := parseNonNegativeInt64(r.Form.Get("http_cache_max_age_seconds"), "http cache max age seconds")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if httpCacheMaxAgeSeconds == 0 {
+		httpCacheMaxAgeSeconds = parseDefaultInt64(appsettings.SettingHTTPCacheMaxAgeSeconds)
+	}
 	allowedHosts, err := appsettings.ParseAllowedHosts(r.Form.Get("allowed_hosts"))
 	if err != nil {
 		return domain.ServerSettings{}, err
@@ -846,6 +861,8 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		MaxRetainedVersions:            maxRetainedVersions,
 		MaxWebSocketConnections:        maxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: maxWebSocketConnectionsPerSite,
+		HTTPCacheMode:                  httpCacheMode,
+		HTTPCacheMaxAgeSeconds:         httpCacheMaxAgeSeconds,
 		MemoryPersistenceMode:          memoryPersistenceMode,
 		MemorySnapshotSave:             memorySnapshotSave,
 		MemorySnapshotMinIntervalMS:    memorySnapshotMinIntervalMS,
