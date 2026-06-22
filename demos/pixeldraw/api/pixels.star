@@ -5,10 +5,29 @@ REVISION_KEY = "pixeldraw:revision"
 PIXEL_PREFIX = "pixeldraw:px:"
 COLORS = {
     "white": "#ffffff",
+    "light_gray": "#c7ccd1",
+    "gray": "#7f858d",
     "black": "#16191d",
+    "maroon": "#8f1d2c",
     "red": "#e13a32",
+    "orange": "#f07f24",
+    "yellow": "#ffd447",
+    "olive": "#8f9738",
     "green": "#239a57",
+    "lime": "#5ac85a",
+    "teal": "#1e8f8f",
+    "cyan": "#48c7d8",
     "blue": "#2469d8",
+    "navy": "#173a8f",
+    "purple": "#7246b8",
+    "magenta": "#cf4eb8",
+    "pink": "#f58db2",
+    "peach": "#f5a15d",
+    "tan": "#d7b37a",
+    "brown": "#8a5938",
+    "cream": "#fff2b5",
+    "mint": "#a9e6b0",
+    "sky": "#8ec9ff",
 }
 
 def _as_int(value, default = -1):
