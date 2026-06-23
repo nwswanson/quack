@@ -67,6 +67,32 @@ local folder -> quack-cli deploy -> quack-server -> public hostname
 
 ## Quick start
 
+### Dev server
+
+For local iteration, serve a build directory directly without uploading or creating stored revisions:
+
+```bash
+quack dev-server ./dist mysite
+```
+
+The dev server reads `site.yml` or `site.yaml`, serves files from the directory with normal route lookup, and runs Starlark HTTP/WebSocket routes from the same files using `dev:` blob paths. By default it binds to `127.0.0.1` on an available port and prints the local URL.
+
+Useful flags:
+
+```bash
+quack dev-server ./dist mysite --port 8080
+quack dev-server ./dist mysite --watch off
+quack dev-server ./dist mysite --host-match site
+```
+
+Dev status is available at:
+
+```text
+/__quack/dev
+```
+
+### How to start client + server
+
 Start a server:
 
 ```bash
