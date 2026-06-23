@@ -34,6 +34,9 @@ def _json(data, status = 200):
 
 def handle(req):
     method, path, query, headers, body = req
+    log.debug("colors request", method, path, query=query)
     if method != "GET":
+        log.warn(message="colors rejected", method=method, path=path, reason="method not allowed")
         return _json({"error": "method not allowed"}, 405)
+    log.info(message="colors served", count=len(COLORS))
     return _json({"colors": COLORS})

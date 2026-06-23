@@ -114,6 +114,7 @@ def _ensure_drawings():
     default_id = _new_drawing_id()
     drawings = [default_id]
     _save_drawings(drawings)
+    log.info(message="pixeldraw default drawing created", drawing_id=default_id)
     return drawings
 
 def _snapshot_pixels(drawing_id):
@@ -140,13 +141,17 @@ def _snapshot_pixels(drawing_id):
     if len(normalized) != len(pixels):
         dirty = True
     if dirty:
+        log.warn(message="pixeldraw normalized stored pixels", drawing_id=drawing_id, before=len(pixels), after=len(normalized))
         _write_pixels(drawing_id, normalized)
     return out
 
 def _snapshot(drawing_id = ""):
     drawings = _ensure_drawings()
+    requested_id = drawing_id
     if drawing_id == "" or drawing_id not in drawings:
         drawing_id = drawings[0]
+    pixels = _snapshot_pixels(drawing_id)
+    log.debug("pixeldraw snapshot", drawing_id, requested=requested_id, drawings=len(drawings), pixels=len(pixels))
     return {
         "type": "canvas_snapshot",
         "width": WIDTH,
@@ -154,7 +159,7 @@ def _snapshot(drawing_id = ""):
         "drawing_id": drawing_id,
         "drawings": drawings,
         "revision": memory.get(_revision_counter_key(drawing_id), 0),
-        "pixels": _snapshot_pixels(drawing_id),
+        "pixels": pixels,
     }
 
 def _drawings_changed(active_id = ""):
@@ -193,13 +198,16 @@ def _create_drawing():
     drawing_id = _new_drawing_id()
     drawings.append(drawing_id)
     _save_drawings(drawings)
+    log.info(message="pixeldraw drawing created", drawing_id=drawing_id, total=len(drawings))
     return drawing_id
 
 def _delete_drawing(drawing_id):
     drawings = _ensure_drawings()
     if drawing_id not in drawings:
+        log.warn(message="pixeldraw delete ignored", drawing_id=drawing_id, reason="unknown drawing")
         return drawings[0]
     if len(drawings) == 1:
+        log.info(message="pixeldraw delete ignored", drawing_id=drawing_id, reason="last drawing")
         return drawing_id
 
     remaining = []
@@ -211,9 +219,11 @@ def _delete_drawing(drawing_id):
     memory.delete(_pixels_key(drawing_id))
     memory.delete(_revision_key(drawing_id))
     memory.delete(_revision_counter_key(drawing_id))
+    log.info(message="pixeldraw drawing deleted", drawing_id=drawing_id, next_id=remaining[0], total=len(remaining))
     return remaining[0]
 
 def on_connect(ctx):
+    log.info(message="pixeldraw websocket connected", conn_id=ctx.conn_id)
     return [
         ws.subscribe(ctx.conn_id, TOPIC),
         ws.send(ctx.conn_id, {
@@ -225,17 +235,22 @@ def on_connect(ctx):
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
+        log.warn(message="pixeldraw rejected websocket payload", conn_id=ctx.conn_id, got=type(msg))
         return ws.send(ctx.conn_id, _error("expected a JSON object"))
 
     msg_type = msg.get("type")
+    log.debug("pixeldraw message", msg_type, conn_id=ctx.conn_id)
     if msg_type == "get_drawing" or msg_type == "select_drawing":
         drawing_id = _valid_drawing_id(msg.get("drawing_id", ""))
         if drawing_id == "":
+            log.warn(message="pixeldraw unknown drawing requested", conn_id=ctx.conn_id, requested=msg.get("drawing_id", ""))
             return ws.send(ctx.conn_id, _error("unknown drawing"))
+        log.info(message="pixeldraw drawing selected", conn_id=ctx.conn_id, drawing_id=drawing_id)
         return ws.send(ctx.conn_id, _snapshot(drawing_id))
 
     if msg_type == "create_drawing":
         drawing_id = _create_drawing()
+        log.info("pixeldraw create_drawing", drawing_id, conn_id=ctx.conn_id)
         return [
             events.publish(TOPIC, _drawings_changed(drawing_id)),
             ws.send(ctx.conn_id, _snapshot(drawing_id)),
@@ -244,26 +259,35 @@ def on_message(ctx, msg):
     if msg_type == "delete_drawing":
         drawing_id = _valid_drawing_id(msg.get("drawing_id", ""))
         if drawing_id == "":
+            log.warn(message="pixeldraw delete rejected", conn_id=ctx.conn_id, requested=msg.get("drawing_id", ""))
             return ws.send(ctx.conn_id, _error("unknown drawing"))
         next_id = _delete_drawing(drawing_id)
+        log.info(message="pixeldraw delete_drawing", conn_id=ctx.conn_id, drawing_id=drawing_id, next_id=next_id)
         return [
             events.publish(TOPIC, _drawings_changed(next_id)),
             ws.send(ctx.conn_id, _snapshot(next_id)),
         ]
 
     if msg_type != "draw_pixels":
+        log.warn(message="pixeldraw unknown message type", conn_id=ctx.conn_id, msg_type=msg_type)
         return ws.send(ctx.conn_id, _error("unknown message type"))
 
     drawing_id = _valid_drawing_id(msg.get("drawing_id", ""))
     if drawing_id == "":
         drawing_id = _ensure_drawings()[0]
+        log.debug(message="pixeldraw draw defaulted drawing", conn_id=ctx.conn_id, drawing_id=drawing_id)
 
     raw_pixels = msg.get("pixels", [])
     if type(raw_pixels) != "list":
+        log.warn(message="pixeldraw rejected draw batch", conn_id=ctx.conn_id, drawing_id=drawing_id, reason="pixels must be a list")
         return ws.send(ctx.conn_id, _error("pixels must be a list"))
 
     changed = []
     seen = {}
+    invalid = 0
+    duplicates = 0
+    unchanged = 0
+    truncated = len(raw_pixels) > MAX_BATCH_PIXELS
     stored_pixels = _read_pixels(drawing_id)
     for raw in raw_pixels:
         if len(changed) >= MAX_BATCH_PIXELS:
@@ -271,15 +295,18 @@ def on_message(ctx, msg):
 
         pixel = _valid_pixel(raw)
         if pixel == None:
+            invalid += 1
             continue
 
         seen_key = str(pixel["i"])
         if seen_key in seen:
+            duplicates += 1
             continue
         seen[seen_key] = True
 
         previous = _valid_color_code(stored_pixels.get(seen_key, 0))
         if previous == pixel["color"]:
+            unchanged += 1
             continue
 
         if pixel["color"] == 0:
@@ -289,10 +316,31 @@ def on_message(ctx, msg):
         changed.append(pixel)
 
     if len(changed) == 0:
+        log.debug(
+            message="pixeldraw draw batch no-op",
+            conn_id=ctx.conn_id,
+            drawing_id=drawing_id,
+            received=len(raw_pixels),
+            invalid=invalid,
+            duplicates=duplicates,
+            unchanged=unchanged,
+        )
         return []
 
     _write_pixels(drawing_id, stored_pixels)
     revision = memory.incr(_revision_counter_key(drawing_id), 1)
+    log.info(
+        message="pixeldraw pixels updated",
+        conn_id=ctx.conn_id,
+        drawing_id=drawing_id,
+        revision=revision,
+        changed=len(changed),
+        received=len(raw_pixels),
+        invalid=invalid,
+        duplicates=duplicates,
+        unchanged=unchanged,
+        truncated=truncated,
+    )
     return events.publish(TOPIC, {
         "type": "pixels_updated",
         "drawing_id": drawing_id,
@@ -303,8 +351,11 @@ def on_message(ctx, msg):
 
 def on_event(ctx, event):
     if event.topic != TOPIC:
+        log.debug(message="pixeldraw ignored event", conn_id=ctx.conn_id, topic=event.topic)
         return []
+    log.debug(message="pixeldraw forwarding event", conn_id=ctx.conn_id, topic=event.topic)
     return ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
+    log.info(message="pixeldraw websocket disconnected", conn_id=ctx.conn_id)
     return ws.unsubscribe_all(ctx.conn_id)
