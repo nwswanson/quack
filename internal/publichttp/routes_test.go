@@ -2,6 +2,7 @@ package publichttp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -261,6 +262,67 @@ func TestHandlerStillRejectsPostToStaticRoute(t *testing.T) {
 	}
 }
 
+func TestHandlerRoutesQuackInfoBeforeSiteRoutes(t *testing.T) {
+	routes := &quackInfoRouteReader{info: SiteInfo{Site: "foo", Version: 7}}
+	static := &recordingStaticHandler{}
+	runtime := recordingRuntimeService{}
+	h := New(
+		static,
+		WithRoutes(routes),
+		WithRuntime(runtimehttp.New(&runtime)),
+	)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/__quack/info", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var info SiteInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &info); err != nil {
+		t.Fatalf("decode info response: %v", err)
+	}
+	if info.Site != "foo" || info.Version != 7 {
+		t.Fatalf("info = %+v, want foo version 7", info)
+	}
+	if routes.lookupCalled {
+		t.Fatal("site route table was consulted for reserved quack info route")
+	}
+	if static.called {
+		t.Fatal("static handler called for reserved quack info route")
+	}
+	if runtime.called {
+		t.Fatal("runtime handler called for reserved quack info route")
+	}
+}
+
+func TestHandlerRejectsUnsupportedQuackEndpointBeforeSiteRoutes(t *testing.T) {
+	routes := &quackInfoRouteReader{info: SiteInfo{Site: "foo", Version: 7}}
+	static := &recordingStaticHandler{}
+	h := New(static, WithRoutes(routes))
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/__quack/missing", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if routes.lookupCalled {
+		t.Fatal("site route table was consulted for unsupported reserved quack route")
+	}
+	if static.called {
+		t.Fatal("static handler called for unsupported reserved quack route")
+	}
+}
+
 func TestHandlerRoutesDeclaredWebSocketRouteToDisabledRuntime(t *testing.T) {
 	h := New(&recordingStaticHandler{}, WithRoutes(staticRouteReader{decision: PublicRouteDecision{Site: "foo", Version: 4, Kind: RouteWebSocket, Path: "/socket"}}))
 	mux := http.NewServeMux()
@@ -396,6 +458,22 @@ type staticRouteReader struct {
 
 func (r staticRouteReader) LookupRoute(req *http.Request, site string, path string) (PublicRouteDecision, bool, error) {
 	return r.decision, true, nil
+}
+
+type quackInfoRouteReader struct {
+	info         SiteInfo
+	lookupCalled bool
+}
+
+func (r *quackInfoRouteReader) LookupRoute(req *http.Request, site string, path string) (PublicRouteDecision, bool, error) {
+	r.lookupCalled = true
+	return PublicRouteDecision{Site: site, Version: 99, Kind: RouteHTTP, Path: path}, true, nil
+}
+
+func (r *quackInfoRouteReader) CurrentSiteInfo(req *http.Request, site string) (SiteInfo, bool, error) {
+	info := r.info
+	info.Site = site
+	return info, true, nil
 }
 
 type fakeReleaseRoutes struct {

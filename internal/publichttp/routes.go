@@ -47,6 +47,15 @@ type RouteReader interface {
 	LookupRoute(r *http.Request, site string, path string) (PublicRouteDecision, bool, error)
 }
 
+type SiteInfo struct {
+	Site    string `json:"site"`
+	Version int64  `json:"version"`
+}
+
+type SiteInfoReader interface {
+	CurrentSiteInfo(r *http.Request, site string) (SiteInfo, bool, error)
+}
+
 type Option func(*Handler)
 
 func WithRoutes(routes RouteReader) Option {
@@ -102,6 +111,10 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusForbidden, decision.DeniedReason)
 		return
 	}
+	if isQuackPath(r.URL.Path) {
+		h.handleQuackRequest(w, r, decision.Site)
+		return
+	}
 
 	switch decision.Kind {
 	case RouteStatic:
@@ -146,6 +159,9 @@ func (h Handler) decide(r *http.Request) (PublicRouteDecision, error) {
 		return PublicRouteDecision{}, nil
 	}
 	site := resolution.Site
+	if isQuackPath(r.URL.Path) {
+		return PublicRouteDecision{Site: site}, nil
+	}
 	if h.routes != nil {
 		decision, ok, err := h.routes.LookupRoute(r, site, r.URL.Path)
 		if err != nil {
@@ -171,6 +187,38 @@ func (h Handler) resolveHost(r *http.Request) (sites.HostResolution, error) {
 		return sites.HostResolution{Status: sites.HostUnmatched, Host: sites.NormalizeHost(r.Host)}, nil
 	}
 	return sites.HostResolution{Status: sites.HostResolved, Site: site, Host: sites.NormalizeHost(r.Host)}, nil
+}
+
+func (h Handler) handleQuackRequest(w http.ResponseWriter, r *http.Request, site string) {
+	switch r.URL.Path {
+	case "/__quack/info":
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		infoReader, ok := h.routes.(SiteInfoReader)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		info, ok, err := infoReader.CurrentSiteInfo(r, site)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "public quack info lookup failed", "host", r.Host, "site", site, "error", err)
+			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		protocol.WriteJSON(w, http.StatusOK, info)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func isQuackPath(path string) bool {
+	return path == "/__quack" || strings.HasPrefix(path, "/__quack/")
 }
 
 func writeUnconfiguredHost(w http.ResponseWriter) {
@@ -225,6 +273,17 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 	return PublicRouteDecision{
 		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits,
 	}, true, nil
+}
+
+func (r ReleaseRouteReader) CurrentSiteInfo(req *http.Request, site string) (SiteInfo, bool, error) {
+	if r.Releases == nil {
+		return SiteInfo{}, false, nil
+	}
+	decision, ok, err := r.Releases.LookupRoute(req.Context(), site, "/")
+	if err != nil || !ok || decision.Version == 0 {
+		return SiteInfo{}, false, err
+	}
+	return SiteInfo{Site: site, Version: decision.Version}, true, nil
 }
 
 func methodAllowed(method string, methods []string) bool {
