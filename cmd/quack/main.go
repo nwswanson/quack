@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"quack/internal/client"
+	"quack/internal/devserver"
 	"quack/internal/protocol"
 )
 
@@ -48,6 +49,12 @@ func main() {
 		resp, err = runPublish(os.Args[2:])
 	case "default-site":
 		resp, err = runDefaultSite(os.Args[2:])
+	case "dev-server":
+		if err := devserver.Command(context.Background(), os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	default:
 		usage()
 		os.Exit(2)
@@ -360,6 +367,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  quack publish <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack default-site <site name> [--clear] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack delete <site name> [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack dev-server <build-dir> [site] [--addr 127.0.0.1] [--port 0]")
 }
 
 type commandValues struct {
