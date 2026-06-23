@@ -137,11 +137,11 @@ func TestServiceLookupRouteUsesRuntimeMetadata(t *testing.T) {
 	invalidator := &releaseInvalidator{
 		manifests: []domain.CurrentSiteManifest{{
 			Site: "foo", SiteSHA: "foo-sha", Version: 3, Settings: map[string]string{
-				appsettings.SettingRoutes: `[{"path":"/","kind":"static"}]`,
+				appsettings.SettingRoutes: `[{"path":"/","kind":"static"},{"path":"/api","kind":"http"}]`,
 			},
 		}},
 		runtimeRoutes: []appruntime.RouteMetadata{{
-			Site: "foo", SiteSHA: "foo-sha", Version: 3, RoutePath: "/api", RouteKind: appruntime.RouteHTTP, Methods: []string{"GET"},
+			Site: "foo", SiteSHA: "foo-sha", Version: 3, RoutePath: "/api", RouteKind: appruntime.RouteHTTP, Methods: []string{"GET"}, ExposeErrors: true,
 		}},
 	}
 	service := NewService(&releaseRepo{}, invalidator)
@@ -150,7 +150,7 @@ func TestServiceLookupRouteUsesRuntimeMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || decision.Kind != RouteHTTP || decision.Path != "/api/users" || !reflect.DeepEqual(decision.Methods, []string{"GET"}) {
+	if !ok || decision.Kind != RouteHTTP || decision.Path != "/api/users" || !reflect.DeepEqual(decision.Methods, []string{"GET"}) || !decision.ExposeRuntimeErrors {
 		t.Fatalf("decision = %+v ok=%v, want runtime HTTP route with methods", decision, ok)
 	}
 }

@@ -16,7 +16,11 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 		return nil, err
 	}
 	limits := bundle.Limits.withFallback(e.limits)
-	script, err := e.readScript(ctx, route.Entrypoint, limits)
+	scriptKey := route.ScriptKey
+	if scriptKey == "" {
+		scriptKey = route.Entrypoint
+	}
+	script, err := e.readScript(ctx, scriptKey, limits)
 	if err != nil {
 		return nil, err
 	}

@@ -38,14 +38,15 @@ const (
 )
 
 type Route struct {
-	Path       string           `json:"path" yaml:"path"`
-	Kind       RouteKind        `json:"kind" yaml:"kind"`
-	Root       string           `json:"root,omitempty" yaml:"root,omitempty"`
-	File       string           `json:"file,omitempty" yaml:"file,omitempty"`
-	Runtime    string           `json:"runtime,omitempty" yaml:"runtime,omitempty"`
-	Entrypoint string           `json:"entrypoint" yaml:"entrypoint"`
-	Methods    []string         `json:"methods,omitempty" yaml:"methods,omitempty"`
-	Filesystem *RouteFilesystem `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
+	Path         string           `json:"path" yaml:"path"`
+	Kind         RouteKind        `json:"kind" yaml:"kind"`
+	Root         string           `json:"root,omitempty" yaml:"root,omitempty"`
+	File         string           `json:"file,omitempty" yaml:"file,omitempty"`
+	Runtime      string           `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	Entrypoint   string           `json:"entrypoint" yaml:"entrypoint"`
+	Methods      []string         `json:"methods,omitempty" yaml:"methods,omitempty"`
+	ExposeErrors *bool            `json:"expose_errors,omitempty" yaml:"expose_errors,omitempty"`
+	Filesystem   *RouteFilesystem `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
 }
 
 type RouteFilesystem struct {

@@ -45,7 +45,11 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 		return InvocationResponse{}, err
 	}
 	limits := bundle.Limits.withFallback(e.limits)
-	script, err := e.readScript(ctx, route.Entrypoint, limits)
+	scriptKey := route.ScriptKey
+	if scriptKey == "" {
+		scriptKey = route.Entrypoint
+	}
+	script, err := e.readScript(ctx, scriptKey, limits)
 	if err != nil {
 		return InvocationResponse{}, err
 	}
@@ -172,7 +176,6 @@ func wrapStarlarkError(err error) error {
 	var evalErr *starlark.EvalError
 	if errors.As(err, &evalErr) {
 		backtrace := evalErr.Backtrace()
-		slog.Warn("starlark invocation failed", "backtrace", backtrace)
 		return fmt.Errorf("%w:\n%s", ErrInvocationFailure, backtrace)
 	}
 	return fmt.Errorf("%w: %v", ErrInvocationFailure, err)
@@ -184,6 +187,12 @@ func (e *StarlarkExecutor) wrapStarlarkError(bundle Bundle, route Route, err err
 	stack := ""
 	if errors.As(err, &evalErr) {
 		stack = evalErr.Backtrace()
+	}
+	if route.ScriptKey != "" && route.Entrypoint != "" && route.ScriptKey != route.Entrypoint {
+		stack = strings.ReplaceAll(stack, route.ScriptKey, route.Entrypoint)
+		if stack != "" {
+			wrapped = fmt.Errorf("%w:\n%s", ErrInvocationFailure, stack)
+		}
 	}
 	if e.logs != nil {
 		event := logbuffer.Event{
@@ -203,5 +212,6 @@ func (e *StarlarkExecutor) wrapStarlarkError(bundle Bundle, route Route, err err
 		}
 		e.logs.Add(event)
 	}
+	slog.Error("starlark invocation failed", "site", bundle.Site, "version", bundle.Version, "route", route.Path, "error", wrapped, "backtrace", stack)
 	return wrapped
 }

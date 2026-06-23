@@ -98,6 +98,28 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorBacktraceUsesUploadedFilePath(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"blob:app": `
+def handle(req):
+    missing_name()
+`})
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{
+			Path: "/api", Kind: RouteHTTP, Entrypoint: "api/app.star", ScriptKey: "blob:app",
+		}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if !errors.Is(err, ErrInvocationFailure) {
+		t.Fatalf("Invoke error = %v, want invocation failure", err)
+	}
+	if !strings.Contains(err.Error(), "api/app.star:3:5") {
+		t.Fatalf("Invoke error = %q, want uploaded file path in backtrace", err.Error())
+	}
+	if strings.Contains(err.Error(), "blob:app") {
+		t.Fatalf("Invoke error = %q, should not expose blob key", err.Error())
+	}
+}
+
 func TestStarlarkExecutorLogModuleWritesSiteBuffer(t *testing.T) {
 	logs := logbuffer.New(10)
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `

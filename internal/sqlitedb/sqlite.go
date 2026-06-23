@@ -214,6 +214,7 @@ func (d *Database) init(ctx context.Context) error {
 			entrypoint TEXT NOT NULL DEFAULT '',
 			bundle_object_key TEXT NOT NULL DEFAULT '',
 			methods_json TEXT NOT NULL DEFAULT '[]',
+			expose_errors INTEGER NOT NULL DEFAULT 0,
 			filesystem_enabled INTEGER NOT NULL DEFAULT 0,
 			filesystem_root TEXT NOT NULL DEFAULT '',
 			required_capabilities_json TEXT NOT NULL DEFAULT '[]',
@@ -255,6 +256,9 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE runtime_routes ADD COLUMN filesystem_enabled INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite runtime route filesystem enabled: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE runtime_routes ADD COLUMN expose_errors INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite runtime route expose errors: %w", err)
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE runtime_routes ADD COLUMN filesystem_root TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite runtime route filesystem root: %w", err)
@@ -1212,10 +1216,10 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO runtime_routes (
 			site_sha, upload_version, route_path, route_kind, runtime_kind,
-			entrypoint, bundle_object_key, methods_json, filesystem_enabled, filesystem_root,
+			entrypoint, bundle_object_key, methods_json, expose_errors, filesystem_enabled, filesystem_root,
 			required_capabilities_json, resource_limits_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare runtime route insert: %w", err)
@@ -1258,6 +1262,7 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 			route.Entrypoint,
 			route.BundleObjectKey,
 			string(methodsJSON),
+			boolInt(route.ExposeErrors),
 			boolInt(route.FilesystemEnabled),
 			route.FilesystemRoot,
 			string(capabilitiesJSON),
@@ -1293,6 +1298,7 @@ func (d *Database) ListRuntimeRoutes(ctx context.Context, siteSHA string, versio
 			rr.entrypoint,
 			rr.bundle_object_key,
 			rr.methods_json,
+			rr.expose_errors,
 			rr.filesystem_enabled,
 			rr.filesystem_root,
 			rr.required_capabilities_json,
@@ -1363,6 +1369,7 @@ func (d *Database) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.R
 			rr.entrypoint,
 			rr.bundle_object_key,
 			rr.methods_json,
+			rr.expose_errors,
 			rr.filesystem_enabled,
 			rr.filesystem_root,
 			rr.required_capabilities_json,
@@ -1393,6 +1400,7 @@ func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
 		var routeKind string
 		var runtimeKind string
 		var methodsJSON string
+		var exposeErrors int
 		var filesystemEnabled int
 		var capabilitiesJSON string
 		var limitsJSON string
@@ -1406,6 +1414,7 @@ func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
 			&route.Entrypoint,
 			&route.BundleObjectKey,
 			&methodsJSON,
+			&exposeErrors,
 			&filesystemEnabled,
 			&route.FilesystemRoot,
 			&capabilitiesJSON,
@@ -1416,6 +1425,7 @@ func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
 		}
 		route.RouteKind = appruntime.RouteKind(routeKind)
 		route.RuntimeKind = appruntime.RuntimeKind(runtimeKind)
+		route.ExposeErrors = exposeErrors != 0
 		route.FilesystemEnabled = filesystemEnabled != 0
 		if err := json.Unmarshal([]byte(methodsJSON), &route.Methods); err != nil {
 			return nil, fmt.Errorf("decode runtime route methods: %w", err)

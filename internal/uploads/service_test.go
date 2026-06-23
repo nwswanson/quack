@@ -98,8 +98,30 @@ func TestRuntimeRoutesFromManifestPersistsStarlarkWebSocketRoute(t *testing.T) {
 	if route.RouteKind != appruntime.RouteWebSocket || route.RuntimeKind != appruntime.RuntimeStarlark || route.BundleObjectKey != "socket-blob" {
 		t.Fatalf("route = %#v, want starlark websocket metadata", route)
 	}
+	if route.ExposeErrors {
+		t.Fatalf("route = %#v, want errors hidden by default", route)
+	}
 	if !reflect.DeepEqual(route.RequiredCapabilities, []string{"runtime.websocket"}) {
 		t.Fatalf("capabilities = %#v, want runtime.websocket", route.RequiredCapabilities)
+	}
+}
+
+func TestRuntimeRoutesFromManifestPersistsExposeErrors(t *testing.T) {
+	upload := domain.UploadRecord{
+		Site: "example.com", SiteSHA: "site-sha", Version: 2,
+		Files: []domain.UploadFileRecord{{RelativePath: "api/app.star", BlobPath: "blob:app"}},
+	}
+	expose := true
+	routes, err := RuntimeRoutesFromManifest(upload, manifest.Manifest{
+		Routes: []manifest.Route{{
+			Path: "/api", Kind: manifest.RouteHTTP, Runtime: "starlark", Entrypoint: "api/app.star", ExposeErrors: &expose,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || !routes[0].ExposeErrors {
+		t.Fatalf("routes = %#v, want exposed error metadata", routes)
 	}
 }
 

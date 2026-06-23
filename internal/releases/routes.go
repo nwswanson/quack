@@ -21,15 +21,16 @@ const (
 )
 
 type RouteDecision struct {
-	Site           string
-	Version        int64
-	Kind           RouteKind
-	Path           string
-	RoutePath      string
-	StaticRoot     string
-	StaticFile     string
-	Methods        []string
-	ResourceLimits appruntime.ResourceLimits
+	Site                string
+	Version             int64
+	Kind                RouteKind
+	Path                string
+	RoutePath           string
+	StaticRoot          string
+	StaticFile          string
+	Methods             []string
+	ResourceLimits      appruntime.ResourceLimits
+	ExposeRuntimeErrors bool
 }
 
 type RouteSource interface {
@@ -64,7 +65,7 @@ func (s service) LookupRoute(ctx context.Context, site string, urlPath string) (
 			routes = append(routes, routesFromRuntimeMetadata(site, current.SiteSHA, current.Version, runtimeRoutes)...)
 		}
 		route := chooseRoute(urlPath, routes)
-		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, RoutePath: route.RoutePath, StaticRoot: route.StaticRoot, StaticFile: route.StaticFile, Methods: append([]string(nil), route.Methods...)}, true, nil
+		return RouteDecision{Site: site, Version: current.Version, Kind: route.Kind, Path: urlPath, RoutePath: route.RoutePath, StaticRoot: route.StaticRoot, StaticFile: route.StaticFile, Methods: append([]string(nil), route.Methods...), ResourceLimits: route.ResourceLimits, ExposeRuntimeErrors: route.ExposeRuntimeErrors}, true, nil
 	}
 	return RouteDecision{Site: site, Kind: RouteStatic, Path: urlPath}, true, nil
 }
@@ -99,12 +100,13 @@ func routesFromRuntimeMetadata(site string, siteSHA string, version int64, route
 			continue
 		}
 		out = append(out, RouteDecision{
-			Site:           site,
-			Version:        version,
-			Kind:           kind,
-			Path:           cleanRoutePath(route.RoutePath),
-			Methods:        append([]string(nil), route.Methods...),
-			ResourceLimits: route.ResourceLimits,
+			Site:                site,
+			Version:             version,
+			Kind:                kind,
+			Path:                cleanRoutePath(route.RoutePath),
+			Methods:             append([]string(nil), route.Methods...),
+			ResourceLimits:      route.ResourceLimits,
+			ExposeRuntimeErrors: route.ExposeErrors,
 		})
 	}
 	return out
@@ -120,7 +122,7 @@ func chooseRoute(urlPath string, routes []RouteDecision) RouteDecision {
 		if !routeMatchesDecision(clean, route) {
 			continue
 		}
-		if best.Path == "" || len(route.Path) > len(best.Path) {
+		if best.Path == "" || len(route.Path) > len(best.Path) || samePathRuntimeMetadataTie(route, best) {
 			best = route
 		}
 	}
@@ -130,6 +132,10 @@ func chooseRoute(urlPath string, routes []RouteDecision) RouteDecision {
 	best.RoutePath = best.Path
 	best.Path = urlPath
 	return best
+}
+
+func samePathRuntimeMetadataTie(candidate RouteDecision, current RouteDecision) bool {
+	return len(candidate.Path) == len(current.Path) && candidate.Version != 0 && current.Version == 0
 }
 
 func routeMatchesDecision(urlPath string, route RouteDecision) bool {

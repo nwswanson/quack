@@ -231,6 +231,10 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 			filesystemEnabled = true
 			filesystemRoot = route.Filesystem.Root
 		}
+		exposeErrors := true
+		if route.ExposeErrors != nil {
+			exposeErrors = *route.ExposeErrors
+		}
 		out = append(out, appruntime.RouteMetadata{
 			Site:                 source.Site,
 			SiteSHA:              source.SiteSHA,
@@ -241,6 +245,7 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 			Entrypoint:           route.Entrypoint,
 			BundleObjectKey:      bundleObjectKey,
 			Methods:              append([]string(nil), route.Methods...),
+			ExposeErrors:         exposeErrors,
 			FilesystemEnabled:    filesystemEnabled,
 			FilesystemRoot:       filesystemRoot,
 			RequiredCapabilities: runtimeCapabilities(route.Kind),

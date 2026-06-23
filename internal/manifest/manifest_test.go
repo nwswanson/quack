@@ -161,13 +161,15 @@ func TestParseRejectsFileOnHTTPRoute(t *testing.T) {
 }
 
 func TestParseAllowsStarlarkHTTPRoute(t *testing.T) {
-	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n    filesystem:\n      root: /data\\files/\n"
+	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: app.star\n    expose_errors: true\n    filesystem:\n      root: /data\\files/\n"
 	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(manifest.Routes) != 1 ||
 		manifest.Routes[0].Runtime != "starlark" ||
+		manifest.Routes[0].ExposeErrors == nil ||
+		!*manifest.Routes[0].ExposeErrors ||
 		manifest.Routes[0].Filesystem == nil ||
 		manifest.Routes[0].Filesystem.Root != "data/files" {
 		t.Fatalf("routes = %#v, want starlark runtime with sanitized filesystem root", manifest.Routes)

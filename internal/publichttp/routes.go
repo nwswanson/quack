@@ -24,17 +24,18 @@ const (
 )
 
 type PublicRouteDecision struct {
-	Site           string
-	Version        int64
-	Kind           RouteKind
-	Path           string
-	RoutePath      string
-	StaticRoot     string
-	StaticFile     string
-	Methods        []string
-	ResourceLimits appruntime.ResourceLimits
-	DeniedReason   string
-	BlockedHost    bool
+	Site                string
+	Version             int64
+	Kind                RouteKind
+	Path                string
+	RoutePath           string
+	StaticRoot          string
+	StaticFile          string
+	Methods             []string
+	ResourceLimits      appruntime.ResourceLimits
+	ExposeRuntimeErrors bool
+	DeniedReason        string
+	BlockedHost         bool
 }
 
 type Handler struct {
@@ -138,6 +139,7 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		h.runtime.ServeHTTPRoute(w, r, appruntime.InvocationRequest{
 			Site: decision.Site, Version: decision.Version, Route: decision.Path, Method: r.Method, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
+			ExposeRuntimeErrors: decision.ExposeRuntimeErrors,
 		})
 	case RouteWebSocket:
 		h.runtime.ServeWebSocketRoute(w, r, appruntime.WebSocketInvocationRequest{
@@ -249,7 +251,7 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 				reason = "dynamic WebSocket routes are disabled by administrator policy"
 			}
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: reason,
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, ExposeRuntimeErrors: decision.ExposeRuntimeErrors, DeniedReason: reason,
 			}, true, nil
 		}
 		// This is the route-level gate before runtimehttp. The runtime service
@@ -268,12 +270,12 @@ func (r ReleaseRouteReader) LookupRoute(req *http.Request, site string, urlPath 
 		}
 		if !allowed {
 			return PublicRouteDecision{
-				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, DeniedReason: reason,
+				Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, ExposeRuntimeErrors: decision.ExposeRuntimeErrors, DeniedReason: reason,
 			}, true, nil
 		}
 	}
 	return PublicRouteDecision{
-		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits,
+		Site: decision.Site, Version: decision.Version, Kind: RouteKind(decision.Kind), Path: decision.Path, RoutePath: decision.RoutePath, StaticRoot: decision.StaticRoot, StaticFile: decision.StaticFile, Methods: append([]string(nil), decision.Methods...), ResourceLimits: decision.ResourceLimits, ExposeRuntimeErrors: decision.ExposeRuntimeErrors,
 	}, true, nil
 }
 

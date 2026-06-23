@@ -104,11 +104,30 @@ func TestHandlerMapsStructuredRuntimeErrors(t *testing.T) {
 	}
 }
 
-func TestHandlerReturnsInvocationFailureDetails(t *testing.T) {
+func TestHandlerHidesInvocationFailureDetailsByDefault(t *testing.T) {
 	handler := New(&recordingRuntime{err: fmt.Errorf("%w:\nTraceback: kaboom", appruntime.ErrInvocationFailure)})
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTPRoute(rec, req, appruntime.InvocationRequest{Site: "foo", Version: 1, Route: "/api", Method: http.MethodGet})
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Traceback: kaboom") {
+		t.Fatalf("body = %q, should not expose invocation failure details", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "runtime invocation failed") {
+		t.Fatalf("body = %q, want generic invocation failure", rec.Body.String())
+	}
+}
+
+func TestHandlerReturnsInvocationFailureDetailsWhenEnabled(t *testing.T) {
+	handler := New(&recordingRuntime{err: fmt.Errorf("%w:\nTraceback: kaboom", appruntime.ErrInvocationFailure)})
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTPRoute(rec, req, appruntime.InvocationRequest{
+		Site: "foo", Version: 1, Route: "/api", Method: http.MethodGet, ExposeRuntimeErrors: true,
+	})
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())

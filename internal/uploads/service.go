@@ -294,6 +294,7 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 			Entrypoint:           route.Entrypoint,
 			BundleObjectKey:      bundleObjectKey,
 			Methods:              append([]string(nil), route.Methods...),
+			ExposeErrors:         route.ExposeErrors != nil && *route.ExposeErrors,
 			FilesystemEnabled:    filesystemEnabled,
 			FilesystemRoot:       filesystemRoot,
 			RequiredCapabilities: runtimeCapabilities(route.Kind),

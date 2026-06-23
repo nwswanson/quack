@@ -55,7 +55,9 @@ type Route struct {
 	Path              string
 	Kind              RouteKind
 	Entrypoint        string
+	ScriptKey         string
 	Methods           []string
+	ExposeErrors      bool
 	FilesystemEnabled bool
 	FilesystemRoot    string
 }
@@ -80,6 +82,7 @@ type RouteMetadata struct {
 	BundleObjectKey      string
 	RoutePath            string
 	Methods              []string
+	ExposeErrors         bool
 	FilesystemEnabled    bool
 	FilesystemRoot       string
 	RequiredCapabilities []string
@@ -87,14 +90,15 @@ type RouteMetadata struct {
 	CreatedAt            string
 }
 type InvocationRequest struct {
-	Site    string
-	Version int64
-	Route   string
-	Method  string
-	Query   string
-	Headers map[string][]string
-	Body    []byte
-	Limits  ResourceLimits
+	Site                string
+	Version             int64
+	Route               string
+	Method              string
+	Query               string
+	Headers             map[string][]string
+	Body                []byte
+	Limits              ResourceLimits
+	ExposeRuntimeErrors bool
 }
 type InvocationResponse struct {
 	StatusCode int

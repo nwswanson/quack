@@ -288,8 +288,10 @@ func (r RouteMetadata) bundle(limits ResourceLimits, files []domain.UploadFileRe
 		Routes: []Route{{
 			Path:              r.RoutePath,
 			Kind:              r.RouteKind,
-			Entrypoint:        r.BundleObjectKey,
+			Entrypoint:        r.Entrypoint,
+			ScriptKey:         r.BundleObjectKey,
 			Methods:           append([]string(nil), r.Methods...),
+			ExposeErrors:      r.ExposeErrors,
 			FilesystemEnabled: r.FilesystemEnabled,
 			FilesystemRoot:    r.FilesystemRoot,
 		}},
