@@ -27,6 +27,23 @@ func TestLoggingResponseWriterPreservesHijacker(t *testing.T) {
 	}
 }
 
+func TestLoggingResponseWriterPreservesFlusher(t *testing.T) {
+	inner := &flushableResponseWriter{}
+	lrw := &loggingResponseWriter{ResponseWriter: inner}
+
+	flusher, ok := any(lrw).(http.Flusher)
+	if !ok {
+		t.Fatal("loggingResponseWriter does not implement http.Flusher")
+	}
+	flusher.Flush()
+	if !inner.flushed {
+		t.Fatal("underlying response writer was not flushed")
+	}
+	if lrw.status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", lrw.status, http.StatusOK)
+	}
+}
+
 type hijackableResponseWriter struct {
 	hijacked bool
 }
@@ -46,4 +63,22 @@ func (w *hijackableResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error)
 	server, client := net.Pipe()
 	_ = client.Close()
 	return server, bufio.NewReadWriter(bufio.NewReader(server), bufio.NewWriter(server)), nil
+}
+
+type flushableResponseWriter struct {
+	flushed bool
+}
+
+func (w *flushableResponseWriter) Header() http.Header {
+	return http.Header{}
+}
+
+func (w *flushableResponseWriter) Write(b []byte) (int, error) {
+	return len(b), nil
+}
+
+func (w *flushableResponseWriter) WriteHeader(statusCode int) {}
+
+func (w *flushableResponseWriter) Flush() {
+	w.flushed = true
 }
