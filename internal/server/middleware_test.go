@@ -2,9 +2,16 @@ package server
 
 import (
 	"bufio"
+	"bytes"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"quack/internal/logbuffer"
 )
 
 func TestLoggingResponseWriterPreservesHijacker(t *testing.T) {
@@ -41,6 +48,34 @@ func TestLoggingResponseWriterPreservesFlusher(t *testing.T) {
 	}
 	if lrw.status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", lrw.status, http.StatusOK)
+	}
+}
+
+func TestRequestLoggerWritesRouteMetadataToStdoutLog(t *testing.T) {
+	var level slog.LevelVar
+	level.Set(slog.LevelDebug)
+	var out bytes.Buffer
+	slog.SetDefault(NewLoggerWithLevel(&out, &level))
+	t.Cleanup(func() {
+		slog.SetDefault(NewLogger(io.Discard))
+	})
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logbuffer.SetRequestSite(r.Context(), "trello", 2, "/api/boards")
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/boards", nil)
+	req.Host = "trello.quackapps.dev"
+	rec := httptest.NewRecorder()
+
+	requestLoggerWithMetricsAndLogs(next, "public", nil, nil).ServeHTTP(rec, req)
+
+	line := out.String()
+	if !strings.Contains(line, " error access [trello@v2 /api/boards] ") {
+		t.Fatalf("log line = %q, want access metadata", line)
+	}
+	if !strings.Contains(line, "method=GET") || !strings.Contains(line, "path=/api/boards") || !strings.Contains(line, "status=500") {
+		t.Fatalf("log line = %q, want request attrs", line)
 	}
 }
 

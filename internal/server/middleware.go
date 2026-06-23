@@ -96,7 +96,11 @@ func requestLoggerWithMetricsAndLogs(next http.Handler, surface string, metrics 
 			level = slog.LevelWarn
 		}
 
+		site, version, route := logbuffer.RequestSite(r.Context())
 		slog.LogAttrs(r.Context(), level, "http request",
+			slog.String("site", site),
+			slog.Int64("version", version),
+			slog.String("route", route),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.String("host", r.Host),
@@ -106,7 +110,6 @@ func requestLoggerWithMetricsAndLogs(next http.Handler, surface string, metrics 
 			slog.Duration("duration", duration),
 		)
 		if logs != nil {
-			site, version, route := logbuffer.RequestSite(r.Context())
 			logs.Add(logbuffer.Event{
 				Level:   level.String(),
 				Source:  "access",
