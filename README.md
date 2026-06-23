@@ -1182,7 +1182,7 @@ memory.quota()
 
 inside routes when building dashboards or debugging state.
 
-If a site needs a real database, give it a real database. Quack memory is for tiny state that benefits from being close to the app.
+If a site needs a real database, give it a real database. (Although this will be in a future release.)  Quack memory is for tiny state that benefits from being close to the app--you can do some really cool stuff with it. (Check out demos/pixeldraw.)
 
 ### Remember that realtime is local
 
