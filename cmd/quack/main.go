@@ -14,6 +14,7 @@ import (
 
 	"quack/internal/client"
 	"quack/internal/devserver"
+	"quack/internal/logformat"
 	"quack/internal/protocol"
 )
 
@@ -259,18 +260,17 @@ func writeLogsText(w io.Writer, events []protocol.LogEvent) {
 }
 
 func writeLogEvent(w io.Writer, event protocol.LogEvent) {
-	site := event.Site
-	if site == "" {
-		site = "system"
-	}
-	route := event.Route
-	if route == "" {
-		route = "-"
-	}
-	fmt.Fprintf(w, "%s %-5s %-14s %-24s %-18s %s\n", event.Time, strings.ToUpper(event.Level), event.Source, site, route, event.Message)
-	if event.StackTrace != "" {
-		fmt.Fprintln(w, event.StackTrace)
-	}
+	fmt.Fprintln(w, logformat.Format(logformat.Event{
+		TimeText:   event.Time,
+		Level:      event.Level,
+		Source:     event.Source,
+		Site:       event.Site,
+		Version:    event.Version,
+		Route:      event.Route,
+		Message:    event.Message,
+		StackTrace: event.StackTrace,
+		Attrs:      logformat.AttrsFromMap(event.Attributes),
+	}))
 }
 
 func writeSitesText(w io.Writer, resp *protocol.ListSitesResponse) {

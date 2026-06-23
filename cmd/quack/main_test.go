@@ -190,7 +190,8 @@ func TestRunLogsPrintsTail(t *testing.T) {
 			t.Fatalf("request = %#v, want foo limit 1", req)
 		}
 		return &protocol.LogsResponse{OK: true, Events: []protocol.LogEvent{{
-			Time: "now", Level: "info", Source: "starlark", Site: "foo", Route: "/api", Message: "hello",
+			Time: "now", Level: "info", Source: "starlark", Site: "foo", Version: 2, Route: "/api", Message: "hello world",
+			Attributes: map[string]string{"path": "/boards"},
 		}}}, nil
 	})
 
@@ -198,8 +199,8 @@ func TestRunLogsPrintsTail(t *testing.T) {
 	if err := runLogs([]string{"foo", "--limit", "1"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "hello") || !strings.Contains(out.String(), "foo") {
-		t.Fatalf("output = %q, want log event", out.String())
+	if got := out.String(); got != "now info starlark [foo@v2 /api] \"hello world\" - path=/boards\n" {
+		t.Fatalf("output = %q, want shared log format", got)
 	}
 }
 

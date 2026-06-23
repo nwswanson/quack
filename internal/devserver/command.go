@@ -90,7 +90,6 @@ func Command(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 		HostMatch:     mode,
 		AllowedHosts:  []string(allowedHosts),
 		StateDir:      *stateDir,
-		Output:        stdout,
 		Logger:        appserver.NewLogger(stdout),
 	})
 }

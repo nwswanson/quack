@@ -33,14 +33,10 @@ type Options struct {
 	HostMatch     HostMatchMode
 	AllowedHosts  []string
 	StateDir      string
-	Output        io.Writer
 	Logger        *slog.Logger
 }
 
 func Run(ctx context.Context, opts Options) error {
-	if opts.Output == nil {
-		opts.Output = os.Stdout
-	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
@@ -135,8 +131,7 @@ func Run(ctx context.Context, opts Options) error {
 			return err
 		}
 	}
-	fmt.Fprintf(opts.Output, "quack dev-server serving %s as %s\n", root, site)
-	fmt.Fprintf(opts.Output, "%s\n", actualURL)
+	opts.Logger.InfoContext(ctx, "quack dev-server serving", "site", site, "build_dir", root, "url", actualURL)
 
 	watcherDone := make(chan struct{})
 	if opts.Watch != "off" {
