@@ -126,6 +126,27 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorLogModuleWorksWithoutBuffer(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    log.debug("debug message")
+    log.info("info message")
+    log.warn("warn message")
+    log.error("error message")
+    return (200, {}, "ok")
+`})
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 7, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.Body) != "ok" {
+		t.Fatalf("body = %q, want ok", string(resp.Body))
+	}
+}
+
 func TestStarlarkExecutorBuffersStackTraceOnScriptError(t *testing.T) {
 	logs := logbuffer.New(10)
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
