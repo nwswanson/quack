@@ -1,4 +1,4 @@
-package runtime
+package modules
 
 import (
 	"context"
@@ -12,16 +12,23 @@ import (
 	"go.starlark.net/starlarkstruct"
 )
 
-func (e *StarlarkExecutor) logModule(ctx context.Context, bundle Bundle, route Route) *starlarkstruct.Module {
+type LogModuleOptions struct {
+	Buffer  *logbuffer.Service
+	Site    string
+	Version int64
+	Route   string
+}
+
+func NewLogModule(ctx context.Context, opts LogModuleOptions) *starlarkstruct.Module {
 	return &starlarkstruct.Module{Name: "log", Members: starlark.StringDict{
-		"debug": starlark.NewBuiltin("log.debug", e.logBuiltin(ctx, "debug", bundle, route)),
-		"info":  starlark.NewBuiltin("log.info", e.logBuiltin(ctx, "info", bundle, route)),
-		"warn":  starlark.NewBuiltin("log.warn", e.logBuiltin(ctx, "warn", bundle, route)),
-		"error": starlark.NewBuiltin("log.error", e.logBuiltin(ctx, "error", bundle, route)),
+		"debug": starlark.NewBuiltin("log.debug", logBuiltin(ctx, "debug", opts)),
+		"info":  starlark.NewBuiltin("log.info", logBuiltin(ctx, "info", opts)),
+		"warn":  starlark.NewBuiltin("log.warn", logBuiltin(ctx, "warn", opts)),
+		"error": starlark.NewBuiltin("log.error", logBuiltin(ctx, "error", opts)),
 	}}
 }
 
-func (e *StarlarkExecutor) logBuiltin(ctx context.Context, level string, bundle Bundle, route Route) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
+func logBuiltin(ctx context.Context, level string, opts LogModuleOptions) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
 	return func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("%s: got %d arguments, want 1", fn.Name(), len(args))
@@ -43,9 +50,9 @@ func (e *StarlarkExecutor) logBuiltin(ctx context.Context, level string, bundle 
 		}
 
 		slogAttrs := []slog.Attr{
-			slog.String("site", bundle.Site),
-			slog.Int64("version", bundle.Version),
-			slog.String("route", route.Path),
+			slog.String("site", opts.Site),
+			slog.Int64("version", opts.Version),
+			slog.String("route", opts.Route),
 			slog.String("message", message),
 		}
 		for key, value := range attrs {
@@ -53,13 +60,13 @@ func (e *StarlarkExecutor) logBuiltin(ctx context.Context, level string, bundle 
 		}
 		slog.LogAttrs(ctx, slogLevel(level), "starlark log", slogAttrs...)
 
-		if e.logs != nil {
-			e.logs.Add(logbuffer.Event{
+		if opts.Buffer != nil {
+			opts.Buffer.Add(logbuffer.Event{
 				Level:      level,
 				Source:     "starlark",
-				Site:       bundle.Site,
-				Version:    bundle.Version,
-				Route:      route.Path,
+				Site:       opts.Site,
+				Version:    opts.Version,
+				Route:      opts.Route,
 				Message:    message,
 				Attributes: attrs,
 			})

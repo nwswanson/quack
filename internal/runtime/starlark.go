@@ -75,7 +75,12 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 		out[key] = value
 	}
 	out["memory"] = modules.NewMemoryModule(bundle.Site, limits.MaxMemoryBytes)
-	out["log"] = e.logModule(ctx, bundle, route)
+	out["log"] = modules.NewLogModule(ctx, modules.LogModuleOptions{
+		Buffer:  e.logs,
+		Site:    bundle.Site,
+		Version: bundle.Version,
+		Route:   route.Path,
+	})
 	if route.FilesystemEnabled {
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
 	}
