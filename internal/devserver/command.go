@@ -5,12 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	appserver "quack/internal/server"
 )
 
 type stringList []string
@@ -74,6 +75,9 @@ func Command(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := appserver.ConfigureLogger("info", stdout); err != nil {
+		return err
+	}
 	return Run(runCtx, Options{
 		BuildDir:      positionals[0],
 		Site:          *site,
@@ -87,7 +91,7 @@ func Command(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 		AllowedHosts:  []string(allowedHosts),
 		StateDir:      *stateDir,
 		Output:        stdout,
-		Logger:        slog.Default(),
+		Logger:        appserver.NewLogger(stdout),
 	})
 }
 

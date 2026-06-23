@@ -1314,6 +1314,7 @@ Supported route fields:
 | `runtime`    | HTTP/WebSocket only | Currently only `starlark`.                                           |
 | `entrypoint` | runtime routes      | Starlark file to execute. Required when `runtime` is set.            |
 | `methods`    | HTTP routes         | Optional list of allowed HTTP methods. Empty means all methods.      |
+| `expose_errors` | runtime routes   | Optional. Return Starlark errors to clients when true. Defaults false. |
 | `filesystem` | Starlark HTTP only  | Optional read-only uploaded-file access for the route.               |
 
 Route paths are normalized. `api` and `/api` both behave like `/api`. Matching uses longest prefix wins.
@@ -1466,6 +1467,7 @@ routes:
 ```
 
 The entrypoint is relative to the upload root and must exist in the deployed directory.
+By default, Starlark failures return a generic 500 response to clients and log the detailed error on the server. Set `expose_errors: true` on a runtime route only when you want clients to see the Starlark error text.
 
 A route at `/api` matches:
 
