@@ -30,20 +30,9 @@ func NewLogModule(ctx context.Context, opts LogModuleOptions) *starlarkstruct.Mo
 
 func logBuiltin(ctx context.Context, level string, opts LogModuleOptions) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
 	return func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("%s: got %d arguments, want 1", fn.Name(), len(args))
-		}
-		message := starlarkValueString(args[0])
-		attrs := map[string]string{}
-		for _, kwarg := range kwargs {
-			if len(kwarg) != 2 {
-				continue
-			}
-			key, ok := starlark.AsString(kwarg[0])
-			if !ok || strings.TrimSpace(key) == "" {
-				return nil, fmt.Errorf("%s: keyword name must be string", fn.Name())
-			}
-			attrs[key] = starlarkValueString(kwarg[1])
+		message, attrs, err := logMessageAndAttrs(fn.Name(), args, kwargs)
+		if err != nil {
+			return nil, err
 		}
 		if len(attrs) == 0 {
 			attrs = nil
@@ -73,6 +62,32 @@ func logBuiltin(ctx context.Context, level string, opts LogModuleOptions) func(*
 		}
 		return starlark.None, nil
 	}
+}
+
+func logMessageAndAttrs(fnName string, args starlark.Tuple, kwargs []starlark.Tuple) (string, map[string]string, error) {
+	parts := make([]string, 0, len(args)+1)
+	attrs := map[string]string{}
+	for _, kwarg := range kwargs {
+		if len(kwarg) != 2 {
+			continue
+		}
+		key, ok := starlark.AsString(kwarg[0])
+		if !ok || strings.TrimSpace(key) == "" {
+			return "", nil, fmt.Errorf("%s: keyword name must be string", fnName)
+		}
+		value := starlarkValueString(kwarg[1])
+		if key == "message" {
+			if value != "" {
+				parts = append(parts, value)
+			}
+			continue
+		}
+		attrs[key] = value
+	}
+	for _, arg := range args {
+		parts = append(parts, starlarkValueString(arg))
+	}
+	return strings.Join(parts, " "), attrs, nil
 }
 
 func slogLevel(level string) slog.Level {

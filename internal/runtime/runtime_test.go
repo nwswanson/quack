@@ -147,6 +147,37 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorLogModuleAcceptsFlexibleMessages(t *testing.T) {
+	logs := logbuffer.New(10)
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    log.info()
+    log.info(1)
+    log.info(1, 2)
+    log.info(message="hello")
+    log.info(1, 2, message="hello")
+    return (200, {}, "ok")
+`})
+	executor.SetLogBuffer(logs)
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 7, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := logs.Tail(logbuffer.Filter{Site: "foo"}, 0)
+	if len(events) != 5 {
+		t.Fatalf("events len = %d, want 5: %#v", len(events), events)
+	}
+	wantMessages := []string{"", "1", "1 2", "hello", "hello 1 2"}
+	for i, want := range wantMessages {
+		if events[i].Message != want {
+			t.Fatalf("event %d message = %q, want %q", i, events[i].Message, want)
+		}
+	}
+}
+
 func TestStarlarkExecutorBuffersStackTraceOnScriptError(t *testing.T) {
 	logs := logbuffer.New(10)
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
