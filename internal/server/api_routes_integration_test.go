@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"quack/internal/domain"
 	"quack/internal/protocol"
 	"reflect"
@@ -42,6 +44,43 @@ func TestLoginCheck(t *testing.T) {
 			t.Fatalf("body = %q, want unauthorized", rec.Body.String())
 		}
 	})
+}
+
+func TestLogsEndpointIncludesPublicSiteAccess(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "blob"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db := &fakeDatabase{
+		files: map[string]domain.UploadFileRecord{
+			fileKey("foo", "index.html"): {RelativePath: "index.html", BlobPath: "blob", Bytes: 5},
+		},
+		usersByToken: map[string]domain.AdminUser{
+			"admin-token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
+		},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn", LogBufferCount: 20},
+	}
+	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+
+	publicReq := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	publicReq.Host = "foo.example.com"
+	publicRec := httptest.NewRecorder()
+	srv.Public.Handler.ServeHTTP(publicRec, publicReq)
+	if publicRec.Code != http.StatusOK {
+		t.Fatalf("public status = %d, want %d; body=%s", publicRec.Code, http.StatusOK, publicRec.Body.String())
+	}
+
+	logReq := httptest.NewRequest(http.MethodGet, protocol.LogsPath+"?site=foo", nil)
+	logReq.Header.Set("Authorization", "Bearer admin-token")
+	logRec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(logRec, logReq)
+	if logRec.Code != http.StatusOK {
+		t.Fatalf("logs status = %d, want %d; body=%s", logRec.Code, http.StatusOK, logRec.Body.String())
+	}
+	body := logRec.Body.String()
+	if !strings.Contains(body, `"source":"access"`) || !strings.Contains(body, `"site":"foo"`) || !strings.Contains(body, `"path":"/index.html"`) {
+		t.Fatalf("logs body = %s, want public access event for foo", body)
+	}
 }
 
 func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {

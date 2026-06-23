@@ -16,6 +16,7 @@ const (
 	DefaultMaxWebSocketConnections        int64 = 1024
 	DefaultMaxWebSocketConnectionsPerSite int64 = 128
 	DefaultHTTPCacheMaxAgeSeconds         int64 = 3600
+	DefaultLogBufferCount                 int64 = 500
 )
 
 type SettingType string
@@ -53,6 +54,7 @@ const (
 	SettingDefaultSite                           = "default_site"
 	SettingAllowedHosts                          = "allowed_hosts"
 	SettingLogLevel                              = "log_level"
+	SettingLogBufferCount                        = "log.buffer.count"
 	SettingHTTPCacheMode                         = "http.cache.mode"
 	SettingHTTPCacheMaxAgeSeconds                = "http.cache.max_age_seconds"
 	SettingDatabaseFeature                       = "features.database.enabled"
@@ -99,6 +101,10 @@ var registry = map[string]SettingDefinition{
 	SettingLogLevel: {
 		Key: SettingLogLevel, Type: SettingTypeEnum, DefaultValue: "warn",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindEnum,
+	},
+	SettingLogBufferCount: {
+		Key: SettingLogBufferCount, Type: SettingTypeInt64, DefaultValue: "500",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	SettingHTTPCacheMode: {
 		Key: SettingHTTPCacheMode, Type: SettingTypeEnum, DefaultValue: "revalidate",

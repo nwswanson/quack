@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -18,6 +19,8 @@ import (
 
 var checkLogin = client.CheckLogin
 var uploadDirectory = client.UploadDirectory
+var listLogs = client.ListLogs
+var streamLogs = client.StreamLogs
 
 func main() {
 	if len(os.Args) < 2 {
@@ -38,6 +41,12 @@ func main() {
 	case "sites":
 		resp, err = runSites(os.Args[2:])
 		textOutput = true
+	case "logs":
+		if err := runLogs(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	case "revisions":
 		resp, err = runRevisions(os.Args[2:])
 		textOutput = true
@@ -204,6 +213,66 @@ func runSites(args []string) (any, error) {
 	return client.ListSites(context.Background(), resolved.serverURL, resolved.token, username, values.all)
 }
 
+func runLogs(args []string, w io.Writer) error {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(positionals) > 1 {
+		return fmt.Errorf("usage: quack logs [site] [--follow] [--all] [--system] [--limit <n>] [--token <token>] [--serverURL <url>]")
+	}
+	if values.all && len(positionals) > 0 {
+		return fmt.Errorf("usage: quack logs [site] [--follow] [--all] [--system] [--limit <n>] [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return err
+	}
+	req := protocol.LogsRequest{
+		IncludeAll: values.all, IncludeSystem: values.system, Limit: values.limit, Follow: values.follow,
+	}
+	if len(positionals) == 1 {
+		req.Site = positionals[0]
+	}
+	if values.follow {
+		return streamLogs(context.Background(), resolved.serverURL, resolved.token, req, func(event protocol.LogEvent) error {
+			writeLogEvent(w, event)
+			return nil
+		})
+	}
+	resp, err := listLogs(context.Background(), resolved.serverURL, resolved.token, req)
+	if err != nil {
+		return err
+	}
+	writeLogsText(w, resp.Events)
+	return nil
+}
+
+func writeLogsText(w io.Writer, events []protocol.LogEvent) {
+	if len(events) == 0 {
+		fmt.Fprintln(w, "No logs.")
+		return
+	}
+	for _, event := range events {
+		writeLogEvent(w, event)
+	}
+}
+
+func writeLogEvent(w io.Writer, event protocol.LogEvent) {
+	site := event.Site
+	if site == "" {
+		site = "system"
+	}
+	route := event.Route
+	if route == "" {
+		route = "-"
+	}
+	fmt.Fprintf(w, "%s %-5s %-14s %-24s %-18s %s\n", event.Time, strings.ToUpper(event.Level), event.Source, site, route, event.Message)
+	if event.StackTrace != "" {
+		fmt.Fprintln(w, event.StackTrace)
+	}
+}
+
 func writeSitesText(w io.Writer, resp *protocol.ListSitesResponse) {
 	if len(resp.Sites) == 0 {
 		fmt.Fprintln(w, "No sites.")
@@ -360,6 +429,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  quack login")
 	fmt.Fprintln(os.Stderr, "  quack sites [username] [--all] [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack logs [site] [--follow] [--all] [--system] [--limit <n>] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack deploy <directory> [site name] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack revisions <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
@@ -375,6 +445,9 @@ type commandValues struct {
 	serverURL string
 	all       bool
 	clear     bool
+	follow    bool
+	system    bool
+	limit     int
 }
 
 type configFile struct {
@@ -413,6 +486,29 @@ func parseCommandArgs(args []string) (commandValues, []string, error) {
 				return values, nil, fmt.Errorf("--all does not take a value")
 			}
 			values.all = true
+		case "--follow":
+			if hasValue {
+				return values, nil, fmt.Errorf("--follow does not take a value")
+			}
+			values.follow = true
+		case "--system":
+			if hasValue {
+				return values, nil, fmt.Errorf("--system does not take a value")
+			}
+			values.system = true
+		case "--limit":
+			if !hasValue {
+				i++
+				if i >= len(args) {
+					return values, nil, fmt.Errorf("--limit requires a value")
+				}
+				value = args[i]
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return values, nil, fmt.Errorf("--limit must be >= 0")
+			}
+			values.limit = n
 		case "--clear":
 			if hasValue {
 				return values, nil, fmt.Errorf("--clear does not take a value")

@@ -3,6 +3,7 @@ package adminui
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"quack/internal/access"
 	"quack/internal/domain"
+	"quack/internal/logbuffer"
 	"quack/internal/protocol"
 	"quack/internal/releases"
 	appsettings "quack/internal/settings"
@@ -53,6 +55,7 @@ type Handler struct {
 	stats         SiteRuntimeStatsReader
 	setLogLevel   func(string) error
 	applySettings func(domain.ServerSettings) error
+	logs          *logbuffer.Service
 }
 
 type SiteRuntimeStats struct {
@@ -74,6 +77,7 @@ type Options struct {
 	Stats         SiteRuntimeStatsReader
 	SetLogLevel   func(string) error
 	ApplySettings func(domain.ServerSettings) error
+	Logs          *logbuffer.Service
 }
 
 func New(opts Options) Handler {
@@ -95,6 +99,7 @@ func New(opts Options) Handler {
 		stats:         opts.Stats,
 		setLogLevel:   setLogLevel,
 		applySettings: applySettings,
+		logs:          opts.Logs,
 	}
 }
 
@@ -106,6 +111,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/users", h.handleAdminUsers)
 	mux.HandleFunc("/settings", h.handleAdminSettings)
 	mux.HandleFunc("/policy", h.handleAdminPolicy)
+	mux.HandleFunc("/logs", h.handleAdminLogsPage)
 }
 
 func (h Handler) handleAdminLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -506,6 +512,36 @@ func (h Handler) handleAdminPolicyPage(w http.ResponseWriter, r *http.Request) {
 	h.renderAdminPage(w, r, data)
 }
 
+func (h Handler) handleAdminLogsPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := h.adminPageData(r, user, adminPageLogs)
+	if err != nil {
+		if errors.Is(err, domain.ErrSiteOwnership) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.ErrorContext(r.Context(), "load admin logs page data failed", "username", user.Username, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
+	h.renderAdminPage(w, r, data)
+}
+
 func policyFromForm(r *http.Request, key string, prefix string, userID int64) (domain.PolicyRecord, bool) {
 	mode := strings.TrimSpace(r.Form.Get(prefix + "_mode"))
 	if mode == "" {
@@ -530,6 +566,7 @@ const (
 	adminPageUsers    = "users"
 	adminPageSettings = "settings"
 	adminPagePolicy   = "policy"
+	adminPageLogs     = "logs"
 )
 
 type adminNavItem struct {
@@ -571,6 +608,8 @@ type adminPageData struct {
 	RuntimeHTTPPolicy      domain.PolicyRecord
 	RuntimeWebSocketPolicy domain.PolicyRecord
 	CreatedUser            domain.CreatedUser
+	LogSite                string
+	LogEvents              []logbuffer.Event
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -668,6 +707,39 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 		data.DatabasePolicy = databasePolicy
 		data.RuntimeHTTPPolicy = runtimeHTTPPolicy
 		data.RuntimeWebSocketPolicy = runtimeWebSocketPolicy
+	case adminPageLogs:
+		data.LogSite = strings.TrimSpace(r.URL.Query().Get("site"))
+		if h.logs == nil {
+			break
+		}
+		if user.IsAdmin() {
+			filter := logbuffer.Filter{IncludeSystem: true}
+			if data.LogSite != "" {
+				filter = logbuffer.Filter{Site: data.LogSite}
+			}
+			data.LogEvents = h.logs.Tail(filter, 200)
+			break
+		}
+		siteList, err := h.releases.ListPublishedSites(r.Context(), user.ID, false)
+		if err != nil {
+			return adminPageData{}, err
+		}
+		owned := map[string]bool{}
+		for _, site := range siteList {
+			owned[site.Site] = true
+		}
+		if data.LogSite != "" {
+			if !owned[data.LogSite] {
+				return adminPageData{}, domain.ErrSiteOwnership
+			}
+			data.LogEvents = h.logs.Tail(logbuffer.Filter{Site: data.LogSite}, 200)
+			break
+		}
+		for _, event := range h.logs.Tail(logbuffer.Filter{}, 200) {
+			if owned[event.Site] {
+				data.LogEvents = append(data.LogEvents, event)
+			}
+		}
 	}
 	return data, nil
 }
@@ -680,6 +752,8 @@ func adminPageTitle(page string) string {
 		return "Server Settings"
 	case adminPagePolicy:
 		return "Policies"
+	case adminPageLogs:
+		return "Logs"
 	default:
 		return "Published Sites"
 	}
@@ -687,6 +761,7 @@ func adminPageTitle(page string) string {
 
 func adminNav(user domain.AdminUser) []adminNavItem {
 	nav := []adminNavItem{{Key: adminPageSites, Label: "Published Sites", Path: "/"}}
+	nav = append(nav, adminNavItem{Key: adminPageLogs, Label: "Logs", Path: "/logs"})
 	if user.IsAdmin() {
 		nav = append(nav,
 			adminNavItem{Key: adminPageUsers, Label: "Users", Path: "/users"},
@@ -843,6 +918,13 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if logLevel == "" {
 		return domain.ServerSettings{}, fmt.Errorf("log level must be debug, info, warn, or error")
 	}
+	logBufferCount, err := parseNonNegativeInt64(r.Form.Get("log_buffer_count"), "log buffer count")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if logBufferCount == 0 {
+		logBufferCount = parseDefaultInt64(appsettings.SettingLogBufferCount)
+	}
 	httpCacheModeValue := strings.TrimSpace(r.Form.Get("http_cache_mode"))
 	if httpCacheModeValue == "" {
 		httpCacheModeValue = appsettings.Default(appsettings.SettingHTTPCacheMode)
@@ -879,6 +961,7 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		DefaultSite:                    strings.TrimSpace(r.Form.Get("default_site")),
 		AllowedHosts:                   allowedHosts,
 		LogLevel:                       logLevel,
+		LogBufferCount:                 logBufferCount,
 	}, nil
 }
 

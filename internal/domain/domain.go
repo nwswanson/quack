@@ -75,6 +75,7 @@ type ServerSettings struct {
 	DefaultSite                    string
 	AllowedHosts                   []string
 	LogLevel                       string
+	LogBufferCount                 int64
 	Locked                         map[string]bool
 }
 

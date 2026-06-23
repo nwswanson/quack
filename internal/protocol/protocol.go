@@ -2,12 +2,14 @@ package protocol
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 const UploadArchivePath = "/v1/uploads/archive"
 const SitesPath = "/v1/sites"
 const SettingsDefaultSitePath = "/v1/settings/default-site"
+const LogsPath = "/v1/logs"
 const DeleteSitePathPrefix = "/v1/sites/"
 const SiteRevisionPathSuffix = "/revisions"
 const SiteRollbackPathSuffix = "/rollback"
@@ -55,6 +57,16 @@ func (ListSitesRequest) OperationName() string { return "list sites" }
 type LoginCheckRequest struct{}
 
 func (LoginCheckRequest) OperationName() string { return "login check" }
+
+type LogsRequest struct {
+	Site          string
+	IncludeAll    bool
+	IncludeSystem bool
+	Limit         int
+	Follow        bool
+}
+
+func (LogsRequest) OperationName() string { return "logs" }
 
 type Endpoint interface {
 	UploadArchive(UploadArchiveRequest) (UploadArchiveResponse, error)
@@ -114,6 +126,31 @@ func SitePublishURL(baseURL string, site string) string {
 
 func LoginCheckURL(baseURL string) string {
 	return JoinURL(baseURL, LoginCheckPath)
+}
+
+func LogsURL(baseURL string, req LogsRequest) (string, error) {
+	target, err := url.Parse(JoinURL(baseURL, LogsPath))
+	if err != nil {
+		return "", err
+	}
+	query := target.Query()
+	if req.Site != "" {
+		query.Set("site", req.Site)
+	}
+	if req.IncludeAll {
+		query.Set("all", "true")
+	}
+	if req.IncludeSystem {
+		query.Set("system", "true")
+	}
+	if req.Limit > 0 {
+		query.Set("limit", strconv.Itoa(req.Limit))
+	}
+	if req.Follow {
+		query.Set("follow", "true")
+	}
+	target.RawQuery = query.Encode()
+	return target.String(), nil
 }
 
 func JoinURL(baseURL string, path string) string {
@@ -258,3 +295,25 @@ type LoginCheckResponse struct {
 
 func (r *LoginCheckResponse) SetError(message string) { r.Error = message }
 func (r LoginCheckResponse) ErrorMessage() string     { return r.Error }
+
+type LogEvent struct {
+	ID         int64             `json:"id"`
+	Time       string            `json:"time"`
+	Level      string            `json:"level"`
+	Source     string            `json:"source"`
+	Site       string            `json:"site,omitempty"`
+	Version    int64             `json:"version,omitempty"`
+	Route      string            `json:"route,omitempty"`
+	Message    string            `json:"message"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+	StackTrace string            `json:"stack_trace,omitempty"`
+}
+
+type LogsResponse struct {
+	OK     bool       `json:"ok"`
+	Events []LogEvent `json:"events,omitempty"`
+	Error  string     `json:"error,omitempty"`
+}
+
+func (r *LogsResponse) SetError(message string) { r.Error = message }
+func (r LogsResponse) ErrorMessage() string     { return r.Error }

@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"quack/internal/access"
 	"quack/internal/domain"
+	"quack/internal/logbuffer"
 	"quack/internal/policy"
 	"quack/internal/protocol"
 	"quack/internal/publishing"
@@ -33,6 +36,7 @@ type Handler struct {
 	write      sites.SiteWriteService
 	users      UserRepository
 	releases   releases.Service
+	logs       *logbuffer.Service
 }
 
 type Options struct {
@@ -44,6 +48,7 @@ type Options struct {
 	Write                sites.SiteWriteService
 	Users                UserRepository
 	Releases             releases.Service
+	Logs                 *logbuffer.Service
 }
 
 func New(opts Options) Handler {
@@ -56,6 +61,7 @@ func New(opts Options) Handler {
 		write:                opts.Write,
 		users:                opts.Users,
 		releases:             opts.Releases,
+		logs:                 opts.Logs,
 	}
 }
 
@@ -63,6 +69,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc(protocol.LoginCheckPath, h.handleLoginCheck)
 	mux.HandleFunc(protocol.UploadArchivePath, h.handleUploadArchive)
 	mux.HandleFunc(protocol.SitesPath, h.handleListSites)
+	mux.HandleFunc(protocol.LogsPath, h.handleLogs)
 	mux.HandleFunc(protocol.SettingsDefaultSitePath, h.handleSetDefaultSite)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
 }
@@ -235,6 +242,143 @@ func (h Handler) handleListSites(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	protocol.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok, err := h.authorizedAPIUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "log authorization lookup failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.logs == nil {
+		protocol.WriteJSON(w, http.StatusOK, protocol.LogsResponse{OK: true})
+		return
+	}
+	legacyAdmin := h.requestUsesLegacyToken(r)
+	filter, err := h.logFilter(r, user, legacyAdmin)
+	if err != nil {
+		if errors.Is(err, domain.ErrSiteOwnership) {
+			protocol.WriteError(w, http.StatusForbidden, "not allowed to view logs for this site")
+			return
+		}
+		protocol.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			protocol.WriteError(w, http.StatusBadRequest, "limit must be >= 0")
+			return
+		}
+		limit = n
+	}
+	follow := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("follow")), "true")
+	if !follow {
+		protocol.WriteJSON(w, http.StatusOK, protocol.LogsResponse{OK: true, Events: protocolLogEvents(h.logs.Tail(filter, limit))})
+		return
+	}
+	h.streamLogs(w, r, filter, limit)
+}
+
+func (h Handler) logFilter(r *http.Request, user domain.AdminUser, legacyAdmin bool) (logbuffer.Filter, error) {
+	query := r.URL.Query()
+	site := strings.TrimSpace(query.Get("site"))
+	includeAll := strings.EqualFold(strings.TrimSpace(query.Get("all")), "true")
+	includeSystem := strings.EqualFold(strings.TrimSpace(query.Get("system")), "true")
+	isAdmin := legacyAdmin || user.IsAdmin()
+	if includeAll || includeSystem {
+		if !isAdmin {
+			return logbuffer.Filter{}, domain.ErrSiteOwnership
+		}
+		return logbuffer.Filter{IncludeSystem: true}, nil
+	}
+	if site == "" {
+		if !isAdmin {
+			return logbuffer.Filter{}, domain.ErrSiteOwnership
+		}
+		return logbuffer.Filter{IncludeSystem: true}, nil
+	}
+	if isAdmin {
+		return logbuffer.Filter{Site: site}, nil
+	}
+	if err := h.ensureUserOwnsSite(r.Context(), user, site); err != nil {
+		return logbuffer.Filter{}, err
+	}
+	return logbuffer.Filter{Site: site}, nil
+}
+
+func (h Handler) ensureUserOwnsSite(ctx context.Context, user domain.AdminUser, site string) error {
+	if user.ID == 0 {
+		return domain.ErrSiteOwnership
+	}
+	sites, err := h.releases.ListPublishedSites(ctx, user.ID, false)
+	if err != nil {
+		return err
+	}
+	for _, owned := range sites {
+		if owned.Site == site {
+			return nil
+		}
+	}
+	return domain.ErrSiteOwnership
+}
+
+func (h Handler) requestUsesLegacyToken(r *http.Request) bool {
+	requestToken, ok := bearerToken(r)
+	return ok && h.token != "" && requestToken == h.token
+}
+
+func (h Handler) streamLogs(w http.ResponseWriter, r *http.Request, filter logbuffer.Filter, limit int) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		protocol.WriteError(w, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	for _, event := range h.logs.Tail(filter, limit) {
+		writeLogSSE(w, event)
+	}
+	flusher.Flush()
+	for event := range h.logs.Subscribe(r.Context(), filter) {
+		writeLogSSE(w, event)
+		flusher.Flush()
+	}
+}
+
+func writeLogSSE(w io.Writer, event logbuffer.Event) {
+	data, err := json.Marshal(protocolLogEvent(event))
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "id: %d\nevent: log\ndata: %s\n\n", event.ID, data)
+}
+
+func protocolLogEvents(events []logbuffer.Event) []protocol.LogEvent {
+	out := make([]protocol.LogEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, protocolLogEvent(event))
+	}
+	return out
+}
+
+func protocolLogEvent(event logbuffer.Event) protocol.LogEvent {
+	return protocol.LogEvent{
+		ID: event.ID, Time: event.Time, Level: event.Level, Source: event.Source,
+		Site: event.Site, Version: event.Version, Route: event.Route,
+		Message: event.Message, Attributes: event.Attributes, StackTrace: event.StackTrace,
+	}
 }
 
 func (h Handler) handleSetDefaultSite(w http.ResponseWriter, r *http.Request) {

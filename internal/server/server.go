@@ -10,6 +10,7 @@ import (
 	"quack/internal/cache"
 	"quack/internal/controlapi"
 	"quack/internal/domain"
+	"quack/internal/logbuffer"
 	"quack/internal/publichttp"
 	"quack/internal/publishing"
 	"quack/internal/releases"
@@ -50,6 +51,13 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	}
 
 	adminMux := http.NewServeMux()
+	logs := logbuffer.New(logbuffer.DefaultCapacity)
+	initialSettings, settingsErr := db.GetServerSettings(context.Background())
+	if settingsErr != nil {
+		slog.Warn("load server settings failed", "error", settingsErr)
+	} else if initialSettings.LogBufferCount > 0 {
+		logs.SetCapacity(int(initialSettings.LogBufferCount))
+	}
 	source := cache.NewPassthroughHotDataReader(db)
 	//hot := hotdata.NewMemoryHotDataReader(source, hotdata.MemoryHotDataReaderOptions{})
 	hot := cache.NewOtterHotDataReader(source, cache.OtterHotDataReaderOptions{})
@@ -81,6 +89,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Write:                write,
 		Users:                db,
 		Releases:             releaseService,
+		Logs:                 logs,
 	}).Register(adminMux)
 
 	publicMux := http.NewServeMux()
@@ -90,6 +99,8 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	}), appruntime.ResourceLimits{})
 	if err != nil {
 		starlarkExecutor = nil
+	} else {
+		starlarkExecutor.SetLogBuffer(logs)
 	}
 	metrics := newPrometheusMetrics(metricsDB, runtimehttp.Handler{})
 	runtimeService := appruntime.NewService(appruntime.ServiceOptions{
@@ -113,8 +124,10 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Stats:       runtimeStatsReader{runtime: runtimeHandler},
 		SetLogLevel: SetLogLevel,
 		ApplySettings: func(settings domain.ServerSettings) error {
+			logs.SetCapacity(int(settings.LogBufferCount))
 			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
 		},
+		Logs: logs,
 	}).Register(adminMux)
 	adminMux.HandleFunc("/metrics", metrics.handle)
 
@@ -128,11 +141,11 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	return Servers{
 		Admin: &http.Server{
 			Addr:    adminAddr,
-			Handler: requestLoggerWithMetrics(adminMux, "admin", metrics),
+			Handler: requestLoggerWithMetricsAndLogs(adminMux, "admin", metrics, logs),
 		},
 		Public: &http.Server{
 			Addr:    publicAddr,
-			Handler: requestLoggerWithMetrics(publicMux, "public", metrics),
+			Handler: requestLoggerWithMetricsAndLogs(publicMux, "public", metrics, logs),
 		},
 	}
 }

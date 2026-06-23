@@ -1,12 +1,15 @@
 package client
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"quack/internal/manifest"
 	"quack/internal/protocol"
@@ -156,6 +159,81 @@ func CheckLogin(ctx context.Context, serverURL, token string) (*protocol.LoginCh
 		return nil, err
 	}
 	return request[protocol.LoginCheckResponse](ctx, http.MethodPost, protocol.LoginCheckURL(serverURL), token, nil, "create login check request", "login check", "check login")
+}
+
+func ListLogs(ctx context.Context, serverURL, token string, req protocol.LogsRequest) (*protocol.LogsResponse, error) {
+	if err := require("serverURL", serverURL, "token", token); err != nil {
+		return nil, err
+	}
+	target, err := protocol.LogsURL(serverURL, req)
+	if err != nil {
+		return nil, fmt.Errorf("parse logs URL: %w", err)
+	}
+	return request[protocol.LogsResponse](ctx, http.MethodGet, target, token, nil, "create logs request", "logs", "logs")
+}
+
+func StreamLogs(ctx context.Context, serverURL, token string, req protocol.LogsRequest, handle func(protocol.LogEvent) error) error {
+	if err := require("serverURL", serverURL, "token", token); err != nil {
+		return err
+	}
+	req.Follow = true
+	target, err := protocol.LogsURL(serverURL, req)
+	if err != nil {
+		return fmt.Errorf("parse logs URL: %w", err)
+	}
+	httpReq, err := protocol.NewRequest(ctx, http.MethodGet, target, token, nil)
+	if err != nil {
+		return fmt.Errorf("create logs stream request: %w", err)
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("stream logs: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		out, decodeErr := protocol.DecodeResponse[protocol.LogsResponse](resp)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		message := out.ErrorMessage()
+		if message == "" {
+			message = resp.Status
+		}
+		return &UploadError{Operation: "logs", StatusCode: resp.StatusCode, Status: resp.Status, Message: message}
+	}
+	return readLogStream(resp.Body, handle)
+}
+
+func readLogStream(r io.Reader, handle func(protocol.LogEvent) error) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var data strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if data.Len() > 0 {
+				var event protocol.LogEvent
+				if err := json.Unmarshal([]byte(data.String()), &event); err != nil {
+					return fmt.Errorf("decode log event: %w", err)
+				}
+				if err := handle(event); err != nil {
+					return err
+				}
+				data.Reset()
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read log stream: %w", err)
+	}
+	return nil
 }
 
 type UploadError struct {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"quack/internal/logbuffer"
 	"quack/internal/policy"
 	"quack/internal/protocol"
 	"quack/internal/releases"
@@ -107,6 +108,7 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	logbuffer.SetRequestSite(r.Context(), decision.Site, decision.Version, decision.Path)
 	if decision.DeniedReason != "" {
 		protocol.WriteError(w, http.StatusForbidden, decision.DeniedReason)
 		return

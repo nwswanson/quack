@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"quack/internal/logbuffer"
 )
 
 type httpRequestRecorder interface {
@@ -56,9 +58,15 @@ func requestLogger(next http.Handler) http.Handler {
 }
 
 func requestLoggerWithMetrics(next http.Handler, surface string, metrics httpRequestRecorder) http.Handler {
+	return requestLoggerWithMetricsAndLogs(next, surface, metrics, nil)
+}
+
+func requestLoggerWithMetricsAndLogs(next http.Handler, surface string, metrics httpRequestRecorder, logs *logbuffer.Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		lrw := &loggingResponseWriter{ResponseWriter: w}
+		ctx := logbuffer.ContextWithRequestMetadata(r.Context())
+		r = r.WithContext(ctx)
 
 		next.ServeHTTP(lrw, r)
 
@@ -88,5 +96,26 @@ func requestLoggerWithMetrics(next http.Handler, surface string, metrics httpReq
 			slog.Int64("bytes", lrw.bytes),
 			slog.Duration("duration", duration),
 		)
+		if logs != nil {
+			site, version, route := logbuffer.RequestSite(r.Context())
+			logs.Add(logbuffer.Event{
+				Level:   level.String(),
+				Source:  "access",
+				Site:    site,
+				Version: version,
+				Route:   route,
+				Message: "http request",
+				Attributes: logbuffer.Attrs(
+					slog.String("surface", surface),
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+					slog.String("host", r.Host),
+					slog.String("remote_addr", r.RemoteAddr),
+					slog.Int("status", status),
+					slog.Int64("bytes", lrw.bytes),
+					slog.Duration("duration", duration),
+				),
+			})
+		}
 	})
 }

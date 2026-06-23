@@ -670,6 +670,7 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		DefaultSite:                    "",
 		AllowedHosts:                   nil,
 		LogLevel:                       "warn",
+		LogBufferCount:                 appsettings.DefaultLogBufferCount,
 		Locked:                         map[string]bool{},
 	}
 	rows, err := d.readDB.QueryContext(ctx, `SELECT key, value, locked FROM server_settings`)
@@ -767,6 +768,12 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 			settings.AllowedHosts = hosts
 		case "log_level":
 			settings.LogLevel = strings.ToLower(strings.TrimSpace(value))
+		case appsettings.SettingLogBufferCount:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.LogBufferCount = n
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -796,6 +803,9 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	}
 	if settings.HTTPCacheMaxAgeSeconds < 0 {
 		return fmt.Errorf("http cache max age seconds must be >= 0")
+	}
+	if settings.LogBufferCount < 0 {
+		return fmt.Errorf("log buffer count must be >= 0")
 	}
 	normalizeRuntimeServerSettings(&settings)
 	normalizeHTTPCacheServerSettings(&settings)
@@ -833,9 +843,10 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
 		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
 		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
-		"default_site":  strings.TrimSpace(settings.DefaultSite),
-		"allowed_hosts": appsettings.FormatAllowedHosts(settings.AllowedHosts),
-		"log_level":     settings.LogLevel,
+		"default_site":                    strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts":                   appsettings.FormatAllowedHosts(settings.AllowedHosts),
+		"log_level":                       settings.LogLevel,
+		appsettings.SettingLogBufferCount: strconv.FormatInt(settings.LogBufferCount, 10),
 	}
 	for key, value := range values {
 		var locked int
@@ -884,6 +895,9 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.HTTPCacheMaxAgeSeconds < 0 {
 		return fmt.Errorf("http cache max age seconds must be >= 0")
 	}
+	if settings.LogBufferCount < 0 {
+		return fmt.Errorf("log buffer count must be >= 0")
+	}
 	normalizeRuntimeServerSettings(&settings)
 	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
@@ -914,9 +928,10 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
 		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
 		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
-		"default_site":  strings.TrimSpace(settings.DefaultSite),
-		"allowed_hosts": appsettings.FormatAllowedHosts(settings.AllowedHosts),
-		"log_level":     settings.LogLevel,
+		"default_site":                    strings.TrimSpace(settings.DefaultSite),
+		"allowed_hosts":                   appsettings.FormatAllowedHosts(settings.AllowedHosts),
+		"log_level":                       settings.LogLevel,
+		appsettings.SettingLogBufferCount: strconv.FormatInt(settings.LogBufferCount, 10),
 	} {
 		if err := appsettings.Validate(key, value); err != nil {
 			return err
@@ -935,6 +950,9 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 func normalizeRuntimeServerSettings(settings *domain.ServerSettings) {
 	if settings.MaxRuntimeDurationMillis <= 0 {
 		settings.MaxRuntimeDurationMillis = appsettings.DefaultRuntimeMaxDurationMillis
+	}
+	if settings.LogBufferCount <= 0 {
+		settings.LogBufferCount = appsettings.DefaultLogBufferCount
 	}
 }
 

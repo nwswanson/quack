@@ -24,7 +24,7 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 	defer stopCancel()
 	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.websocketPredeclareds(ctx, bundle, route, limits))
 	if err != nil {
-		return nil, wrapStarlarkError(err)
+		return nil, e.wrapStarlarkError(bundle, route, err)
 	}
 	handler, args, err := websocketHandler(globals, event, route.Path)
 	if err != nil {
@@ -39,7 +39,7 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 		if ctx.Err() != nil {
 			return nil, ErrTimeout
 		}
-		return nil, wrapStarlarkError(err)
+		return nil, e.wrapStarlarkError(bundle, route, err)
 	}
 	return websocketEffectsFromValue(result)
 }

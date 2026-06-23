@@ -282,6 +282,7 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSet
 			MaxRuntimeDurationMillis: appsettings.DefaultRuntimeMaxDurationMillis,
 			HTTPCacheMode:            "revalidate",
 			HTTPCacheMaxAgeSeconds:   3600,
+			LogBufferCount:           appsettings.DefaultLogBufferCount,
 			LogLevel:                 "warn",
 		}, nil
 	}
@@ -296,6 +297,9 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSet
 	}
 	if db.settings.MaxRuntimeDurationMillis == 0 {
 		db.settings.MaxRuntimeDurationMillis = appsettings.DefaultRuntimeMaxDurationMillis
+	}
+	if db.settings.LogBufferCount == 0 {
+		db.settings.LogBufferCount = appsettings.DefaultLogBufferCount
 	}
 	return db.settings, nil
 }

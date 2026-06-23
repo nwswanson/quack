@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/logbuffer"
 	appsettings "quack/internal/settings"
 )
 
@@ -94,6 +95,60 @@ def handle(req):
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Invoke error = %q, want %q in backtrace", err.Error(), want)
 		}
+	}
+}
+
+func TestStarlarkExecutorLogModuleWritesSiteBuffer(t *testing.T) {
+	logs := logbuffer.New(10)
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    log.info("hello from script", path=req[1], count=3)
+    return (200, {}, "ok")
+`})
+	executor.SetLogBuffer(logs)
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 7, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := logs.Tail(logbuffer.Filter{Site: "foo"}, 0)
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Source != "starlark" || event.Level != "info" || event.Version != 7 || event.Route != "/api" || event.Message != "hello from script" {
+		t.Fatalf("event = %#v, want starlark site log", event)
+	}
+	if event.Attributes["count"] != "3" || event.Attributes["path"] != "/" {
+		t.Fatalf("attrs = %#v, want serialized kwargs", event.Attributes)
+	}
+}
+
+func TestStarlarkExecutorBuffersStackTraceOnScriptError(t *testing.T) {
+	logs := logbuffer.New(10)
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def explode():
+    fail("kaboom")
+
+def handle(req):
+    explode()
+`})
+	executor.SetLogBuffer(logs)
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 8, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if !errors.Is(err, ErrInvocationFailure) {
+		t.Fatalf("Invoke error = %v, want invocation failure", err)
+	}
+	events := logs.Tail(logbuffer.Filter{Site: "foo"}, 0)
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1", len(events))
+	}
+	if events[0].Source != "starlark_error" || !strings.Contains(events[0].StackTrace, "in explode") || !strings.Contains(events[0].StackTrace, "kaboom") {
+		t.Fatalf("event = %#v, want buffered stack trace", events[0])
 	}
 }
 

@@ -9,15 +9,18 @@ import (
 	"math"
 	"strings"
 
+	"quack/internal/logbuffer"
 	"quack/internal/runtime/modules"
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkjson"
+	"go.starlark.net/starlarkstruct"
 )
 
 type StarlarkExecutor struct {
 	loader ScriptLoader
 	limits ResourceLimits
+	logs   *logbuffer.Service
 }
 
 var predeclareds = starlark.StringDict{
@@ -32,6 +35,11 @@ func NewStarlarkExecutor(loader ScriptLoader, limits ResourceLimits) (*StarlarkE
 	}
 	return &StarlarkExecutor{loader: loader, limits: limits.withDefaults()}, nil
 }
+
+func (e *StarlarkExecutor) SetLogBuffer(logs *logbuffer.Service) {
+	e.logs = logs
+}
+
 func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req InvocationRequest) (InvocationResponse, error) {
 	route, err := singleHTTPRoute(bundle)
 	if err != nil {
@@ -46,7 +54,7 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	defer stopCancel()
 	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.predeclareds(ctx, bundle, route, limits))
 	if err != nil {
-		return InvocationResponse{}, wrapStarlarkError(err)
+		return InvocationResponse{}, e.wrapStarlarkError(bundle, route, err)
 	}
 	handle, err := handleFromGlobals(globals)
 	if err != nil {
@@ -58,7 +66,7 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return InvocationResponse{}, ErrTimeout
 		}
-		return InvocationResponse{}, wrapStarlarkError(err)
+		return InvocationResponse{}, e.wrapStarlarkError(bundle, route, err)
 	}
 	return responseFromValue(result)
 }
@@ -68,10 +76,62 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 		out[key] = value
 	}
 	out["memory"] = modules.NewMemoryModule(bundle.Site, limits.MaxMemoryBytes)
+	if e.logs != nil {
+		out["log"] = e.logModule(bundle, route)
+	}
 	if route.FilesystemEnabled {
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
 	}
 	return out
+}
+
+func (e *StarlarkExecutor) logModule(bundle Bundle, route Route) *starlarkstruct.Module {
+	return &starlarkstruct.Module{Name: "log", Members: starlark.StringDict{
+		"debug": starlark.NewBuiltin("log.debug", e.logBuiltin("debug", bundle, route)),
+		"info":  starlark.NewBuiltin("log.info", e.logBuiltin("info", bundle, route)),
+		"warn":  starlark.NewBuiltin("log.warn", e.logBuiltin("warn", bundle, route)),
+		"error": starlark.NewBuiltin("log.error", e.logBuiltin("error", bundle, route)),
+	}}
+}
+
+func (e *StarlarkExecutor) logBuiltin(level string, bundle Bundle, route Route) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s: got %d arguments, want 1", fn.Name(), len(args))
+		}
+		message := starlarkValueString(args[0])
+		attrs := map[string]string{}
+		for _, kwarg := range kwargs {
+			if len(kwarg) != 2 {
+				continue
+			}
+			key, ok := starlark.AsString(kwarg[0])
+			if !ok || strings.TrimSpace(key) == "" {
+				return nil, fmt.Errorf("%s: keyword name must be string", fn.Name())
+			}
+			attrs[key] = starlarkValueString(kwarg[1])
+		}
+		if len(attrs) == 0 {
+			attrs = nil
+		}
+		e.logs.Add(logbuffer.Event{
+			Level:      level,
+			Source:     "starlark",
+			Site:       bundle.Site,
+			Version:    bundle.Version,
+			Route:      route.Path,
+			Message:    message,
+			Attributes: attrs,
+		})
+		return starlark.None, nil
+	}
+}
+
+func starlarkValueString(value starlark.Value) string {
+	if s, ok := starlark.AsString(value); ok {
+		return s
+	}
+	return value.String()
 }
 func fsFiles(files []BundleFile, root string) []modules.FSFile {
 	out := make([]modules.FSFile, 0, len(files))
@@ -162,4 +222,32 @@ func wrapStarlarkError(err error) error {
 		return fmt.Errorf("%w:\n%s", ErrInvocationFailure, backtrace)
 	}
 	return fmt.Errorf("%w: %v", ErrInvocationFailure, err)
+}
+
+func (e *StarlarkExecutor) wrapStarlarkError(bundle Bundle, route Route, err error) error {
+	wrapped := wrapStarlarkError(err)
+	var evalErr *starlark.EvalError
+	stack := ""
+	if errors.As(err, &evalErr) {
+		stack = evalErr.Backtrace()
+	}
+	if e.logs != nil {
+		event := logbuffer.Event{
+			Level:      "error",
+			Source:     "starlark_error",
+			Site:       bundle.Site,
+			Version:    bundle.Version,
+			Route:      route.Path,
+			Message:    "starlark invocation failed",
+			StackTrace: stack,
+			Attributes: map[string]string{
+				"error": wrapped.Error(),
+			},
+		}
+		if stack == "" {
+			event.StackTrace = wrapped.Error()
+		}
+		e.logs.Add(event)
+	}
+	return wrapped
 }

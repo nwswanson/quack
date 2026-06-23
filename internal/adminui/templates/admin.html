@@ -270,6 +270,18 @@
       background: #b42318;
       color: white;
     }
+    .log-message {
+      max-width: 360px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .log-stack {
+      margin: 6px 0 0;
+      max-width: 520px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
     @media (max-width: 640px) {
       .masthead {
         align-items: flex-start;
@@ -528,6 +540,10 @@
               Log level
               <input name="log_level" value="{{.Settings.LogLevel}}" required>
             </label>
+            <label>
+              Log buffer count
+              <input name="log_buffer_count" type="number" min="1" value="{{.Settings.LogBufferCount}}" required>
+            </label>
             <button type="submit">Save settings</button>
           </form>
         </section>
@@ -574,6 +590,51 @@
             </label>
             <button type="submit">Save policy</button>
           </form>
+        </section>
+      {{end}}
+
+      {{if .ActivePage "logs"}}
+        <section>
+          <form method="get" action="/logs" class="panel">
+            <label>
+              Site
+              <input name="site" value="{{.LogSite}}">
+            </label>
+            <button type="submit">Filter logs</button>
+          </form>
+        </section>
+        <section>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Level</th>
+                  <th>Source</th>
+                  <th>Site</th>
+                  <th>Route</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range .LogEvents}}
+                  <tr>
+                    <td>{{.Time}}</td>
+                    <td>{{.Level}}</td>
+                    <td>{{.Source}}</td>
+                    <td>{{if .Site}}{{.Site}}{{else}}system{{end}}</td>
+                    <td>{{.Route}}</td>
+                    <td class="log-message">
+                      {{.Message}}
+                      {{if .StackTrace}}<pre class="log-stack">{{.StackTrace}}</pre>{{end}}
+                    </td>
+                  </tr>
+                {{else}}
+                  <tr><td colspan="6">No logs.</td></tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
         </section>
       {{end}}
     {{else}}

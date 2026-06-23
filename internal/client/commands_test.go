@@ -315,6 +315,50 @@ func TestCheckLoginReportsUnauthorized(t *testing.T) {
 	}
 }
 
+func TestListLogsSendsQuery(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", req.Method)
+		}
+		if req.URL.Path != protocol.LogsPath {
+			t.Fatalf("path = %s, want %s", req.URL.Path, protocol.LogsPath)
+		}
+		if req.URL.Query().Get("site") != "foo" || req.URL.Query().Get("limit") != "5" {
+			t.Fatalf("query = %s, want site foo and limit 5", req.URL.RawQuery)
+		}
+		return response(req, http.StatusOK, `{"ok":true,"events":[{"id":1,"level":"info","source":"starlark","site":"foo","message":"hello"}]}`), nil
+	}))
+
+	resp, err := ListLogs(context.Background(), "http://example.test", "token", protocol.LogsRequest{Site: "foo", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || len(resp.Events) != 1 || resp.Events[0].Message != "hello" {
+		t.Fatalf("response = %#v, want one log event", resp)
+	}
+}
+
+func TestStreamLogsReadsSSEEvents(t *testing.T) {
+	withHTTPClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("follow") != "true" {
+			t.Fatalf("query = %s, want follow=true", req.URL.RawQuery)
+		}
+		return response(req, http.StatusOK, "event: log\ndata: {\"id\":1,\"level\":\"info\",\"source\":\"access\",\"message\":\"one\"}\n\n"), nil
+	}))
+
+	var events []protocol.LogEvent
+	err := StreamLogs(context.Background(), "http://example.test", "token", protocol.LogsRequest{}, func(event protocol.LogEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Message != "one" {
+		t.Fatalf("events = %#v, want streamed event", events)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

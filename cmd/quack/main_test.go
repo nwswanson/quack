@@ -176,6 +176,33 @@ func TestRunDeployInfersSiteNameFromSimpleDirectory(t *testing.T) {
 	}
 }
 
+func TestRunLogsPrintsTail(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "quack.json")
+	t.Setenv("QUACK_CONFIG", configPath)
+	if err := saveConfig(configPath, configFile{ServerURL: "http://example.test", Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	withListLogs(t, func(ctx context.Context, serverURL, token string, req protocol.LogsRequest) (*protocol.LogsResponse, error) {
+		if serverURL != "http://example.test" || token != "secret" {
+			t.Fatalf("auth = (%q, %q), want config values", serverURL, token)
+		}
+		if req.Site != "foo" || req.Limit != 1 {
+			t.Fatalf("request = %#v, want foo limit 1", req)
+		}
+		return &protocol.LogsResponse{OK: true, Events: []protocol.LogEvent{{
+			Time: "now", Level: "info", Source: "starlark", Site: "foo", Route: "/api", Message: "hello",
+		}}}, nil
+	})
+
+	var out strings.Builder
+	if err := runLogs([]string{"foo", "--limit", "1"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "hello") || !strings.Contains(out.String(), "foo") {
+		t.Fatalf("output = %q, want log event", out.String())
+	}
+}
+
 func TestRunDeployRequiresSiteNameForPathLikeDirectory(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "quack.json")
 	t.Setenv("QUACK_CONFIG", configPath)
@@ -295,5 +322,14 @@ func withUploadDirectory(t *testing.T, fn func(context.Context, string, string, 
 	uploadDirectory = fn
 	t.Cleanup(func() {
 		uploadDirectory = previous
+	})
+}
+
+func withListLogs(t *testing.T, fn func(context.Context, string, string, protocol.LogsRequest) (*protocol.LogsResponse, error)) {
+	t.Helper()
+	previous := listLogs
+	listLogs = fn
+	t.Cleanup(func() {
+		listLogs = previous
 	})
 }
