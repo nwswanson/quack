@@ -143,10 +143,10 @@ h1 {
   gap: 8px;
 }
 
+.file-button,
 .icon-button {
   display: grid;
   place-items: center;
-  width: 40px;
   height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -158,10 +158,22 @@ h1 {
   line-height: 1;
 }
 
+.file-button {
+  min-width: 62px;
+  padding: 0 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.icon-button {
+  width: 40px;
+}
+
 .icon-button.danger {
   color: var(--danger);
 }
 
+.file-button:disabled,
 .icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;

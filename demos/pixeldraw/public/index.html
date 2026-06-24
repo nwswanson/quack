@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PixelDraw</title>
-    <link rel="stylesheet" href="/styles.css?v=brushes-3">
+    <link rel="stylesheet" href="/styles.css?v=files-2">
   </head>
   <body>
     <main>
@@ -21,7 +21,10 @@
 
       <section class="drawing-tabs" aria-label="Drawings">
         <div class="tabs" id="tabs" role="tablist" aria-label="Drawing tabs"></div>
+        <input id="drawingFile" type="file" accept=".json,application/json" hidden>
         <div class="tab-actions">
+          <button id="saveDrawing" class="file-button" type="button" title="Save drawing" aria-label="Save drawing">Save</button>
+          <button id="loadDrawing" class="file-button" type="button" title="Load drawing" aria-label="Load drawing">Load</button>
           <button id="newDrawing" class="icon-button" type="button" title="New drawing" aria-label="New drawing">+</button>
           <button id="deleteDrawing" class="icon-button danger" type="button" title="Delete drawing" aria-label="Delete drawing">&times;</button>
         </div>
@@ -64,6 +67,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=brushes-3"></script>
+    <script src="/app.js?v=files-2"></script>
   </body>
 </html>

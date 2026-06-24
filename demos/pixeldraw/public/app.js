@@ -5,6 +5,8 @@ const SPRAY_MOVE_BOOST = 1;
 const SPRAY_MAX_BOOST = 2;
 const SPRAY_SIZE = 4;
 const SPRAY_INTERVAL_MS = 125;
+const EXPORT_FORMAT = "pixeldraw-buffer-v1";
+const MAX_LOAD_BATCH_PIXELS = 512;
 
 const canvas = document.querySelector("#canvas");
 const ctx = canvas.getContext("2d");
@@ -15,6 +17,9 @@ const gridSizeEl = document.querySelector("#gridSize");
 const palette = document.querySelector("#palette");
 const brushes = document.querySelector("#brushes");
 const tabsEl = document.querySelector("#tabs");
+const drawingFileInput = document.querySelector("#drawingFile");
+const saveDrawingButton = document.querySelector("#saveDrawing");
+const loadDrawingButton = document.querySelector("#loadDrawing");
 const newDrawingButton = document.querySelector("#newDrawing");
 const deleteDrawingButton = document.querySelector("#deleteDrawing");
 
@@ -32,6 +37,7 @@ const state = {
   revision: 0,
   socket: null,
   retryTimer: 0,
+  statusTimer: 0,
   flushTimer: 0,
   sprayTimer: 0,
   drawing: false,
@@ -47,8 +53,22 @@ function socketUrl() {
 }
 
 function setStatus(mode, label) {
+  window.clearTimeout(state.statusTimer);
+  state.statusTimer = 0;
   statusEl.dataset.state = mode;
   statusText.textContent = label;
+}
+
+function flashStatus(label) {
+  if (!isOpen()) return;
+  window.clearTimeout(state.statusTimer);
+  statusEl.dataset.state = "open";
+  statusText.textContent = label;
+  state.statusTimer = window.setTimeout(() => {
+    statusEl.dataset.state = "open";
+    statusText.textContent = "Live";
+    state.statusTimer = 0;
+  }, 1400);
 }
 
 function colorHex(code) {
@@ -120,6 +140,8 @@ function renderTabs() {
     }
     tabsEl.append(button);
   }
+  saveDrawingButton.disabled = !state.drawingId;
+  loadDrawingButton.disabled = !state.drawingId;
   deleteDrawingButton.disabled = state.drawings.length <= 1 || !state.drawingId;
 }
 
@@ -261,6 +283,87 @@ function requestDrawing(drawingId) {
   if (!isOpen() || !drawingId || drawingId === state.drawingId) return;
   state.pending.clear();
   state.socket.send(JSON.stringify({ type: "get_drawing", drawing_id: drawingId }));
+}
+
+function serializeCurrentDrawing() {
+  return JSON.stringify({
+    format: EXPORT_FORMAT,
+    width: state.width,
+    height: state.height,
+    drawing_id: state.drawingId,
+    pixels: state.pixels,
+  }, null, 2);
+}
+
+function saveCurrentDrawing() {
+  if (!state.drawingId) return;
+  flushPixels();
+  const text = serializeCurrentDrawing();
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const link = document.createElement("a");
+  const drawingLabel = state.drawingId ? state.drawingId.slice(0, 8) : "drawing";
+  link.href = URL.createObjectURL(blob);
+  link.download = `pixeldraw-${drawingLabel}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  flashStatus("Saved");
+}
+
+function parseLoadedDrawing(text) {
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch (error) {
+    throw new Error("Drawing file is not valid JSON");
+  }
+
+  if (!body || body.format !== EXPORT_FORMAT) {
+    throw new Error(`Drawing file must use ${EXPORT_FORMAT}`);
+  }
+  if (body.width !== state.width || body.height !== state.height) {
+    throw new Error(`Drawing is ${body.width} x ${body.height}; this canvas is ${state.width} x ${state.height}`);
+  }
+  if (!Array.isArray(body.pixels) || body.pixels.length !== state.width * state.height) {
+    throw new Error("Drawing pixel buffer has the wrong length");
+  }
+
+  const pixels = body.pixels.map((value) => {
+    const color = normalizeColor(value);
+    if (!state.colorsByCode.has(color)) {
+      throw new Error(`Drawing contains unknown color ${value}`);
+    }
+    return color;
+  });
+  return { pixels };
+}
+
+function applyLoadedDrawing(drawing) {
+  if (!isOpen() || !state.drawingId) return;
+  state.pending.clear();
+
+  const changed = [];
+  for (let i = 0; i < drawing.pixels.length; i += 1) {
+    const color = drawing.pixels[i];
+    if (state.pixels[i] === color) continue;
+    state.pixels[i] = color;
+    changed.push({
+      x: i % state.width,
+      y: Math.floor(i / state.width),
+      color,
+    });
+  }
+
+  render();
+  for (let i = 0; i < changed.length; i += MAX_LOAD_BATCH_PIXELS) {
+    state.socket.send(JSON.stringify({
+      type: "draw_pixels",
+      drawing_id: state.drawingId,
+      pixels: changed.slice(i, i + MAX_LOAD_BATCH_PIXELS),
+    }));
+  }
+  flashStatus(changed.length > 0 ? "Loaded" : "Already loaded");
 }
 
 function paintCell(x, y) {
@@ -431,6 +534,28 @@ tabsEl.addEventListener("click", (event) => {
   if (!button) return;
   flushPixels();
   requestDrawing(button.dataset.drawingId);
+});
+
+saveDrawingButton.addEventListener("click", saveCurrentDrawing);
+
+loadDrawingButton.addEventListener("click", () => {
+  if (!state.drawingId) return;
+  drawingFileInput.value = "";
+  drawingFileInput.click();
+});
+
+drawingFileInput.addEventListener("change", async () => {
+  const [file] = drawingFileInput.files || [];
+  if (!file || !state.drawingId) return;
+
+  try {
+    const drawing = parseLoadedDrawing(await file.text());
+    flushPixels();
+    applyLoadedDrawing(drawing);
+  } catch (error) {
+    flashStatus("Load failed");
+    window.alert(error.message);
+  }
 });
 
 newDrawingButton.addEventListener("click", () => {
