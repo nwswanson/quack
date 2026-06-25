@@ -14,7 +14,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/quack-s
 
 FROM debian:bookworm-slim AS runtime
 
-RUN useradd --system --uid 10001 --create-home --home-dir /nonexistent --shell /usr/sbin/nologin quack \
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& useradd --system --uid 10001 --create-home --home-dir /nonexistent --shell /usr/sbin/nologin quack \
 	&& mkdir -p /var/lib/quack \
 	&& chown -R quack:quack /var/lib/quack
 
