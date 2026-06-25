@@ -1,0 +1,12 @@
+api_proxies:
+  - name: ifconfig
+    domain: ifconfig.me
+    methods: [GET]
+
+routes:
+  - path: /
+    kind: http
+    runtime: starlark
+    entrypoint: api/home.star
+    methods: [GET]
+    expose_errors: true
