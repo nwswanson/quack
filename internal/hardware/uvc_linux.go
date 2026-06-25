@@ -374,10 +374,25 @@ func (op *captureOperation) closeFD() {
 func captureMJPEG(ctx context.Context, op *captureOperation, device string, width uint32, height uint32) ([]byte, error) {
 	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open camera device %q: %w", device, err)
 	}
 	op.setFD(fd)
 	defer op.closeFD()
+
+	var cap v4l2Capability
+	if err := ioctl(fd, vidiocQueryCap, unsafe.Pointer(&cap)); err != nil {
+		return nil, captureDeviceStepError(ctx, device, "query camera capabilities", err)
+	}
+	caps := cap.Capabilities
+	if cap.DeviceCaps != 0 {
+		caps = cap.DeviceCaps
+	}
+	if caps&(v4l2CapVideoCapture|v4l2CapVideoCaptureMPlane) == 0 {
+		return nil, fmt.Errorf("camera device %q is not a video capture node", device)
+	}
+	if caps&v4l2CapStreaming == 0 {
+		return nil, fmt.Errorf("camera device %q does not support streaming capture", device)
+	}
 
 	var format v4l2Format
 	format.Type = v4l2BufTypeVideoCapture
@@ -386,7 +401,7 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 	format.Pix.PixelFormat = v4l2PixFmtMJPEG
 	format.Pix.Field = v4l2FieldAny
 	if err := ioctl(fd, vidiocSFmt, unsafe.Pointer(&format)); err != nil {
-		return nil, err
+		return nil, captureFormatError(ctx, device, width, height, err)
 	}
 
 	var req v4l2RequestBuffers
@@ -394,10 +409,10 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 	req.Type = v4l2BufTypeVideoCapture
 	req.Memory = v4l2MemoryMMap
 	if err := ioctl(fd, vidiocReqBufs, unsafe.Pointer(&req)); err != nil {
-		return nil, err
+		return nil, captureDeviceStepError(ctx, device, "request camera buffers", err)
 	}
 	if req.Count == 0 {
-		return nil, errors.New("camera did not provide mmap buffers")
+		return nil, fmt.Errorf("camera device %q did not provide mmap buffers", device)
 	}
 
 	type mappedBuffer struct {
@@ -416,21 +431,21 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 		buf.Memory = v4l2MemoryMMap
 		buf.Index = i
 		if err := ioctl(fd, vidiocQueryBuf, unsafe.Pointer(&buf)); err != nil {
-			return nil, err
+			return nil, captureDeviceStepError(ctx, device, "query camera buffer", err)
 		}
 		data, err := unix.Mmap(fd, int64(nativeUint32(buf.M[:4])), int(buf.Length), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
 		if err != nil {
-			return nil, err
+			return nil, captureDeviceStepError(ctx, device, "map camera buffer", err)
 		}
 		buffers = append(buffers, mappedBuffer{data: data})
 		if err := ioctl(fd, vidiocQBuf, unsafe.Pointer(&buf)); err != nil {
-			return nil, err
+			return nil, captureDeviceStepError(ctx, device, "queue camera buffer", err)
 		}
 	}
 
 	bufType := uint32(v4l2BufTypeVideoCapture)
 	if err := ioctl(fd, vidiocStreamOn, unsafe.Pointer(&bufType)); err != nil {
-		return nil, err
+		return nil, captureDeviceStepError(ctx, device, "start camera stream", err)
 	}
 	defer ioctl(fd, vidiocStreamOff, unsafe.Pointer(&bufType))
 
@@ -446,7 +461,7 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
-			return nil, captureDeviceError(ctx, err)
+			return nil, captureDeviceStepError(ctx, device, "poll camera frame", err)
 		}
 		if n == 0 {
 			continue
@@ -458,15 +473,32 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 			if errors.Is(err, unix.EAGAIN) {
 				continue
 			}
-			return nil, captureDeviceError(ctx, err)
+			return nil, captureDeviceStepError(ctx, device, "read camera frame", err)
 		}
 		if int(buf.Index) >= len(buffers) {
-			return nil, fmt.Errorf("camera returned invalid buffer index %d", buf.Index)
+			return nil, fmt.Errorf("camera device %q returned invalid buffer index %d", device, buf.Index)
 		}
 		data := append([]byte(nil), buffers[buf.Index].data[:buf.BytesUsed]...)
 		_ = ioctl(fd, vidiocQBuf, unsafe.Pointer(&buf))
 		return data, nil
 	}
+}
+
+func captureFormatError(ctx context.Context, device string, width uint32, height uint32, err error) error {
+	if ctxErr := captureDoneError(ctx); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, unix.EINVAL) {
+		return fmt.Errorf("camera device %q rejected MJPG %dx%d; check that this is the capture video node and that the camera supports MJPEG at this size: %w", device, width, height, err)
+	}
+	return fmt.Errorf("configure camera device %q for MJPG %dx%d: %w", device, width, height, err)
+}
+
+func captureDeviceStepError(ctx context.Context, device string, step string, err error) error {
+	if ctxErr := captureDoneError(ctx); ctxErr != nil {
+		return ctxErr
+	}
+	return fmt.Errorf("%s on %q: %w", step, device, err)
 }
 
 func captureDeviceError(ctx context.Context, err error) error {
@@ -478,6 +510,15 @@ func captureDeviceError(ctx context.Context, err error) error {
 		return captureContextError(ctx)
 	default:
 		return err
+	}
+}
+
+func captureDoneError(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return captureContextError(ctx)
+	default:
+		return nil
 	}
 }
 

@@ -38,3 +38,35 @@ func TestCaptureDeviceErrorKeepsDeviceErrorBeforeContextDone(t *testing.T) {
 		t.Fatalf("error = %v, want EBUSY", err)
 	}
 }
+
+func TestCaptureFormatErrorExplainsInvalidArgument(t *testing.T) {
+	err := captureFormatError(context.Background(), "/dev/video0", 640, 480, unix.EINVAL)
+	if err == nil {
+		t.Fatal("captureFormatError returned nil")
+	}
+	for _, want := range []string{`camera device "/dev/video0" rejected MJPG 640x480`, "capture video node", "supports MJPEG"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+	if !errors.Is(err, unix.EINVAL) {
+		t.Fatalf("error = %v, want EINVAL", err)
+	}
+}
+
+func TestCaptureFormatErrorReportsTimeoutAfterContextDone(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+
+	err := captureFormatError(ctx, "/dev/video0", 640, 480, unix.EINVAL)
+	if err == nil || !strings.Contains(err.Error(), "camera capture timed out") {
+		t.Fatalf("error = %v, want timeout", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context deadline exceeded", err)
+	}
+	if errors.Is(err, unix.EINVAL) {
+		t.Fatalf("error = %v, leaked EINVAL", err)
+	}
+}
