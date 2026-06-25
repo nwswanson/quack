@@ -59,6 +59,19 @@ func RequestsFromManifest(siteManifest manifest.Manifest) []CapabilityRequest {
 			Required: siteManifest.Features.Camera.Required,
 			Value:    "true",
 		})
+	} else if len(siteManifest.Capabilities.Camera) > 0 {
+		required := false
+		for _, camera := range siteManifest.Capabilities.Camera {
+			if camera.Required {
+				required = true
+				break
+			}
+		}
+		out = append(out, CapabilityRequest{
+			Key:      CapabilityHardwareCamera,
+			Required: required,
+			Value:    "true",
+		})
 	}
 	if len(siteManifest.APIProxies) > 0 {
 		out = append(out, CapabilityRequest{Key: CapabilityRuntimeHTTPClient, Required: true, Value: "true"})

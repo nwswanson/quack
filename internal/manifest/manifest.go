@@ -18,10 +18,11 @@ import (
 const MaxBytes int64 = 64 << 10
 
 type Manifest struct {
-	Features   Features   `json:"features" yaml:"features"`
-	Exclude    []string   `json:"exclude" yaml:"exclude"`
-	Routes     []Route    `json:"routes" yaml:"routes"`
-	APIProxies []APIProxy `json:"api_proxies" yaml:"api_proxies"`
+	Features     Features     `json:"features" yaml:"features"`
+	Capabilities Capabilities `json:"capabilities" yaml:"capabilities"`
+	Exclude      []string     `json:"exclude" yaml:"exclude"`
+	Routes       []Route      `json:"routes" yaml:"routes"`
+	APIProxies   []APIProxy   `json:"api_proxies" yaml:"api_proxies"`
 }
 
 type Features struct {
@@ -32,6 +33,29 @@ type Features struct {
 type FeatureFlag struct {
 	Enabled  bool `json:"enabled" yaml:"enabled"`
 	Required bool `json:"required" yaml:"required"`
+}
+
+type Capabilities struct {
+	Camera map[string]CameraCapability `json:"camera" yaml:"camera"`
+}
+
+type CameraCapability struct {
+	Required    bool                            `json:"required" yaml:"required"`
+	Description string                          `json:"description" yaml:"description"`
+	Permissions map[string]CapabilityPermission `json:"permissions" yaml:"permissions"`
+	Limits      CameraCapabilityLimits          `json:"limits" yaml:"limits"`
+}
+
+type CapabilityPermission struct {
+	Roles []string `json:"roles" yaml:"roles"`
+}
+
+type CameraCapabilityLimits struct {
+	MaxWidth             int `json:"max_width" yaml:"max_width"`
+	MaxHeight            int `json:"max_height" yaml:"max_height"`
+	MaxFPS               int `json:"max_fps" yaml:"max_fps"`
+	MaxDurationSeconds   int `json:"max_duration_seconds" yaml:"max_duration_seconds"`
+	MaxCapturesPerMinute int `json:"max_captures_per_minute" yaml:"max_captures_per_minute"`
 }
 
 type RouteKind string
@@ -105,6 +129,9 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 	}
 	manifest.Exclude = exclude
 	if err := validateRoutes(manifest.Routes); err != nil {
+		return Manifest{}, err
+	}
+	if err := validateCapabilities(manifest.Capabilities); err != nil {
 		return Manifest{}, err
 	}
 	if err := validateAPIProxies(manifest.APIProxies); err != nil {
@@ -221,6 +248,30 @@ func validateRoutes(routes []Route) error {
 		for _, method := range route.Methods {
 			if strings.TrimSpace(method) == "" {
 				return fmt.Errorf("route.methods cannot contain an empty method")
+			}
+		}
+	}
+	return nil
+}
+
+func validateCapabilities(capabilities Capabilities) error {
+	for alias, camera := range capabilities.Camera {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			return fmt.Errorf("capabilities.camera alias is required")
+		}
+		if strings.Contains(alias, "/") || strings.Contains(alias, "\\") || strings.Contains(alias, ":") {
+			return fmt.Errorf("capabilities.camera[%q] must be a logical alias, not a path or URI", alias)
+		}
+		for name, permission := range camera.Permissions {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return fmt.Errorf("capabilities.camera[%q].permissions cannot contain an empty permission", alias)
+			}
+			for _, role := range permission.Roles {
+				if strings.TrimSpace(role) == "" {
+					return fmt.Errorf("capabilities.camera[%q].permissions[%q].roles cannot contain an empty role", alias, name)
+				}
 			}
 		}
 	}

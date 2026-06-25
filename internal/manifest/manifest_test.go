@@ -46,6 +46,43 @@ func TestParseDatabaseFeatureRequired(t *testing.T) {
 	}
 }
 
+func TestParseAllowsLogicalCameraCapabilities(t *testing.T) {
+	body := `capabilities:
+  camera:
+    front_door:
+      required: false
+      description: Front door camera
+      permissions:
+        capture:
+          roles: [admin, staff]
+      limits:
+        max_width: 640
+        max_height: 480
+        max_fps: 2
+        max_duration_seconds: 10
+        max_captures_per_minute: 10
+`
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	camera := got.Capabilities.Camera["front_door"]
+	if camera.Description != "Front door camera" || camera.Limits.MaxWidth != 640 {
+		t.Fatalf("camera capability = %+v, want parsed logical policy", camera)
+	}
+	if got := strings.Join(camera.Permissions["capture"].Roles, ","); got != "admin,staff" {
+		t.Fatalf("capture roles = %q, want admin,staff", got)
+	}
+}
+
+func TestParseRejectsPhysicalCameraCapabilityAlias(t *testing.T) {
+	body := "capabilities:\n  camera:\n    /dev/video0:\n      required: true\n"
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "logical alias") {
+		t.Fatalf("Parse error = %v, want logical alias error", err)
+	}
+}
+
 func TestParseRejectsUnknownFields(t *testing.T) {
 	_, err := Parse(strings.NewReader("features:\n  mystery: true\n"), 26)
 	if err == nil {

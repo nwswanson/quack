@@ -24,6 +24,7 @@ func main() {
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
 	runtimeHTTPClientAllowSelf := flag.Bool("runtime-http-client-allow-self", false, "allow Starlark HTTP client access to loopback/self addresses; development only")
 	hardwarePluginPath := flag.String("hardware-plugin", "", "path to hardware plugin executable; disabled when empty")
+	hardwareConfigPath := flag.String("hardware-config", "", "trusted platform hardware config; required when -hardware-plugin is set")
 	flag.Parse()
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "-root is required")
@@ -98,13 +99,28 @@ func main() {
 	opts.MemoryDirectory = *memoryDir
 	opts.RuntimeHTTPClientAllowSelf = *runtimeHTTPClientAllowSelf
 	if *hardwarePluginPath != "" {
+		if *hardwareConfigPath == "" {
+			fmt.Fprintln(os.Stderr, "-hardware-config is required when -hardware-plugin is set")
+			os.Exit(1)
+		}
+		hardwareConfig, err := hardware.LoadConfigFile(*hardwareConfigPath)
+		if err != nil {
+			slog.Error("load hardware config failed", "path", *hardwareConfigPath, "error", err)
+			os.Exit(1)
+		}
 		hardwareService, err := hardware.StartPluginClient(context.Background(), *hardwarePluginPath)
 		if err != nil {
 			slog.Error("start hardware plugin failed", "path", *hardwarePluginPath, "error", err)
 			os.Exit(1)
 		}
-		defer hardwareService.Close()
-		opts.HardwareService = hardwareService
+		boundHardwareService, err := hardware.NewBoundService(hardwareService, hardwareConfig)
+		if err != nil {
+			_ = hardwareService.Close()
+			slog.Error("configure hardware bindings failed", "path", *hardwareConfigPath, "error", err)
+			os.Exit(1)
+		}
+		defer boundHardwareService.Close()
+		opts.HardwareService = boundHardwareService
 	}
 
 	servers := server.New(adminAddr, publicAddr, uploadToken, store, db, opts)
@@ -123,6 +139,7 @@ func main() {
 		"allow_unauthenticated", *allowUnauthenticated,
 		"runtime_http_client_allow_self", *runtimeHTTPClientAllowSelf,
 		"hardware_plugin_enabled", *hardwarePluginPath != "",
+		"hardware_config_enabled", *hardwareConfigPath != "",
 	)
 
 	type serverError struct {

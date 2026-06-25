@@ -19,11 +19,12 @@ type HardwareService interface {
 
 type cameraModule struct {
 	ctx      context.Context
+	site     string
 	hardware HardwareService
 }
 
-func NewCameraModule(ctx context.Context, hardware HardwareService) *starlarkstruct.Module {
-	m := &cameraModule{ctx: ctx, hardware: hardware}
+func NewCameraModule(ctx context.Context, site string, hardware HardwareService) *starlarkstruct.Module {
+	m := &cameraModule{ctx: ctx, site: site, hardware: hardware}
 	return &starlarkstruct.Module{
 		Name: "camera",
 		Members: starlark.StringDict{
@@ -41,7 +42,7 @@ func (m *cameraModule) list(thread *starlark.Thread, fn *starlark.Builtin, args 
 	if strings.TrimSpace(kind) == "" {
 		kind = hardware.DeviceKindCameraUVC
 	}
-	resp, err := m.hardware.ListDevices(m.ctx, hardware.ListDevicesRequest{Kind: kind})
+	resp, err := m.hardware.ListDevices(m.ctx, hardware.ListDevicesRequest{Kind: kind, Site: m.site})
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +69,7 @@ func (m *cameraModule) capture(thread *starlark.Thread, fn *starlark.Builtin, ar
 	}
 	resp, err := m.hardware.Capture(m.ctx, hardware.CaptureRequest{
 		CameraID: cameraID,
+		Site:     m.site,
 		Width:    width,
 		Height:   height,
 		Format:   format,
@@ -103,12 +105,36 @@ func deviceDict(device hardware.DeviceInfo) starlark.Value {
 	}
 	return stringDict(map[string]starlark.Value{
 		"id":          starlark.String(device.ID),
+		"alias":       starlark.String(firstNonEmpty(device.Alias, device.ID)),
 		"kind":        starlark.String(device.Kind),
-		"path":        starlark.String(device.Path),
-		"stable_path": starlark.String(device.StablePath),
-		"driver":      starlark.String(device.Driver),
-		"card":        starlark.String(device.Card),
-		"bus_info":    starlark.String(device.BusInfo),
+		"label":       starlark.String(device.Label),
+		"permissions": devicePermissionsDict(device.Permissions),
+		"limits":      deviceLimitsDict(device.Limits),
 		"formats":     starlark.NewList(formats),
 	})
+}
+
+func devicePermissionsDict(permissions hardware.DevicePermissions) starlark.Value {
+	return stringDict(map[string]starlark.Value{
+		"capture": starlark.Bool(permissions.Capture),
+		"stream":  starlark.Bool(permissions.Stream),
+	})
+}
+
+func deviceLimitsDict(limits hardware.DeviceLimits) starlark.Value {
+	return stringDict(map[string]starlark.Value{
+		"max_width":         starlark.MakeInt(limits.MaxWidth),
+		"max_height":        starlark.MakeInt(limits.MaxHeight),
+		"max_fps":           starlark.MakeInt(limits.MaxFPS),
+		"max_capture_bytes": starlark.MakeInt(limits.MaxCaptureBytes),
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -272,7 +272,7 @@ func runtimeCapabilities(kind manifest.RouteKind, siteManifest manifest.Manifest
 	case manifest.RouteWebSocket:
 		out = append(out, "runtime.websocket")
 	}
-	if siteManifest.Features.Camera.Enabled {
+	if siteManifest.Features.Camera.Enabled || len(siteManifest.Capabilities.Camera) > 0 {
 		out = append(out, "hardware.camera")
 	}
 	return out

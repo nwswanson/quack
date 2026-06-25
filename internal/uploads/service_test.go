@@ -125,6 +125,27 @@ func TestRuntimeRoutesFromManifestPersistsExposeErrors(t *testing.T) {
 	}
 }
 
+func TestRuntimeRoutesFromManifestAddsCameraCapabilityForLogicalDeclarations(t *testing.T) {
+	upload := domain.UploadRecord{
+		Site: "example.com", SiteSHA: "site-sha", Version: 2,
+		Files: []domain.UploadFileRecord{{RelativePath: "api/app.star", BlobPath: "blob:app"}},
+	}
+	routes, err := RuntimeRoutesFromManifest(upload, manifest.Manifest{
+		Capabilities: manifest.Capabilities{
+			Camera: map[string]manifest.CameraCapability{"front_door": {}},
+		},
+		Routes: []manifest.Route{{
+			Path: "/api", Kind: manifest.RouteHTTP, Runtime: "starlark", Entrypoint: "api/app.star",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(routes[0].RequiredCapabilities, []string{"runtime.http", "hardware.camera"}) {
+		t.Fatalf("capabilities = %#v, want runtime HTTP and camera", routes[0].RequiredCapabilities)
+	}
+}
+
 func TestManifestSettingsPersistsAPIProxies(t *testing.T) {
 	settings := ManifestSettings(manifest.Manifest{
 		APIProxies: []manifest.APIProxy{{Name: "api", Domain: "api.example.com", Methods: []string{"GET"}}},
