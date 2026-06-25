@@ -24,6 +24,7 @@ type StarlarkExecutor struct {
 	policies            policyLoader
 	settings            SettingsReader
 	secrets             modules.SecretGetter
+	hardware            modules.HardwareService
 	allowHTTPClientSelf bool
 }
 
@@ -56,6 +57,10 @@ func (e *StarlarkExecutor) SetHTTPClientPolicy(policies policyLoader, settings S
 
 func (e *StarlarkExecutor) SetSecretStore(secrets modules.SecretGetter) {
 	e.secrets = secrets
+}
+
+func (e *StarlarkExecutor) SetHardwareService(hardware modules.HardwareService) {
+	e.hardware = hardware
 }
 
 func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req InvocationRequest) (InvocationResponse, error) {
@@ -106,6 +111,9 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 	})
 	out["http"] = e.newHTTPModule(ctx, bundle, route)
 	out["secret"] = modules.NewSecretModule(ctx, bundle.Site, e.secrets)
+	if e.hardware != nil {
+		out["camera"] = modules.NewCameraModule(ctx, e.hardware)
+	}
 	if route.FilesystemEnabled {
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
 	}

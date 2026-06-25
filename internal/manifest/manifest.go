@@ -26,6 +26,7 @@ type Manifest struct {
 
 type Features struct {
 	Database FeatureFlag `json:"database" yaml:"database"`
+	Camera   FeatureFlag `json:"camera" yaml:"camera"`
 }
 
 type FeatureFlag struct {
@@ -94,6 +95,9 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 	}
 	if manifest.Features.Database.Required && !manifest.Features.Database.Enabled {
 		return Manifest{}, fmt.Errorf("database.required cannot be true when database.enabled is false")
+	}
+	if manifest.Features.Camera.Required && !manifest.Features.Camera.Enabled {
+		return Manifest{}, fmt.Errorf("camera.required cannot be true when camera.enabled is false")
 	}
 	exclude, err := protocol.NormalizeExcludePatterns(manifest.Exclude)
 	if err != nil {

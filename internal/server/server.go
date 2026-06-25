@@ -10,6 +10,7 @@ import (
 	"quack/internal/cache"
 	"quack/internal/controlapi"
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/logbuffer"
 	"quack/internal/publichttp"
 	"quack/internal/publishing"
@@ -33,6 +34,7 @@ type Options struct {
 	AllowUnauthenticated       bool
 	MemoryDirectory            string
 	RuntimeHTTPClientAllowSelf bool
+	HardwareService            hardware.Service
 }
 
 func DefaultOptions() Options {
@@ -107,6 +109,9 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		starlarkExecutor.SetLogBuffer(logs)
 		starlarkExecutor.SetHTTPClientPolicy(hot, hot, opts.RuntimeHTTPClientAllowSelf)
 		starlarkExecutor.SetSecretStore(secretService)
+		if opts.HardwareService != nil {
+			starlarkExecutor.SetHardwareService(opts.HardwareService)
+		}
 	}
 	metrics := newPrometheusMetrics(metricsDB, runtimehttp.Handler{})
 	runtimeService := appruntime.NewService(appruntime.ServiceOptions{

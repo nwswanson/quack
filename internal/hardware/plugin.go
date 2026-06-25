@@ -1,0 +1,155 @@
+package hardware
+
+import (
+	"context"
+	"net/rpc"
+	"os/exec"
+	"time"
+
+	goplugin "github.com/hashicorp/go-plugin"
+)
+
+const PluginName = "hardware"
+
+var Handshake = goplugin.HandshakeConfig{
+	ProtocolVersion:  1,
+	MagicCookieKey:   "QUACK_HARDWARE_PLUGIN",
+	MagicCookieValue: "hardware-v1",
+}
+
+func PluginMap(service Service) goplugin.PluginSet {
+	return goplugin.PluginSet{
+		PluginName: &RPCPlugin{Impl: service},
+	}
+}
+
+type RPCPlugin struct {
+	Impl Service
+}
+
+func (p *RPCPlugin) Server(*goplugin.MuxBroker) (interface{}, error) {
+	return &rpcServer{impl: p.Impl}, nil
+}
+
+func (p *RPCPlugin) Client(_ *goplugin.MuxBroker, c *rpc.Client) (interface{}, error) {
+	return &rpcClient{client: c}, nil
+}
+
+type rpcServer struct {
+	impl Service
+}
+
+func (s *rpcServer) ListDevices(req ListDevicesRequest, resp *ListDevicesResponse) error {
+	out, err := s.impl.ListDevices(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
+func (s *rpcServer) Capture(req CaptureRequest, resp *CaptureResponse) error {
+	out, err := s.impl.Capture(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
+type rpcClient struct {
+	client *rpc.Client
+}
+
+func (c *rpcClient) ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error) {
+	var resp ListDevicesResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.ListDevices", req, &resp)
+	})
+	return resp, err
+}
+
+func (c *rpcClient) Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error) {
+	var resp CaptureResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.Capture", req, &resp)
+	})
+	return resp, err
+}
+
+func (c *rpcClient) Close() error {
+	return c.client.Close()
+}
+
+func callRPC(ctx context.Context, call func() error) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- call()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type ClientService struct {
+	client *goplugin.Client
+	impl   Service
+}
+
+func StartPluginClient(ctx context.Context, path string) (*ClientService, error) {
+	client := goplugin.NewClient(&goplugin.ClientConfig{
+		HandshakeConfig: Handshake,
+		Plugins:         PluginMap(nil),
+		Cmd:             exec.CommandContext(ctx, path),
+		AllowedProtocols: []goplugin.Protocol{
+			goplugin.ProtocolNetRPC,
+		},
+		StartTimeout: 10 * time.Second,
+	})
+	rpcClient, err := client.Client()
+	if err != nil {
+		client.Kill()
+		return nil, err
+	}
+	raw, err := rpcClient.Dispense(PluginName)
+	if err != nil {
+		client.Kill()
+		return nil, err
+	}
+	impl, ok := raw.(Service)
+	if !ok {
+		client.Kill()
+		return nil, ErrNotConfigured
+	}
+	return &ClientService{client: client, impl: impl}, nil
+}
+
+func (s *ClientService) ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error) {
+	if s == nil || s.impl == nil {
+		return ListDevicesResponse{}, ErrNotConfigured
+	}
+	return s.impl.ListDevices(ctx, req)
+}
+
+func (s *ClientService) Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error) {
+	if s == nil || s.impl == nil {
+		return CaptureResponse{}, ErrNotConfigured
+	}
+	return s.impl.Capture(ctx, req)
+}
+
+func (s *ClientService) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.impl != nil {
+		_ = s.impl.Close()
+	}
+	if s.client != nil {
+		s.client.Kill()
+	}
+	return nil
+}

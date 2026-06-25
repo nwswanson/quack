@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/storage"
 
 	"quack/internal/server"
@@ -22,6 +23,7 @@ func main() {
 	memoryDir := flag.String("memory-dir", "", "directory for runtime memory snapshots")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
 	runtimeHTTPClientAllowSelf := flag.Bool("runtime-http-client-allow-self", false, "allow Starlark HTTP client access to loopback/self addresses; development only")
+	hardwarePluginPath := flag.String("hardware-plugin", "", "path to hardware plugin executable; disabled when empty")
 	flag.Parse()
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "-root is required")
@@ -95,6 +97,15 @@ func main() {
 	opts.AllowUnauthenticated = *allowUnauthenticated
 	opts.MemoryDirectory = *memoryDir
 	opts.RuntimeHTTPClientAllowSelf = *runtimeHTTPClientAllowSelf
+	if *hardwarePluginPath != "" {
+		hardwareService, err := hardware.StartPluginClient(context.Background(), *hardwarePluginPath)
+		if err != nil {
+			slog.Error("start hardware plugin failed", "path", *hardwarePluginPath, "error", err)
+			os.Exit(1)
+		}
+		defer hardwareService.Close()
+		opts.HardwareService = hardwareService
+	}
 
 	servers := server.New(adminAddr, publicAddr, uploadToken, store, db, opts)
 	slog.Warn("starting quack server",
@@ -111,6 +122,7 @@ func main() {
 		"legacy_upload_token_enabled", uploadToken != "",
 		"allow_unauthenticated", *allowUnauthenticated,
 		"runtime_http_client_allow_self", *runtimeHTTPClientAllowSelf,
+		"hardware_plugin_enabled", *hardwarePluginPath != "",
 	)
 
 	type serverError struct {

@@ -10,7 +10,8 @@ import (
 )
 
 const (
-	CapabilityDatabase = "database"
+	CapabilityDatabase       = "database"
+	CapabilityHardwareCamera = "hardware.camera"
 	// CapabilityRuntimeHTTP gates dynamic HTTP route declaration and invocation.
 	//
 	// Future runtime capabilities should use separate keys for network access,
@@ -49,6 +50,13 @@ func RequestsFromManifest(siteManifest manifest.Manifest) []CapabilityRequest {
 		out = append(out, CapabilityRequest{
 			Key:      CapabilityDatabase,
 			Required: siteManifest.Features.Database.Required,
+			Value:    "true",
+		})
+	}
+	if siteManifest.Features.Camera.Enabled {
+		out = append(out, CapabilityRequest{
+			Key:      CapabilityHardwareCamera,
+			Required: siteManifest.Features.Camera.Required,
 			Value:    "true",
 		})
 	}
@@ -140,6 +148,10 @@ func RuntimeWebSocketAllowedByRecords(policies []domain.PolicyRecord) (bool, str
 	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeWebSocketFeature, "dynamic WebSocket routes are disabled by administrator policy")
 }
 
+func HardwareCameraAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
+	return capabilityAllowedByRecords(policies, appsettings.SettingHardwareCameraFeature, "camera hardware is disabled by administrator policy")
+}
+
 func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Evaluation {
 	eval := Evaluation{Allowed: true}
 	for _, req := range requests {
@@ -154,6 +166,8 @@ func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Eval
 			allowed, reason, _ = RuntimeHTTPClientAllowedByRecords(policies)
 		case CapabilityRuntimeWebSocket:
 			allowed, reason, _ = RuntimeWebSocketAllowedByRecords(policies)
+		case CapabilityHardwareCamera:
+			allowed, reason, _ = HardwareCameraAllowedByRecords(policies)
 		default:
 			continue
 		}

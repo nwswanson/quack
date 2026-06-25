@@ -62,6 +62,19 @@ def handle(req):
 	}
 }
 
+func TestStarlarkExecutorDoesNotExposeCameraWithoutHardwareService(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    return (200, {}, str(camera))
+`})
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err == nil || !strings.Contains(err.Error(), "undefined: camera") {
+		t.Fatalf("Invoke error = %v, want undefined camera", err)
+	}
+}
+
 func TestStarlarkHTTPModuleCallsManifestProxy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/widget" || r.URL.RawQuery != "id=123" {

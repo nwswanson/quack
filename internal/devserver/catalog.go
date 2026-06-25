@@ -248,7 +248,7 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 			ExposeErrors:         exposeErrors,
 			FilesystemEnabled:    filesystemEnabled,
 			FilesystemRoot:       filesystemRoot,
-			RequiredCapabilities: runtimeCapabilities(route.Kind),
+			RequiredCapabilities: runtimeCapabilities(route.Kind, source.Manifest),
 			ResourceLimits: appruntime.ResourceLimits{
 				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,
 				MaxResponseBytes:  appruntime.DefaultMaxResponseBytes,
@@ -264,13 +264,16 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 	return out, nil
 }
 
-func runtimeCapabilities(kind manifest.RouteKind) []string {
+func runtimeCapabilities(kind manifest.RouteKind, siteManifest manifest.Manifest) []string {
+	var out []string
 	switch kind {
 	case manifest.RouteHTTP:
-		return []string{"runtime.http"}
+		out = append(out, "runtime.http")
 	case manifest.RouteWebSocket:
-		return []string{"runtime.websocket"}
-	default:
-		return nil
+		out = append(out, "runtime.websocket")
 	}
+	if siteManifest.Features.Camera.Enabled {
+		out = append(out, "hardware.camera")
+	}
+	return out
 }

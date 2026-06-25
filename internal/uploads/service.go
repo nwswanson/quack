@@ -246,8 +246,10 @@ func sanitizeServingPath(name string) (string, error) {
 
 func ManifestSettings(manifest manifest.Manifest) map[string]string {
 	settings := map[string]string{
-		appsettings.SettingDatabaseFeature:         boolSetting(manifest.Features.Database.Enabled),
-		appsettings.SettingDatabaseFeatureRequired: boolSetting(manifest.Features.Database.Required),
+		appsettings.SettingDatabaseFeature:               boolSetting(manifest.Features.Database.Enabled),
+		appsettings.SettingDatabaseFeatureRequired:       boolSetting(manifest.Features.Database.Required),
+		appsettings.SettingHardwareCameraFeature:         boolSetting(manifest.Features.Camera.Enabled),
+		appsettings.SettingHardwareCameraFeatureRequired: boolSetting(manifest.Features.Camera.Required),
 	}
 	if len(manifest.Routes) > 0 {
 		data, _ := json.Marshal(manifest.Routes)
@@ -301,7 +303,7 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 			ExposeErrors:         route.ExposeErrors != nil && *route.ExposeErrors,
 			FilesystemEnabled:    filesystemEnabled,
 			FilesystemRoot:       filesystemRoot,
-			RequiredCapabilities: runtimeCapabilities(route.Kind),
+			RequiredCapabilities: runtimeCapabilities(route.Kind, siteManifest),
 			ResourceLimits: appruntime.ResourceLimits{
 				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,
 				MaxResponseBytes:  appruntime.DefaultMaxResponseBytes,
@@ -325,15 +327,18 @@ func uploadedFileByPath(files []domain.UploadFileRecord, path string) (domain.Up
 	return domain.UploadFileRecord{}, false
 }
 
-func runtimeCapabilities(kind manifest.RouteKind) []string {
+func runtimeCapabilities(kind manifest.RouteKind, siteManifest manifest.Manifest) []string {
+	var out []string
 	switch kind {
 	case manifest.RouteHTTP:
-		return []string{"runtime.http"}
+		out = append(out, "runtime.http")
 	case manifest.RouteWebSocket:
-		return []string{"runtime.websocket"}
-	default:
-		return nil
+		out = append(out, "runtime.websocket")
 	}
+	if siteManifest.Features.Camera.Enabled {
+		out = append(out, "hardware.camera")
+	}
+	return out
 }
 
 func boolSetting(v bool) string {

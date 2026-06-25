@@ -13,10 +13,10 @@ import (
 )
 
 type FSFile struct {
-	Path     string
-	BlobKey  string
-	FileSHA  string
-	Bytes    int64
+	Path    string
+	BlobKey string
+	FileSHA string
+	Bytes   int64
 }
 
 type FSBlobOpener func(ctx context.Context, blobKey string) (io.ReadCloser, error)

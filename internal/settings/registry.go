@@ -62,6 +62,8 @@ const (
 	SettingHTTPCacheMaxAgeSeconds                = "http.cache.max_age_seconds"
 	SettingDatabaseFeature                       = "features.database.enabled"
 	SettingDatabaseFeatureRequired               = "features.database.required"
+	SettingHardwareCameraFeature                 = "features.hardware.camera.enabled"
+	SettingHardwareCameraFeatureRequired         = "features.hardware.camera.required"
 	SettingRuntimeHTTPFeature                    = "features.runtime.http.enabled"
 	SettingRuntimeHTTPClientFeature              = "features.runtime.http_client.enabled"
 	SettingRuntimeWebSocketFeature               = "features.runtime.websocket.enabled"
@@ -129,6 +131,14 @@ var registry = map[string]SettingDefinition{
 	},
 	SettingDatabaseFeatureRequired: {
 		Key: SettingDatabaseFeatureRequired, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingHardwareCameraFeature: {
+		Key: SettingHardwareCameraFeature, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingHardwareCameraFeatureRequired: {
+		Key: SettingHardwareCameraFeatureRequired, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
 	},
 	SettingRuntimeHTTPFeature: {

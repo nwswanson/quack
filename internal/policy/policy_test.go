@@ -153,6 +153,15 @@ func TestRequestsFromManifestConvertsDatabaseFeature(t *testing.T) {
 	}
 }
 
+func TestRequestsFromManifestConvertsCameraFeature(t *testing.T) {
+	requests := RequestsFromManifest(manifest.Manifest{
+		Features: manifest.Features{Camera: manifest.FeatureFlag{Enabled: true, Required: true}},
+	})
+	if len(requests) != 1 || requests[0].Key != CapabilityHardwareCamera || !requests[0].Required {
+		t.Fatalf("requests = %+v, want required hardware camera request", requests)
+	}
+}
+
 func TestRequestsFromManifestConvertsHTTPRoutes(t *testing.T) {
 	requests := RequestsFromManifest(manifest.Manifest{
 		Routes: []manifest.Route{{Path: "/api", Kind: manifest.RouteHTTP}},
