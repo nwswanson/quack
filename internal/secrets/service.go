@@ -203,6 +203,26 @@ func (s *Service) Get(ctx context.Context, site string, scope domain.SecretScope
 	return string(plaintext), nil
 }
 
+func (s *Service) Available(ctx context.Context, site string, scope domain.SecretScope, name string) (bool, error) {
+	scopeID, err := runtimeScopeID(site, scope)
+	if err != nil {
+		return false, err
+	}
+	name = normalizeName(name)
+	if name == "" {
+		return false, fmt.Errorf("secret name is required")
+	}
+	root := s.rootCopy()
+	if len(root) != rootKeyBytes {
+		return false, nil
+	}
+	_, ok, err := s.repo.GetSecret(ctx, scope, scopeID, name)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
 func (s *Service) List(ctx context.Context, user domain.AdminUser, site string) ([]SecretSummary, error) {
 	siteSHA := ""
 	if strings.TrimSpace(site) != "" {

@@ -11,6 +11,7 @@ import (
 )
 
 type SecretGetter interface {
+	Available(ctx context.Context, site string, scope domain.SecretScope, name string) (bool, error)
 	Get(ctx context.Context, site string, scope domain.SecretScope, name string) (string, error)
 	Unlocked() bool
 }
@@ -27,6 +28,7 @@ func NewSecretModule(ctx context.Context, site string, store SecretGetter) *star
 		Name: "secret",
 		Members: starlark.StringDict{
 			"get":      starlark.NewBuiltin("secret.get", m.get),
+			"exists":   starlark.NewBuiltin("secret.exists", m.exists),
 			"unlocked": starlark.NewBuiltin("secret.unlocked", m.unlocked),
 		},
 	}
@@ -45,6 +47,21 @@ func (m *secretModule) get(thread *starlark.Thread, fn *starlark.Builtin, args s
 		return nil, err
 	}
 	return starlark.String(value), nil
+}
+
+func (m *secretModule) exists(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var scope, name string
+	if err := starlark.UnpackArgs(fn.Name(), args, kwargs, "scope", &scope, "name", &name); err != nil {
+		return nil, err
+	}
+	if m.store == nil {
+		return starlark.False, nil
+	}
+	ok, err := m.store.Available(m.ctx, m.site, domain.SecretScope(scope), name)
+	if err != nil {
+		return nil, err
+	}
+	return starlark.Bool(ok), nil
 }
 
 func (m *secretModule) unlocked(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

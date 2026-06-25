@@ -18,6 +18,13 @@ func TestServiceUnlockSetGetAndReset(t *testing.T) {
 	if err := svc.Set(ctx, user, "example", domain.SecretScopeSite, "api_key", "before"); !errors.Is(err, domain.ErrSecretsLocked) {
 		t.Fatalf("set before unlock error = %v, want ErrSecretsLocked", err)
 	}
+	ok, err := svc.Available(ctx, "example", domain.SecretScopeSite, "api_key")
+	if err != nil {
+		t.Fatalf("available before unlock: %v", err)
+	}
+	if ok {
+		t.Fatal("available before unlock = true, want false")
+	}
 	if err := svc.Initialize(ctx, "old-password", user.ID); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
@@ -26,6 +33,20 @@ func TestServiceUnlockSetGetAndReset(t *testing.T) {
 	}
 	if err := svc.Set(ctx, user, "example", domain.SecretScopeSite, "api_key", "secret-value"); err != nil {
 		t.Fatalf("set: %v", err)
+	}
+	ok, err = svc.Available(ctx, "example", domain.SecretScopeSite, "api_key")
+	if err != nil {
+		t.Fatalf("available after set: %v", err)
+	}
+	if !ok {
+		t.Fatal("available after set = false, want true")
+	}
+	ok, err = svc.Available(ctx, "example", domain.SecretScopeSite, "missing")
+	if err != nil {
+		t.Fatalf("available missing: %v", err)
+	}
+	if ok {
+		t.Fatal("available missing = true, want false")
 	}
 	got, err := svc.Get(ctx, "example", domain.SecretScopeSite, "api_key")
 	if err != nil {
