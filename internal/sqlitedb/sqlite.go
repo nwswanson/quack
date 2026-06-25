@@ -459,6 +459,10 @@ func (d *Database) UserCanAccessSite(ctx context.Context, userID int64, siteSHA 
 	return d.userCanAccessSite(ctx, d.readDB, userID, siteSHA)
 }
 
+func (d *Database) SiteExists(ctx context.Context, siteSHA string) (bool, error) {
+	return d.siteExists(ctx, d.readDB, siteSHA)
+}
+
 func (d *Database) CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error) {
 	username = strings.TrimSpace(username)
 	adminPriv = strings.TrimSpace(adminPriv)

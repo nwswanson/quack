@@ -11,7 +11,7 @@ import (
 
 func TestServiceUnlockSetGetAndReset(t *testing.T) {
 	ctx := context.Background()
-	repo := &memoryRepo{}
+	repo := &memoryRepo{sites: map[string]bool{sites.HashName("example"): true}}
 	svc := NewService(repo)
 	user := domain.AdminUser{ID: 1, Username: "alice"}
 
@@ -54,9 +54,24 @@ func TestServiceUnlockSetGetAndReset(t *testing.T) {
 	}
 }
 
+func TestServiceSetRequiresExistingSite(t *testing.T) {
+	ctx := context.Background()
+	repo := &memoryRepo{}
+	svc := NewService(repo)
+	admin := domain.AdminUser{ID: 1, Username: "admin", AdminPriv: "admin:*"}
+
+	if err := svc.Initialize(ctx, "password", admin.ID); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if err := svc.Set(ctx, admin, "missing", domain.SecretScopeSite, "hello", "world"); err == nil {
+		t.Fatal("set for missing site succeeded, want error")
+	}
+}
+
 type memoryRepo struct {
 	keys    []UnlockKeyRecord
 	secrets map[string]SecretRecord
+	sites   map[string]bool
 }
 
 func (r *memoryRepo) LoadUnlockKeys(ctx context.Context) ([]UnlockKeyRecord, error) {
@@ -93,6 +108,10 @@ func (r *memoryRepo) ListSecretsForUser(ctx context.Context, userID int64, siteS
 
 func (r *memoryRepo) DeleteSecretForUser(ctx context.Context, userID int64, scope domain.SecretScope, scopeID string, name string) (bool, error) {
 	return false, nil
+}
+
+func (r *memoryRepo) SiteExists(ctx context.Context, siteSHA string) (bool, error) {
+	return r.sites[siteSHA], nil
 }
 
 func (r *memoryRepo) UserCanAccessSite(ctx context.Context, userID int64, siteSHA string) (bool, error) {

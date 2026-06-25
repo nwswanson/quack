@@ -274,6 +274,15 @@ func (db *fakeDatabase) DeleteSecretForUser(ctx context.Context, userID int64, s
 	return true, nil
 }
 
+func (db *fakeDatabase) SiteExists(ctx context.Context, siteSHA string) (bool, error) {
+	for _, site := range db.sites {
+		if site.SiteSHA == siteSHA {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (db *fakeDatabase) UserCanAccessSite(ctx context.Context, userID int64, siteSHA string) (bool, error) {
 	if db.adminUser.ID == userID && db.adminUser.IsAdmin() {
 		return true, nil

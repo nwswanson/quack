@@ -66,6 +66,7 @@ type Repository interface {
 	GetSecret(ctx context.Context, scope domain.SecretScope, scopeID string, name string) (SecretRecord, bool, error)
 	ListSecretsForUser(ctx context.Context, userID int64, siteSHA string) ([]SecretRecord, error)
 	DeleteSecretForUser(ctx context.Context, userID int64, scope domain.SecretScope, scopeID string, name string) (bool, error)
+	SiteExists(ctx context.Context, siteSHA string) (bool, error)
 	UserCanAccessSite(ctx context.Context, userID int64, siteSHA string) (bool, error)
 }
 
@@ -280,6 +281,13 @@ func siteScopeID(ctx context.Context, repo Repository, user domain.AdminUser, si
 		return "", err
 	}
 	siteSHA := sites.HashName(site)
+	exists, err := repo.SiteExists(ctx, siteSHA)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", fmt.Errorf("site does not exist")
+	}
 	if !user.IsAdmin() {
 		ok, err := repo.UserCanAccessSite(ctx, user.ID, siteSHA)
 		if err != nil {
