@@ -15,6 +15,7 @@ import (
 
 	"quack/internal/access"
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/logbuffer"
 	"quack/internal/protocol"
 	"quack/internal/releases"
@@ -46,6 +47,12 @@ type SiteStorage interface {
 	DeleteSite(ctx context.Context, siteSHA string) error
 }
 
+type HardwareRepository interface {
+	ListHardwareDevices(ctx context.Context) ([]hardware.AdminDevice, error)
+	SaveHardwareDevice(ctx context.Context, device hardware.AdminDevice) error
+	DeleteHardwareDevice(ctx context.Context, id string) (bool, error)
+}
+
 type Handler struct {
 	users         UserRepository
 	sessions      SessionRepository
@@ -58,6 +65,7 @@ type Handler struct {
 	applySettings func(domain.ServerSettings) error
 	logs          *logbuffer.Service
 	secrets       *appsecrets.Service
+	hardware      HardwareRepository
 }
 
 type SiteRuntimeStats struct {
@@ -81,6 +89,7 @@ type Options struct {
 	ApplySettings func(domain.ServerSettings) error
 	Logs          *logbuffer.Service
 	Secrets       *appsecrets.Service
+	Hardware      HardwareRepository
 }
 
 func New(opts Options) Handler {
@@ -104,6 +113,7 @@ func New(opts Options) Handler {
 		applySettings: applySettings,
 		logs:          opts.Logs,
 		secrets:       opts.Secrets,
+		hardware:      opts.Hardware,
 	}
 }
 
@@ -116,6 +126,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/settings", h.handleAdminSettings)
 	mux.HandleFunc("/policy", h.handleAdminPolicy)
 	mux.HandleFunc("/secrets", h.handleAdminSecrets)
+	mux.HandleFunc("/hardware", h.handleAdminHardware)
 	mux.HandleFunc("/logs", h.handleAdminLogsPage)
 }
 
@@ -611,6 +622,118 @@ func (h Handler) handleAdminSecretsPage(w http.ResponseWriter, r *http.Request) 
 	h.renderAdminPage(w, r, data)
 }
 
+func (h Handler) handleAdminHardware(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		h.handleAdminHardwarePage(w, r)
+	case http.MethodPost:
+		h.handleAdminHardwareSave(w, r)
+	default:
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h Handler) handleAdminHardwarePage(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := h.adminPageData(r, user, adminPageHardware)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin hardware page data failed", "username", user.Username, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
+	h.renderAdminPage(w, r, data)
+}
+
+func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminSameOrigin(w, r) {
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() {
+		http.NotFound(w, r)
+		return
+	}
+	if h.hardware == nil {
+		redirectAdminMessage(w, r, "/hardware", "error", "Hardware management is not configured.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		redirectAdminMessage(w, r, "/hardware", "error", "Unable to read hardware form.")
+		return
+	}
+	switch strings.TrimSpace(r.Form.Get("action")) {
+	case "delete":
+		deleted, err := h.hardware.DeleteHardwareDevice(r.Context(), r.Form.Get("id"))
+		if err != nil {
+			slog.ErrorContext(r.Context(), "delete hardware device failed", "username", user.Username, "device", r.Form.Get("id"), "error", err)
+			redirectAdminMessage(w, r, "/hardware", "error", err.Error())
+			return
+		}
+		if deleted {
+			redirectAdminMessage(w, r, "/hardware", "message", "Hardware device deleted.")
+		} else {
+			redirectAdminMessage(w, r, "/hardware", "message", "Hardware device was already absent.")
+		}
+	default:
+		device := hardware.AdminDevice{
+			ID:    r.Form.Get("id"),
+			Kind:  r.Form.Get("kind"),
+			Path:  r.Form.Get("path"),
+			Label: r.Form.Get("label"),
+			Site:  r.Form.Get("site"),
+		}
+		if strings.TrimSpace(device.Site) != "" {
+			site, err := sites.CanonicalName(device.Site)
+			if err != nil {
+				redirectAdminMessage(w, r, "/hardware", "error", err.Error())
+				return
+			}
+			siteList, err := h.releases.ListPublishedSites(r.Context(), user.ID, true)
+			if err != nil {
+				slog.ErrorContext(r.Context(), "load sites for hardware binding failed", "username", user.Username, "error", err)
+				protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+				return
+			}
+			if !publishedSiteExists(siteList, site) {
+				redirectAdminMessage(w, r, "/hardware", "error", "Selected site does not exist.")
+				return
+			}
+			device.Site = site
+		}
+		if err := h.hardware.SaveHardwareDevice(r.Context(), device); err != nil {
+			slog.WarnContext(r.Context(), "save hardware device failed", "username", user.Username, "device", device.ID, "error", err)
+			redirectAdminMessage(w, r, "/hardware", "error", err.Error())
+			return
+		}
+		redirectAdminMessage(w, r, "/hardware", "message", "Hardware device saved.")
+	}
+}
+
+func publishedSiteExists(sites []domain.PublishedSite, site string) bool {
+	for _, candidate := range sites {
+		if candidate.Site == site {
+			return true
+		}
+	}
+	return false
+}
+
 func (h Handler) handleAdminLogsPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -666,6 +789,7 @@ const (
 	adminPageSettings = "settings"
 	adminPagePolicy   = "policy"
 	adminPageSecrets  = "secrets"
+	adminPageHardware = "hardware"
 	adminPageLogs     = "logs"
 )
 
@@ -713,6 +837,8 @@ type adminPageData struct {
 	LogEvents               []logbuffer.Event
 	SecretsHasRootKey       bool
 	SecretsUnlocked         bool
+	HardwareDevices         []hardware.AdminDevice
+	HardwareSites           []domain.PublishedSite
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -828,6 +954,19 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 			data.SecretsHasRootKey = hasKey
 			data.SecretsUnlocked = unlocked
 		}
+	case adminPageHardware:
+		if h.hardware != nil {
+			devices, err := h.hardware.ListHardwareDevices(r.Context())
+			if err != nil {
+				return adminPageData{}, err
+			}
+			data.HardwareDevices = devices
+		}
+		sites, err := h.releases.ListPublishedSites(r.Context(), user.ID, true)
+		if err != nil {
+			return adminPageData{}, err
+		}
+		data.HardwareSites = sites
 	case adminPageLogs:
 		data.LogSite = strings.TrimSpace(r.URL.Query().Get("site"))
 		if h.logs == nil {
@@ -875,6 +1014,8 @@ func adminPageTitle(page string) string {
 		return "Policies"
 	case adminPageSecrets:
 		return "Secrets"
+	case adminPageHardware:
+		return "Hardware"
 	case adminPageLogs:
 		return "Logs"
 	default:
@@ -891,6 +1032,7 @@ func adminNav(user domain.AdminUser) []adminNavItem {
 			adminNavItem{Key: adminPageSettings, Label: "Server Settings", Path: "/settings"},
 			adminNavItem{Key: adminPagePolicy, Label: "Policies", Path: "/policy"},
 			adminNavItem{Key: adminPageSecrets, Label: "Secrets", Path: "/secrets"},
+			adminNavItem{Key: adminPageHardware, Label: "Hardware", Path: "/hardware"},
 		)
 	}
 	return nav

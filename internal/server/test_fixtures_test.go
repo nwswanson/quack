@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsecrets "quack/internal/secrets"
@@ -80,6 +81,7 @@ type fakeDatabase struct {
 	linkedSiteSHA        string
 	unlockKeys           []appsecrets.UnlockKeyRecord
 	secrets              map[string]appsecrets.SecretRecord
+	hardwareDevices      []hardware.AdminDevice
 }
 
 func (db *fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error) {
@@ -421,6 +423,31 @@ func (db *fakeDatabase) SavePolicy(ctx context.Context, policy domain.PolicyReco
 		db.policies = append(db.policies, policy)
 	}
 	return nil
+}
+
+func (db *fakeDatabase) ListHardwareDevices(ctx context.Context) ([]hardware.AdminDevice, error) {
+	return append([]hardware.AdminDevice(nil), db.hardwareDevices...), nil
+}
+
+func (db *fakeDatabase) SaveHardwareDevice(ctx context.Context, device hardware.AdminDevice) error {
+	for i := range db.hardwareDevices {
+		if db.hardwareDevices[i].ID == device.ID {
+			db.hardwareDevices[i] = device
+			return nil
+		}
+	}
+	db.hardwareDevices = append(db.hardwareDevices, device)
+	return nil
+}
+
+func (db *fakeDatabase) DeleteHardwareDevice(ctx context.Context, id string) (bool, error) {
+	for i := range db.hardwareDevices {
+		if db.hardwareDevices[i].ID == id {
+			db.hardwareDevices = append(db.hardwareDevices[:i], db.hardwareDevices[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (db *fakeDatabase) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {

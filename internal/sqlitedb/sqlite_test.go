@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
@@ -240,6 +241,61 @@ func TestRuntimeRoutesRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(current, routes) {
 		t.Fatalf("current routes = %#v, want %#v", current, routes)
+	}
+}
+
+func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:    "cam_01",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video2",
+		Label: "Front desk Logitech C270",
+		Site:  "acme",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:    "cam_02",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video4",
+		Label: "Unbound camera",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	devices, err := db.ListHardwareDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 2 {
+		t.Fatalf("devices = %#v, want two", devices)
+	}
+	if devices[0].ID != "cam_01" || devices[0].Site != "acme" || devices[0].Alias != "cam_01" {
+		t.Fatalf("bound device = %+v, want cam_01 bound to acme as cam_01", devices[0])
+	}
+	if devices[1].ID != "cam_02" || devices[1].Site != "" {
+		t.Fatalf("unbound device = %+v, want no site", devices[1])
+	}
+
+	config, err := db.HardwareConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Devices) != 2 || len(config.SiteDeviceBindings) != 1 {
+		t.Fatalf("config = %+v, want two devices and one binding", config)
+	}
+	if got := config.Devices[0]; got.Kind != hardware.DeviceKindCameraUVC || got.Plugin != hardware.AdminKindUVCCamera || got.Path != "/dev/video2" {
+		t.Fatalf("device config = %+v, want normalized UVC device", got)
+	}
+	if got := config.SiteDeviceBindings[0]; got.Site != "acme" || got.Alias != "cam_01" || !got.Permissions.Capture {
+		t.Fatalf("binding config = %+v, want acme/cam_01 capture", got)
 	}
 }
 

@@ -16,6 +16,7 @@ type Database interface {
 	sites.SiteWriteRepository
 	adminui.UserRepository
 	adminui.SessionRepository
+	adminui.HardwareRepository
 	controlapi.UserRepository
 	releases.Repository
 	secrets.Repository

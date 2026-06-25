@@ -76,6 +76,17 @@ type Config struct {
 	SiteDeviceBindings []SiteDeviceBinding `json:"site_device_bindings" yaml:"site_device_bindings"`
 }
 
+type AdminDevice struct {
+	ID        string
+	Kind      string
+	Path      string
+	Label     string
+	Site      string
+	Alias     string
+	CreatedAt string
+	UpdatedAt string
+}
+
 type DeviceDescriptor struct {
 	ID     string            `json:"id" yaml:"id"`
 	Kind   string            `json:"kind" yaml:"kind"`
@@ -118,6 +129,10 @@ type Provider interface {
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
 }
 
+type ConfigProvider interface {
+	HardwareConfig(ctx context.Context) (Config, error)
+}
+
 type LocalService struct {
 	provider Provider
 }
@@ -150,57 +165,83 @@ func (s *LocalService) Close() error {
 
 type BoundService struct {
 	upstream Service
-	devices  map[string]DeviceDescriptor
-	bindings map[string]SiteDeviceBinding
+	config   ConfigProvider
 }
 
 func NewBoundService(upstream Service, config Config) (*BoundService, error) {
+	provider, err := NewStaticConfigProvider(config)
+	if err != nil {
+		return nil, err
+	}
+	return NewRepositoryBoundService(upstream, provider)
+}
+
+func NewRepositoryBoundService(upstream Service, config ConfigProvider) (*BoundService, error) {
 	if upstream == nil {
 		return nil, ErrNotConfigured
 	}
-	service := &BoundService{
-		upstream: upstream,
-		devices:  make(map[string]DeviceDescriptor, len(config.Devices)),
-		bindings: make(map[string]SiteDeviceBinding, len(config.SiteDeviceBindings)),
+	if config == nil {
+		return nil, fmt.Errorf("hardware config provider is required")
 	}
+	return &BoundService{upstream: upstream, config: config}, nil
+}
+
+type StaticConfigProvider struct {
+	config Config
+}
+
+func NewStaticConfigProvider(config Config) (StaticConfigProvider, error) {
+	if err := ValidateConfig(config); err != nil {
+		return StaticConfigProvider{}, err
+	}
+	return StaticConfigProvider{config: config}, nil
+}
+
+func (p StaticConfigProvider) HardwareConfig(context.Context) (Config, error) {
+	return p.config, nil
+}
+
+func ValidateConfig(config Config) error {
+	devices := make(map[string]DeviceDescriptor, len(config.Devices))
+	bindings := make(map[string]SiteDeviceBinding, len(config.SiteDeviceBindings))
 	for _, device := range config.Devices {
 		device.ID = strings.TrimSpace(device.ID)
 		device.Kind = strings.TrimSpace(device.Kind)
 		device.Path = strings.TrimSpace(device.Path)
 		if device.ID == "" {
-			return nil, fmt.Errorf("hardware device id is required")
+			return fmt.Errorf("hardware device id is required")
 		}
 		if device.Kind == "" {
 			device.Kind = DeviceKindCameraUVC
 		}
 		if device.Path == "" {
-			return nil, fmt.Errorf("hardware device %q path is required", device.ID)
+			return fmt.Errorf("hardware device %q path is required", device.ID)
 		}
-		if _, exists := service.devices[device.ID]; exists {
-			return nil, fmt.Errorf("duplicate hardware device id %q", device.ID)
+		if _, exists := devices[device.ID]; exists {
+			return fmt.Errorf("duplicate hardware device id %q", device.ID)
 		}
-		service.devices[device.ID] = device
+		devices[device.ID] = device
 	}
 	for _, binding := range config.SiteDeviceBindings {
 		binding.Site = strings.TrimSpace(binding.Site)
 		binding.Alias = strings.TrimSpace(binding.Alias)
 		binding.DeviceID = strings.TrimSpace(binding.DeviceID)
 		if binding.Site == "" {
-			return nil, fmt.Errorf("site device binding site is required")
+			return fmt.Errorf("site device binding site is required")
 		}
 		if binding.Alias == "" {
-			return nil, fmt.Errorf("site device binding alias is required")
+			return fmt.Errorf("site device binding alias is required")
 		}
-		if _, ok := service.devices[binding.DeviceID]; !ok {
-			return nil, fmt.Errorf("site device binding %s/%s references unknown device %q", binding.Site, binding.Alias, binding.DeviceID)
+		if _, ok := devices[binding.DeviceID]; !ok {
+			return fmt.Errorf("site device binding %s/%s references unknown device %q", binding.Site, binding.Alias, binding.DeviceID)
 		}
 		key := bindingKey(binding.Site, binding.Alias)
-		if _, exists := service.bindings[key]; exists {
-			return nil, fmt.Errorf("duplicate site device binding %s/%s", binding.Site, binding.Alias)
+		if _, exists := bindings[key]; exists {
+			return fmt.Errorf("duplicate site device binding %s/%s", binding.Site, binding.Alias)
 		}
-		service.bindings[key] = binding
+		bindings[key] = binding
 	}
-	return service, nil
+	return nil
 }
 
 func (s *BoundService) ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error) {
@@ -211,12 +252,16 @@ func (s *BoundService) ListDevices(ctx context.Context, req ListDevicesRequest) 
 	if site == "" {
 		return ListDevicesResponse{}, fmt.Errorf("site is required")
 	}
+	devices, bindings, err := s.resolvedConfig(ctx)
+	if err != nil {
+		return ListDevicesResponse{}, err
+	}
 	out := make([]DeviceInfo, 0)
-	for _, binding := range s.bindings {
+	for _, binding := range bindings {
 		if binding.Site != site {
 			continue
 		}
-		device := s.devices[binding.DeviceID]
+		device := devices[binding.DeviceID]
 		if req.Kind != "" && req.Kind != device.Kind {
 			continue
 		}
@@ -244,14 +289,18 @@ func (s *BoundService) Capture(ctx context.Context, req CaptureRequest) (Capture
 	if alias == "" {
 		return CaptureResponse{}, fmt.Errorf("camera alias is required")
 	}
-	binding, ok := s.bindings[bindingKey(site, alias)]
+	devices, bindings, err := s.resolvedConfig(ctx)
+	if err != nil {
+		return CaptureResponse{}, err
+	}
+	binding, ok := bindings[bindingKey(site, alias)]
 	if !ok {
 		return CaptureResponse{}, fmt.Errorf("camera %q is not assigned to site %q", alias, site)
 	}
 	if !binding.Permissions.Capture {
 		return CaptureResponse{}, fmt.Errorf("camera %q capture is not permitted for site %q", alias, site)
 	}
-	device := s.devices[binding.DeviceID]
+	device := devices[binding.DeviceID]
 	limits := effectiveLimits(device.Limits, binding.Limits)
 	upstreamReq := req
 	upstreamReq.CameraID = device.Path
@@ -272,6 +321,33 @@ func (s *BoundService) Capture(ctx context.Context, req CaptureRequest) (Capture
 		resp.Height = limits.MaxHeight
 	}
 	return resp, nil
+}
+
+func (s *BoundService) resolvedConfig(ctx context.Context) (map[string]DeviceDescriptor, map[string]SiteDeviceBinding, error) {
+	config, err := s.config.HardwareConfig(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ValidateConfig(config); err != nil {
+		return nil, nil, err
+	}
+	devices := make(map[string]DeviceDescriptor, len(config.Devices))
+	for _, device := range config.Devices {
+		device.ID = strings.TrimSpace(device.ID)
+		device.Kind = strings.TrimSpace(device.Kind)
+		if device.Kind == "" {
+			device.Kind = DeviceKindCameraUVC
+		}
+		devices[device.ID] = device
+	}
+	bindings := make(map[string]SiteDeviceBinding, len(config.SiteDeviceBindings))
+	for _, binding := range config.SiteDeviceBindings {
+		binding.Site = strings.TrimSpace(binding.Site)
+		binding.Alias = strings.TrimSpace(binding.Alias)
+		binding.DeviceID = strings.TrimSpace(binding.DeviceID)
+		bindings[bindingKey(binding.Site, binding.Alias)] = binding
+	}
+	return devices, bindings, nil
 }
 
 func (s *BoundService) Close() error {

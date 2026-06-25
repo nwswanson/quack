@@ -639,7 +639,7 @@ The filesystem module is read-only and scoped to the configured uploaded subtree
 
 ## Camera hardware module in Starlark
 
-The `camera` module is only installed when `quack-server` is started with `-hardware-plugin` and a trusted `-hardware-config`. If those boot flags are omitted, Starlark code cannot access the module at all.
+The `camera` module is only installed when `quack-server` is started with `-hardware-plugin`. If that boot flag is omitted, Starlark code cannot access the module at all.
 
 The current hardware plugin supports Linux UVC cameras through the kernel Video4Linux2 API. It does not use cgo, FFmpeg, libuvc, or shell commands. On macOS and other non-Linux systems the plugin binary can build, but camera operations return an unsupported-platform error.
 
@@ -658,39 +658,22 @@ capabilities:
         max_height: 480
 ```
 
-Policy still applies after the boot flags are enabled. The server must allow the `hardware.camera` capability for the site, and the trusted platform config must bind the site alias to a physical device:
+Policy still applies after the boot flag is enabled. The server must allow the `hardware.camera` capability for the site, and the admin UI must bind the device to a site. Unbound devices are stored as host inventory but are not enumerated for any site.
 
 ```yaml
 devices:
   - id: cam_01
-    kind: camera.uvc
-    plugin: uvc-camera
+    kind: uvc-camera
     path: /dev/video2
-    match:
-      vendor_id: "046d"
-      product_id: "0825"
-      serial: "ABC123"
     label: "Front desk Logitech C270"
-
-site_device_bindings:
-  - site: acme
-    alias: front_door
-    device_id: cam_01
-    permissions:
-      capture: true
-      stream: false
-    limits:
-      max_width: 1280
-      max_height: 720
-      max_fps: 5
-      max_capture_bytes: 2000000
+    site: acme
 ```
 
 Example:
 
 ```python
 def handle(req):
-    frame = camera.capture("front_door", width=640, height=480, format="MJPG")
+    frame = camera.capture("cam_01", width=640, height=480, format="MJPG")
     return (
         200,
         {"content-type": frame["mime_type"]},
@@ -707,7 +690,7 @@ camera.capture(alias, width=640, height=480, format="MJPG")
 
 `camera.list()` returns only the current site's logical assignments with fields such as `id`, `alias`, `kind`, `label`, `permissions`, `limits`, and `formats`. It does not expose host paths, USB descriptors, bus topology, or plugin process details.
 
-`camera.capture(...)` accepts the site alias, such as `front_door`, and returns a dictionary containing `id`, `mime_type`, raw byte `data`, base64 text, width, height, format, and device kind. The host resolves `site + alias` through the admin binding, clamps requests to admin-approved limits, and only then calls the hardware plugin with the physical device path.
+`camera.capture(...)` accepts the site alias, such as `cam_01`, and returns a dictionary containing `id`, `mime_type`, raw byte `data`, base64 text, width, height, format, and device kind. The host resolves `site + alias` through the admin binding and only then calls the hardware plugin with the physical device path.
 
 ## Secrets module in Starlark
 
@@ -1185,7 +1168,6 @@ Optional flags:
 -memory-dir              memory snapshot directory
 -allow-unauthenticated   allow unauthenticated /v1 API access; development only
 -hardware-plugin         path to hardware plugin executable; disabled when empty
--hardware-config         trusted platform hardware config; required with -hardware-plugin
 ```
 
 Environment variables:
@@ -1204,11 +1186,10 @@ To enable hardware access, build or install the plugin executable and pass it at
 quack-server \
   -root /var/lib/quack/blobs \
   -database /var/lib/quack/quack.sqlite \
-  -hardware-plugin /usr/local/bin/quack-hardware-plugin \
-  -hardware-config /etc/quack/hardware.yml
+  -hardware-plugin /usr/local/bin/quack-hardware-plugin
 ```
 
-This is a hard boot gate. Without `-hardware-plugin` and `-hardware-config`, hardware-backed Starlark modules are not registered, regardless of site manifest or policy settings.
+This is a hard boot gate. Without `-hardware-plugin`, hardware-backed Starlark modules are not registered, regardless of site manifest, admin UI device bindings, or policy settings.
 
 ## Important server settings
 
@@ -1901,7 +1882,7 @@ features:
 
 If `required` is true, the feature must be allowed for the site to serve correctly. `required: true` is invalid unless `enabled: true` is also set.
 
-Most small Quack apps do not need this block. The Starlark `memory` module does not require `features.database`; memory is its own runtime module. New camera-aware apps should prefer `capabilities.camera` declarations with logical aliases; camera access is only useful when the server was also booted with `-hardware-plugin` and `-hardware-config`.
+Most small Quack apps do not need this block. The Starlark `memory` module does not require `features.database`; memory is its own runtime module. New camera-aware apps should prefer `capabilities.camera` declarations with logical aliases; camera access is only useful when the server was also booted with `-hardware-plugin` and an admin has bound a device to the site.
 
 ### Complete examples
 

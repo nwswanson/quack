@@ -18,6 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	"quack/internal/secrets"
@@ -224,6 +225,22 @@ func (d *Database) init(ctx context.Context) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (site_sha, upload_version, route_path, route_kind),
 			FOREIGN KEY(site_sha, upload_version) REFERENCES uploads(site_sha, version) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS hardware_devices (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			path TEXT NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS hardware_site_bindings (
+			device_id TEXT PRIMARY KEY,
+			site TEXT NOT NULL DEFAULT '',
+			alias TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(device_id) REFERENCES hardware_devices(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS secret_unlock_keys (
 			key_id TEXT PRIMARY KEY,
@@ -1388,6 +1405,116 @@ func (d *Database) SavePolicy(ctx context.Context, policy domain.PolicyRecord) e
 		return fmt.Errorf("save policy: %w", err)
 	}
 	return nil
+}
+
+func (d *Database) ListHardwareDevices(ctx context.Context) ([]hardware.AdminDevice, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT d.id, d.kind, d.path, d.label,
+			COALESCE(b.site, ''), COALESCE(b.alias, ''),
+			d.created_at, d.updated_at
+		FROM hardware_devices d
+		LEFT JOIN hardware_site_bindings b ON b.device_id = d.id
+		ORDER BY d.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list hardware devices: %w", err)
+	}
+	defer rows.Close()
+	var out []hardware.AdminDevice
+	for rows.Next() {
+		var device hardware.AdminDevice
+		if err := rows.Scan(&device.ID, &device.Kind, &device.Path, &device.Label, &device.Site, &device.Alias, &device.CreatedAt, &device.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan hardware device: %w", err)
+		}
+		out = append(out, device)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate hardware devices: %w", err)
+	}
+	return out, nil
+}
+
+func (d *Database) HardwareConfig(ctx context.Context) (hardware.Config, error) {
+	devices, err := d.ListHardwareDevices(ctx)
+	if err != nil {
+		return hardware.Config{}, err
+	}
+	return hardware.ConfigFromAdminDevices(devices), nil
+}
+
+func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.AdminDevice) error {
+	device.ID = strings.TrimSpace(device.ID)
+	device.Kind = strings.TrimSpace(device.Kind)
+	device.Path = strings.TrimSpace(device.Path)
+	device.Label = strings.TrimSpace(device.Label)
+	device.Site = strings.TrimSpace(device.Site)
+	device.Alias = strings.TrimSpace(device.Alias)
+	if device.ID == "" {
+		return fmt.Errorf("device id is required")
+	}
+	if device.Kind == "" {
+		device.Kind = hardware.AdminKindUVCCamera
+	}
+	if device.Path == "" {
+		return fmt.Errorf("device path is required")
+	}
+	if device.Site != "" && device.Alias == "" {
+		device.Alias = device.ID
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	tx, err := d.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin save hardware device: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO hardware_devices (id, kind, path, label)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			kind = excluded.kind,
+			path = excluded.path,
+			label = excluded.label,
+			updated_at = CURRENT_TIMESTAMP
+	`, device.ID, device.Kind, device.Path, device.Label); err != nil {
+		return fmt.Errorf("save hardware device: %w", err)
+	}
+	if device.Site == "" {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM hardware_site_bindings WHERE device_id = ?`, device.ID); err != nil {
+			return fmt.Errorf("delete hardware site binding: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `
+		INSERT INTO hardware_site_bindings (device_id, site, alias)
+		VALUES (?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET
+			site = excluded.site,
+			alias = excluded.alias,
+			updated_at = CURRENT_TIMESTAMP
+	`, device.ID, device.Site, device.Alias); err != nil {
+		return fmt.Errorf("save hardware site binding: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit save hardware device: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) DeleteHardwareDevice(ctx context.Context, id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, fmt.Errorf("device id is required")
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	result, err := d.writeDB.ExecContext(ctx, `DELETE FROM hardware_devices WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("delete hardware device: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete hardware device rows affected: %w", err)
+	}
+	return affected > 0, nil
 }
 
 func (d *Database) LoadUploadSettings(ctx context.Context, siteSHA string, version int64) (map[string]string, error) {

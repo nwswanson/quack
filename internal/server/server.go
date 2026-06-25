@@ -138,8 +138,9 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 			logs.SetCapacity(int(settings.LogBufferCount))
 			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
 		},
-		Logs:    logs,
-		Secrets: secretService,
+		Logs:     logs,
+		Secrets:  secretService,
+		Hardware: db,
 	}).Register(adminMux)
 	adminMux.HandleFunc("/metrics", metrics.handle)
 

@@ -670,6 +670,83 @@
         </section>
       {{end}}
 
+      {{if and .IsAdmin (.ActivePage "hardware")}}
+        <section>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Kind</th>
+                  <th>Path</th>
+                  <th>Label</th>
+                  <th>Site</th>
+                  <th>Alias</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range .HardwareDevices}}
+                  <tr>
+                    <td><code>{{.ID}}</code></td>
+                    <td>{{.Kind}}</td>
+                    <td><code>{{.Path}}</code></td>
+                    <td>{{.Label}}</td>
+                    <td>{{if .Site}}{{.Site}}{{else}}-{{end}}</td>
+                    <td>{{if .Alias}}{{.Alias}}{{else}}-{{end}}</td>
+                    <td>
+                      <form class="inline-form" method="post" action="/hardware">
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="id" value="{{.ID}}">
+                        <button class="small-button danger-button" type="submit">Delete</button>
+                      </form>
+                    </td>
+                  </tr>
+                {{else}}
+                  <tr>
+                    <td colspan="7">No hardware devices yet.</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Create USB Device</h2>
+          <form method="post" action="/hardware">
+            <label>
+              ID
+              <input name="id" placeholder="cam_01" autocomplete="off" required>
+            </label>
+            <label>
+              Kind
+              <select name="kind">
+                <option value="uvc-camera">uvc-camera</option>
+              </select>
+            </label>
+            <label>
+              Path
+              <input name="path" placeholder="/dev/video2" required>
+            </label>
+            <label>
+              Label
+              <input name="label" placeholder="Front desk Logitech C270">
+            </label>
+            <label>
+              Site
+              <select name="site">
+                <option value="">Unbound</option>
+                {{range .HardwareSites}}
+                  <option value="{{.Site}}">{{.Site}}</option>
+                {{end}}
+              </select>
+            </label>
+            <button type="submit">Save device</button>
+          </form>
+        </section>
+      {{end}}
+
       {{if .ActivePage "logs"}}
         <section>
           <form method="get" action="/logs" class="panel">
