@@ -50,6 +50,7 @@ Quack gives you:
 * Publish, unpublish, and delete controls
 * A browser admin panel
 * User and token management
+* Secure at-rest encrypted secret stores usable in Starlark
 * Server-wide settings
 * Policy gates for dynamic features
 * Starlark HTTP routes
@@ -255,6 +256,61 @@ quack-cli delete mysite
 ```
 
 Delete removes the site and its stored data. Use unpublish when you only want to take a site offline temporarily.
+
+### CLI admin of secrets
+
+Secrets are managed through the admin/control API. Use an admin or site-capable token the same way you do for deploys:
+
+```bash
+quack-cli login \
+  --serverURL http://localhost:8081 \
+  --token <admin-or-user-token>
+```
+
+Create or replace a site-scoped secret:
+
+```bash
+quack-cli secrets set mysite STRIPE_API_KEY sk_live_...
+```
+
+The default scope is `site`, so this is equivalent:
+
+```bash
+quack-cli secrets set mysite STRIPE_API_KEY sk_live_... --scope site
+```
+
+List secrets visible to the current token:
+
+```bash
+quack-cli secrets list
+quack-cli secrets list mysite
+```
+
+The list output shows metadata only:
+
+```text
+SCOPE  SITE    NAME            CREATED              UPDATED
+site   mysite  STRIPE_API_KEY  2026-06-25 13:00:00  2026-06-25 13:00:00
+```
+
+It does not print decrypted values.
+
+Delete a secret:
+
+```bash
+quack-cli secrets delete mysite STRIPE_API_KEY
+quack-cli secrets delete mysite STRIPE_API_KEY --scope site
+```
+
+The site must already exist. Non-admin users can only manage secrets for sites they are allowed to access. The secrets store must also be unlocked; when it is locked, set/delete/read operations fail instead of silently returning decrypted values.
+
+There is also a `user` scope in the storage/API model:
+
+```bash
+quack-cli secrets set mysite PERSONAL_TOKEN value --scope user
+```
+
+That scope is for user-owned secret records. Current Starlark runtime access is site-scoped, so application code should use `site` secrets unless a future runtime supplies authenticated user context.
 
 ## Project layout
 
@@ -539,6 +595,9 @@ json
 request
 uuid
 memory
+log
+http
+secret
 ```
 
 HTTP routes can also opt into a read-only uploaded-file view with `filesystem`:
@@ -571,6 +630,71 @@ def handle(req):
 ```
 
 The filesystem module is read-only and scoped to the configured uploaded subtree.
+
+## Secrets module in Starlark
+
+Every Starlark HTTP and WebSocket route receives a `secret` module.
+
+A site does not declare secrets in `site.yml`. Secrets are operational state managed through the admin/control plane, not deployment state. They are not uploaded with the site archive, not served as static files, and not versioned with releases.
+
+Use the module like this:
+
+```python
+def handle(req):
+    if not secret.unlocked():
+        return (
+            503,
+            {"content-type": "application/json"},
+            json.encode({"error": "secrets are locked"}),
+        )
+
+    api_key = secret.get("site", "STRIPE_API_KEY")
+
+    return (
+        200,
+        {"content-type": "application/json"},
+        json.encode({
+            "configured": True,
+        }),
+    )
+```
+
+Available functions:
+
+```python
+secret.unlocked()
+secret.exists(scope, name)
+secret.get(scope, name)
+```
+
+Behavior:
+
+```text
+secret.unlocked()          -> True when the store is configured and unlocked.
+secret.exists("site", n)   -> True when the named site secret exists and the store is unlocked.
+secret.get("site", n)      -> decrypted string value, or an error.
+```
+
+`secret.get` returns a string. It is not automatically redacted. Do not log it, return it to the browser, store it in `memory`, or include it in WebSocket payloads unless that is explicitly the behavior you want.
+
+Secrets are scoped to the current site. A route running for `foo` reads `foo` secrets; it cannot ask for `bar` secrets. Different routes in the same site share the same site-scoped secrets, and different versions of the same site also see the same current secret values.
+
+Failure behavior is intentionally explicit:
+
+```text
+No secret store configured       secret.unlocked() is False; secret.exists(...) is False; secret.get(...) errors.
+Store locked                     secret.unlocked() is False; secret.exists(...) is False; secret.get(...) errors.
+Secret missing                   secret.exists(...) is False; secret.get(...) errors.
+Invalid scope or blank name      secret.exists(...) and secret.get(...) error.
+```
+
+For runtime code today, use the `site` scope:
+
+```python
+token = secret.get("site", "GITHUB_TOKEN")
+```
+
+`user`-scoped secrets exist in the admin/API model, but Starlark runtime routes do not currently receive authenticated user context, so `secret.get("user", "...")` fails rather than guessing which user's secret should be used.
 
 ## Memory module
 
@@ -921,6 +1045,26 @@ The admin panel lets you:
 * Save generated user tokens
 * Change server settings
 * Configure policies for dynamic features
+
+## Admin UI secret management
+
+The Admin UI has a **Secrets** page on the admin listener, available only to signed-in administrators.
+
+The page manages the lifecycle of the encrypted secret store:
+
+* `not created` means there is no root key yet.
+* `locked` means the encrypted root key exists in the database, but the server process has not unlocked it.
+* `unlocked` means the server process has the decrypted root key in memory and can encrypt/decrypt individual secret values.
+
+On first setup, an admin creates the unlock password. Quack generates a random root key, encrypts that root key with the password-derived key, stores the encrypted root key in SQLite, and keeps the decrypted root key in process memory.
+
+After a server restart, the encrypted root key is still stored, but the process starts locked again. An admin unlocks it from the Admin UI by entering the password. While locked, Starlark can detect that secrets are unavailable with `secret.unlocked()`, and direct secret reads fail.
+
+When the store is unlocked, the Admin UI can reset the unlock password. Resetting the password re-wraps the same root key with a new password; it does not rewrite every stored secret.
+
+The current Admin UI does not edit individual site secret values. Use the CLI for `set`, `list`, and `delete`. The UI is for root-key creation, unlock, status, and password reset.
+
+Keep the admin listener private. Secret management is intentionally on the admin/control plane, not the public site listener.
 
 ### Why the admin panel is on a different port
 
