@@ -438,7 +438,7 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, captureContextError(ctx)
 		default:
 		}
 		n, err := unix.Poll(pollFD, 250)
@@ -446,7 +446,7 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
-			return nil, err
+			return nil, captureDeviceError(ctx, err)
 		}
 		if n == 0 {
 			continue
@@ -458,7 +458,7 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 			if errors.Is(err, unix.EAGAIN) {
 				continue
 			}
-			return nil, err
+			return nil, captureDeviceError(ctx, err)
 		}
 		if int(buf.Index) >= len(buffers) {
 			return nil, fmt.Errorf("camera returned invalid buffer index %d", buf.Index)
@@ -467,6 +467,29 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 		_ = ioctl(fd, vidiocQBuf, unsafe.Pointer(&buf))
 		return data, nil
 	}
+}
+
+func captureDeviceError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return captureContextError(ctx)
+	default:
+		return err
+	}
+}
+
+func captureContextError(ctx context.Context) error {
+	err := ctx.Err()
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("camera capture timed out: %w", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("camera capture cancelled: %w", err)
+	}
+	return err
 }
 
 func ioctl(fd int, req uintptr, arg unsafe.Pointer) error {
