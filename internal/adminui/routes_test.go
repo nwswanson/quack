@@ -56,6 +56,7 @@ func TestAdminHardwareFormSavesDevice(t *testing.T) {
 		"path":  {"/dev/video2"},
 		"label": {"Front desk Logitech C270"},
 		"site":  {"acme"},
+		"alias": {"front_door"},
 	}.Encode()))
 	req.Host = "admin.example.com"
 	req.Header.Set("Origin", "https://admin.example.com")
@@ -68,8 +69,84 @@ func TestAdminHardwareFormSavesDevice(t *testing.T) {
 	if resp.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want redirect", resp.Code)
 	}
-	if repo.saved.ID != "cam_01" || repo.saved.Kind != hardware.AdminKindUVCCamera || repo.saved.Path != "/dev/video2" || repo.saved.Label != "Front desk Logitech C270" || repo.saved.Site != "acme" {
+	if repo.saved.ID != "cam_01" || repo.saved.Kind != hardware.AdminKindUVCCamera || repo.saved.Path != "/dev/video2" || repo.saved.Label != "Front desk Logitech C270" || repo.saved.Site != "acme" || repo.saved.Alias != "front_door" {
 		t.Fatalf("saved device = %+v, want form fields", repo.saved)
+	}
+}
+
+func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
+	repo := &adminHardwareRepo{}
+	handler := New(Options{
+		Sessions: adminSessionRepo{user: domain.AdminUser{ID: 1, Username: "admin", AdminPriv: "admin:*"}},
+		Releases: adminReleaseRepo{sites: []domain.PublishedSite{{
+			Site: "acme", SiteSHA: "site-sha", CurrentVersion: 1,
+		}}},
+		Hardware: repo,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
+		"action": {"save"},
+		"id":     {"cam_01"},
+		"kind":   {hardware.AdminKindUVCCamera},
+		"path":   {"/dev/video4"},
+		"label":  {"Moved camera"},
+		"site":   {""},
+		"alias":  {"front_door"},
+	}.Encode()))
+	req.Host = "admin.example.com"
+	req.Header.Set("Origin", "https://admin.example.com")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "session"})
+	resp := httptest.NewRecorder()
+
+	handler.handleAdminHardware(resp, req)
+
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect", resp.Code)
+	}
+	if repo.saved.ID != "cam_01" || repo.saved.Path != "/dev/video4" || repo.saved.Label != "Moved camera" || repo.saved.Site != "" || repo.saved.Alias != "front_door" {
+		t.Fatalf("saved device = %+v, want edited unbound device", repo.saved)
+	}
+}
+
+func TestAdminHardwarePageRendersEditableRows(t *testing.T) {
+	repo := &adminHardwareRepo{devices: []hardware.AdminDevice{{
+		ID:    "cam_01",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video2",
+		Label: "Front desk",
+		Site:  "acme",
+		Alias: "front_door",
+	}}}
+	handler := New(Options{
+		Sessions: adminSessionRepo{user: domain.AdminUser{ID: 1, Username: "admin", AdminPriv: "admin:*"}},
+		Releases: adminReleaseRepo{sites: []domain.PublishedSite{
+			{Site: "acme", SiteSHA: "site-sha", CurrentVersion: 1},
+			{Site: "beta", SiteSHA: "site-sha-2", CurrentVersion: 1},
+		}},
+		Hardware: repo,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/hardware", nil)
+	req.Host = "admin.example.com"
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "session"})
+	resp := httptest.NewRecorder()
+
+	handler.handleAdminHardware(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want OK; body=%s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	for _, want := range []string{
+		`form="hardware-save-cam_01" name="path" value="/dev/video2"`,
+		`form="hardware-save-cam_01" name="label" value="Front desk"`,
+		`form="hardware-save-cam_01" name="alias" value="front_door"`,
+		`<option value="acme" selected>acme</option>`,
+		`<option value="beta" >beta</option>`,
+		`form="hardware-save-cam_01" type="submit">Save</button>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %q, want %q", body, want)
+		}
 	}
 }
 

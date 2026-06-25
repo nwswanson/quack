@@ -270,6 +270,19 @@
       background: #b42318;
       color: white;
     }
+    .table-control {
+      min-width: 130px;
+      padding: 7px 8px;
+      font-size: 13px;
+    }
+    .path-control {
+      min-width: 170px;
+    }
+    .row-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
     .log-message {
       max-width: 360px;
       white-space: normal;
@@ -687,14 +700,34 @@
               </thead>
               <tbody>
                 {{range .HardwareDevices}}
+                  {{$device := .}}
                   <tr>
-                    <td><code>{{.ID}}</code></td>
-                    <td>{{.Kind}}</td>
-                    <td><code>{{.Path}}</code></td>
-                    <td>{{.Label}}</td>
-                    <td>{{if .Site}}{{.Site}}{{else}}-{{end}}</td>
-                    <td>{{if .Alias}}{{.Alias}}{{else}}-{{end}}</td>
                     <td>
+                      <code>{{.ID}}</code>
+                      <input form="hardware-save-{{.ID}}" type="hidden" name="id" value="{{.ID}}">
+                    </td>
+                    <td>
+                      <select class="table-control" form="hardware-save-{{.ID}}" name="kind">
+                        <option value="uvc-camera" {{if eq .Kind "uvc-camera"}}selected{{end}}>uvc-camera</option>
+                      </select>
+                    </td>
+                    <td><input class="table-control path-control" form="hardware-save-{{.ID}}" name="path" value="{{.Path}}" required></td>
+                    <td><input class="table-control" form="hardware-save-{{.ID}}" name="label" value="{{.Label}}"></td>
+                    <td>
+                      <select class="table-control" form="hardware-save-{{.ID}}" name="site">
+                        <option value="" {{if not .Site}}selected{{end}}>Unbound</option>
+                        {{range $.HardwareSites}}
+                          <option value="{{.Site}}" {{if eq .Site $device.Site}}selected{{end}}>{{.Site}}</option>
+                        {{end}}
+                      </select>
+                    </td>
+                    <td><input class="table-control" form="hardware-save-{{.ID}}" name="alias" value="{{.Alias}}" placeholder="{{.ID}}"></td>
+                    <td>
+                      <div class="row-actions">
+                      <form id="hardware-save-{{.ID}}" class="inline-form" method="post" action="/hardware">
+                        <input type="hidden" name="action" value="save">
+                      </form>
+                      <button class="small-button" form="hardware-save-{{.ID}}" type="submit">Save</button>
                       <form class="inline-form" method="post" action="/hardware">
                         <input type="hidden" name="action" value="unstuck">
                         <input type="hidden" name="id" value="{{.ID}}">
@@ -705,6 +738,7 @@
                         <input type="hidden" name="id" value="{{.ID}}">
                         <button class="small-button danger-button" type="submit">Delete</button>
                       </form>
+                      </div>
                     </td>
                   </tr>
                 {{else}}
@@ -746,6 +780,10 @@
                   <option value="{{.Site}}">{{.Site}}</option>
                 {{end}}
               </select>
+            </label>
+            <label>
+              Alias
+              <input name="alias" placeholder="front_door">
             </label>
             <button type="submit">Save device</button>
           </form>

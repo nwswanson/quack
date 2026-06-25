@@ -720,6 +720,7 @@ func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request)
 			Path:  r.Form.Get("path"),
 			Label: r.Form.Get("label"),
 			Site:  r.Form.Get("site"),
+			Alias: r.Form.Get("alias"),
 		}
 		if strings.TrimSpace(device.Site) != "" {
 			site, err := sites.CanonicalName(device.Site)
