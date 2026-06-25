@@ -84,13 +84,14 @@ func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
 		Hardware: repo,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
-		"action": {"save"},
-		"id":     {"cam_01"},
-		"kind":   {hardware.AdminKindUVCCamera},
-		"path":   {"/dev/video4"},
-		"label":  {"Moved camera"},
-		"site":   {""},
-		"alias":  {"front_door"},
+		"action":      {"save"},
+		"original_id": {"cam_01"},
+		"id":          {"video0"},
+		"kind":        {hardware.AdminKindUVCCamera},
+		"path":        {"/dev/video4"},
+		"label":       {"Moved camera"},
+		"site":        {""},
+		"alias":       {"cam_01"},
 	}.Encode()))
 	req.Host = "admin.example.com"
 	req.Header.Set("Origin", "https://admin.example.com")
@@ -103,8 +104,8 @@ func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
 	if resp.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want redirect", resp.Code)
 	}
-	if repo.saved.ID != "cam_01" || repo.saved.Path != "/dev/video4" || repo.saved.Label != "Moved camera" || repo.saved.Site != "" || repo.saved.Alias != "front_door" {
-		t.Fatalf("saved device = %+v, want edited unbound device", repo.saved)
+	if repo.saved.OriginalID != "cam_01" || repo.saved.ID != "video0" || repo.saved.Path != "/dev/video4" || repo.saved.Label != "Moved camera" || repo.saved.Site != "" || repo.saved.Alias != "" {
+		t.Fatalf("saved device = %+v, want renamed unbound device with default alias", repo.saved)
 	}
 }
 
@@ -137,6 +138,8 @@ func TestAdminHardwarePageRendersEditableRows(t *testing.T) {
 	}
 	body := resp.Body.String()
 	for _, want := range []string{
+		`form="hardware-save-cam_01" type="hidden" name="original_id" value="cam_01"`,
+		`form="hardware-save-cam_01" name="id" value="cam_01"`,
 		`form="hardware-save-cam_01" name="path" value="/dev/video2"`,
 		`form="hardware-save-cam_01" name="label" value="Front desk"`,
 		`form="hardware-save-cam_01" name="alias" value="front_door"`,

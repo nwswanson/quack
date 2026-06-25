@@ -1443,6 +1443,7 @@ func (d *Database) HardwareConfig(ctx context.Context) (hardware.Config, error) 
 }
 
 func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.AdminDevice) error {
+	device.OriginalID = strings.TrimSpace(device.OriginalID)
 	device.ID = strings.TrimSpace(device.ID)
 	device.Kind = strings.TrimSpace(device.Kind)
 	device.Path = strings.TrimSpace(device.Path)
@@ -1451,6 +1452,9 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 	device.Alias = strings.TrimSpace(device.Alias)
 	if device.ID == "" {
 		return fmt.Errorf("device id is required")
+	}
+	if device.OriginalID == "" {
+		device.OriginalID = device.ID
 	}
 	if device.Kind == "" {
 		device.Kind = hardware.AdminKindUVCCamera
@@ -1469,14 +1473,40 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 	}
 	defer tx.Rollback()
 	var existingID string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM hardware_devices WHERE path = ? AND id <> ? LIMIT 1`, device.Path, device.ID).Scan(&existingID)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM hardware_devices WHERE path = ? AND id NOT IN (?, ?) LIMIT 1`, device.Path, device.ID, device.OriginalID).Scan(&existingID)
 	if err == nil {
 		return fmt.Errorf("hardware device path %q is already used by device %q", device.Path, existingID)
 	}
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("check hardware device path: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if device.OriginalID != device.ID {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM hardware_devices WHERE id = ? LIMIT 1`, device.ID).Scan(&existingID)
+		if err == nil {
+			return fmt.Errorf("hardware device id %q is already used", device.ID)
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("check hardware device id: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM hardware_site_bindings WHERE device_id = ?`, device.OriginalID); err != nil {
+			return fmt.Errorf("move hardware site binding: %w", err)
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE hardware_devices
+			SET id = ?, kind = ?, path = ?, label = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, device.ID, device.Kind, device.Path, device.Label, device.OriginalID)
+		if err != nil {
+			return fmt.Errorf("rename hardware device: %w", err)
+		}
+		renamed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("rename hardware device rows affected: %w", err)
+		}
+		if renamed == 0 {
+			return fmt.Errorf("hardware device %q does not exist", device.OriginalID)
+		}
+	} else if _, err := tx.ExecContext(ctx, `
 		INSERT INTO hardware_devices (id, kind, path, label)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET

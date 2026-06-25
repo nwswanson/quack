@@ -703,8 +703,8 @@
                   {{$device := .}}
                   <tr>
                     <td>
-                      <code>{{.ID}}</code>
-                      <input form="hardware-save-{{.ID}}" type="hidden" name="id" value="{{.ID}}">
+                      <input form="hardware-save-{{.ID}}" type="hidden" name="original_id" value="{{.ID}}">
+                      <input class="table-control" form="hardware-save-{{.ID}}" name="id" value="{{.ID}}" required>
                     </td>
                     <td>
                       <select class="table-control" form="hardware-save-{{.ID}}" name="kind">

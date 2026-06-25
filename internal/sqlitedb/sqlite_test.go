@@ -336,6 +336,58 @@ func TestSaveHardwareDeviceRejectsDuplicatePath(t *testing.T) {
 	}
 }
 
+func TestSaveHardwareDeviceRenamesDeviceAndBinding(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:    "cam_01",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video0",
+		Site:  "acme",
+		Alias: "cam_01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		OriginalID: "cam_01",
+		ID:         "video0",
+		Kind:       hardware.AdminKindUVCCamera,
+		Path:       "/dev/video0",
+		Label:      "Renamed camera",
+		Site:       "acme",
+	}); err != nil {
+		t.Fatalf("rename hardware device failed: %v", err)
+	}
+
+	devices, err := db.ListHardwareDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices = %#v, want one renamed device", devices)
+	}
+	got := devices[0]
+	if got.ID != "video0" || got.Path != "/dev/video0" || got.Label != "Renamed camera" || got.Site != "acme" || got.Alias != "video0" {
+		t.Fatalf("renamed device = %+v, want video0 bound as video0", got)
+	}
+
+	config, err := db.HardwareConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Devices) != 1 || config.Devices[0].ID != "video0" || config.Devices[0].Path != "/dev/video0" {
+		t.Fatalf("config devices = %+v, want renamed video0", config.Devices)
+	}
+	if len(config.SiteDeviceBindings) != 1 || config.SiteDeviceBindings[0].DeviceID != "video0" || config.SiteDeviceBindings[0].Alias != "video0" {
+		t.Fatalf("config bindings = %+v, want binding moved to video0", config.SiteDeviceBindings)
+	}
+}
+
 func TestMetricsSnapshotCountsUsersSitesBytesAndRoutes(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

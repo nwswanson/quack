@@ -715,12 +715,16 @@ func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request)
 		}
 	default:
 		device := hardware.AdminDevice{
-			ID:    r.Form.Get("id"),
-			Kind:  r.Form.Get("kind"),
-			Path:  r.Form.Get("path"),
-			Label: r.Form.Get("label"),
-			Site:  r.Form.Get("site"),
-			Alias: r.Form.Get("alias"),
+			OriginalID: r.Form.Get("original_id"),
+			ID:         r.Form.Get("id"),
+			Kind:       r.Form.Get("kind"),
+			Path:       r.Form.Get("path"),
+			Label:      r.Form.Get("label"),
+			Site:       r.Form.Get("site"),
+			Alias:      r.Form.Get("alias"),
+		}
+		if strings.TrimSpace(device.OriginalID) != "" && strings.TrimSpace(device.OriginalID) != strings.TrimSpace(device.ID) && strings.TrimSpace(device.Alias) == strings.TrimSpace(device.OriginalID) {
+			device.Alias = ""
 		}
 		if strings.TrimSpace(device.Site) != "" {
 			site, err := sites.CanonicalName(device.Site)

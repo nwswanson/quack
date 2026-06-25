@@ -90,14 +90,15 @@ type Config struct {
 }
 
 type AdminDevice struct {
-	ID        string
-	Kind      string
-	Path      string
-	Label     string
-	Site      string
-	Alias     string
-	CreatedAt string
-	UpdatedAt string
+	OriginalID string
+	ID         string
+	Kind       string
+	Path       string
+	Label      string
+	Site       string
+	Alias      string
+	CreatedAt  string
+	UpdatedAt  string
 }
 
 type DeviceDescriptor struct {
