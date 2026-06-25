@@ -600,6 +600,12 @@ http
 secret
 ```
 
+If the server is started with the hardware plugin enabled, HTTP and WebSocket routes also receive:
+
+```python
+camera
+```
+
 HTTP routes can also opt into a read-only uploaded-file view with `filesystem`:
 
 ```yaml
@@ -630,6 +636,46 @@ def handle(req):
 ```
 
 The filesystem module is read-only and scoped to the configured uploaded subtree.
+
+## Camera hardware module in Starlark
+
+The `camera` module is only installed when `quack-server` is started with `-hardware-plugin`. If that boot flag is omitted, Starlark code cannot access the module at all.
+
+The current hardware plugin supports Linux UVC cameras through the kernel Video4Linux2 API. It does not use cgo, FFmpeg, libuvc, or shell commands. On macOS and other non-Linux systems the plugin binary can build, but camera operations return an unsupported-platform error.
+
+A site must also request the camera feature in `site.yml`:
+
+```yaml
+features:
+  camera:
+    enabled: true
+    required: true
+```
+
+Policy still applies after the boot flag is enabled. The server must allow the `hardware.camera` capability for the site.
+
+Example:
+
+```python
+def handle(req):
+    frame = camera.capture("0", width=640, height=480, format="MJPG")
+    return (
+        200,
+        {"content-type": frame["mime_type"]},
+        frame["data"],
+    )
+```
+
+Available functions:
+
+```python
+camera.list()
+camera.capture(id, width=640, height=480, format="MJPG")
+```
+
+`camera.list()` returns detected camera devices with fields such as `id`, `kind`, `path`, `stable_path`, `driver`, `card`, `bus_info`, and `formats`.
+
+`camera.capture(...)` returns a dictionary containing `mime_type`, raw byte `data`, base64 text, width, height, format, and device kind. The initial implementation captures MJPEG frames from `/dev/videoN` devices. Prefer stable Linux paths such as `/dev/v4l/by-id/...` or future admin-defined aliases over relying on `/dev/video0` in production, because raw video node numbers can change after reboot or hotplug.
 
 ## Secrets module in Starlark
 
@@ -1106,6 +1152,7 @@ Optional flags:
 ```text
 -memory-dir              memory snapshot directory
 -allow-unauthenticated   allow unauthenticated /v1 API access; development only
+-hardware-plugin         path to hardware plugin executable; disabled when empty
 ```
 
 Environment variables:
@@ -1117,6 +1164,17 @@ UPLOAD_TOKEN  legacy upload token
 ```
 
 If `-memory-dir` is omitted, Quack stores memory snapshots beside the database under a `memory` directory.
+
+To enable hardware access, build or install the plugin executable and pass it at server boot:
+
+```bash
+quack-server \
+  -root /var/lib/quack/blobs \
+  -database /var/lib/quack/quack.sqlite \
+  -hardware-plugin /usr/local/bin/quack-hardware-plugin
+```
+
+This is a hard boot gate. Without `-hardware-plugin`, hardware-backed Starlark modules are not registered, regardless of site manifest or policy settings.
 
 ## Important server settings
 
@@ -1192,6 +1250,7 @@ The major dynamic policies are:
 Dynamic HTTP routes
 Dynamic WebSocket routes
 Database feature
+Camera hardware
 ```
 
 Each policy can be set to:
@@ -1780,16 +1839,19 @@ The manifest itself is never excluded by `exclude`, because Quack needs it durin
 
 ### `features`
 
-The currently supported top-level feature declaration is `features.database`.
+The currently supported top-level feature declarations are `features.database` and `features.camera`.
 
 ```yaml
 features:
   database:
     enabled: true
     required: false
+  camera:
+    enabled: true
+    required: true
 ```
 
-This declares that the site wants the database feature. Policy determines whether that is allowed.
+This declares that the site wants the database and camera features. Policy determines whether those capabilities are allowed.
 
 `required` controls how Quack treats policy denial:
 
@@ -1798,11 +1860,14 @@ features:
   database:
     enabled: true
     required: true
+  camera:
+    enabled: true
+    required: true
 ```
 
 If `required` is true, the feature must be allowed for the site to serve correctly. `required: true` is invalid unless `enabled: true` is also set.
 
-Most small Quack apps do not need this block. The Starlark `memory` module does not require `features.database`; memory is its own runtime module.
+Most small Quack apps do not need this block. The Starlark `memory` module does not require `features.database`; memory is its own runtime module. The `camera` feature is only useful when the server was also booted with `-hardware-plugin`.
 
 ### Complete examples
 
