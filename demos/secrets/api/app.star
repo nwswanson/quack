@@ -65,12 +65,11 @@ def handle(req):
         return (423, {"content-type": "text/html; charset=utf-8"}, _page("Secrets locked", body))
 
     hello_body = '<span class="missing">missing</span>'
-    if secret.unlocked("site", "hello"):
+    if secret.unlocked():
         hello_body = _escape_html(secret.get("site", "hello"))
 
     hello2_body = '<span class="missing">missing</span>'
-    if secret.unlocked("site", "hello2"):
-        hello2_body = _escape_html(secret.get("site", "hello2"))
+    # TODO fix this
 
     body = """
     <h1>Secrets demo</h1>
