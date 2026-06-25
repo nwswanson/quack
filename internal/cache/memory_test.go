@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
@@ -290,6 +291,13 @@ func (r *countingHotDataReader) ListRuntimeBundleFiles(ctx context.Context, site
 		return nil, true, nil
 	}
 	return []domain.UploadFileRecord{r.file}, true, nil
+}
+
+func (r *countingHotDataReader) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return nil, nil
 }
 
 func (r *countingHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

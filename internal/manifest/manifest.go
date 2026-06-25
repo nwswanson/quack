@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	"quack/internal/protocol"
@@ -15,9 +18,10 @@ import (
 const MaxBytes int64 = 64 << 10
 
 type Manifest struct {
-	Features Features `json:"features" yaml:"features"`
-	Exclude  []string `json:"exclude" yaml:"exclude"`
-	Routes   []Route  `json:"routes" yaml:"routes"`
+	Features   Features   `json:"features" yaml:"features"`
+	Exclude    []string   `json:"exclude" yaml:"exclude"`
+	Routes     []Route    `json:"routes" yaml:"routes"`
+	APIProxies []APIProxy `json:"api_proxies" yaml:"api_proxies"`
 }
 
 type Features struct {
@@ -51,6 +55,15 @@ type Route struct {
 
 type RouteFilesystem struct {
 	Root string `json:"root,omitempty" yaml:"root,omitempty"`
+}
+
+type APIProxy struct {
+	Name        string   `json:"name" yaml:"name"`
+	Domain      string   `json:"domain,omitempty" yaml:"domain,omitempty"`
+	PathFixed   string   `json:"path_fixed,omitempty" yaml:"path_fixed,omitempty"`
+	Methods     []string `json:"methods,omitempty" yaml:"methods,omitempty"`
+	MethodsAll  bool     `json:"-" yaml:"-"`
+	InsecureSSL bool     `json:"insecure_ssl,omitempty" yaml:"insecure_ssl,omitempty"`
 }
 
 func Default() Manifest {
@@ -88,6 +101,9 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 	}
 	manifest.Exclude = exclude
 	if err := validateRoutes(manifest.Routes); err != nil {
+		return Manifest{}, err
+	}
+	if err := validateAPIProxies(manifest.APIProxies); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil
@@ -205,4 +221,141 @@ func validateRoutes(routes []Route) error {
 		}
 	}
 	return nil
+}
+
+var apiProxyNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func validateAPIProxies(proxies []APIProxy) error {
+	seen := map[string]struct{}{}
+	for i := range proxies {
+		proxy := &proxies[i]
+		proxy.Name = strings.TrimSpace(proxy.Name)
+		if proxy.Name == "" {
+			return fmt.Errorf("api_proxies[%d].name is required", i)
+		}
+		if !apiProxyNamePattern.MatchString(proxy.Name) || strings.Contains(proxy.Name, ".") || strings.Contains(proxy.Name, "://") {
+			return fmt.Errorf("api_proxies[%d].name must contain only letters, numbers, underscores, and dashes", i)
+		}
+		if _, ok := seen[proxy.Name]; ok {
+			return fmt.Errorf("api_proxies[%d].name duplicates %q", i, proxy.Name)
+		}
+		seen[proxy.Name] = struct{}{}
+
+		domain := strings.TrimSpace(proxy.Domain)
+		pathFixed := strings.TrimSpace(proxy.PathFixed)
+		switch {
+		case domain == "" && pathFixed == "":
+			return fmt.Errorf("api_proxies[%d] must set exactly one of domain or path_fixed", i)
+		case domain != "" && pathFixed != "":
+			return fmt.Errorf("api_proxies[%d] cannot set both domain and path_fixed", i)
+		case domain != "":
+			normalized, err := normalizeAPIProxyDomain(domain)
+			if err != nil {
+				return fmt.Errorf("invalid api_proxies[%d].domain: %w", i, err)
+			}
+			proxy.Domain = normalized
+		case pathFixed != "":
+			normalized, err := normalizeAPIProxyPathFixed(pathFixed)
+			if err != nil {
+				return fmt.Errorf("invalid api_proxies[%d].path_fixed: %w", i, err)
+			}
+			proxy.PathFixed = normalized
+		}
+
+		methods, all, err := normalizeAPIProxyMethods(proxy.Methods)
+		if err != nil {
+			return fmt.Errorf("invalid api_proxies[%d].methods: %w", i, err)
+		}
+		proxy.Methods = methods
+		proxy.MethodsAll = all
+	}
+	return nil
+}
+
+func normalizeAPIProxyDomain(value string) (string, error) {
+	if strings.Contains(value, "://") {
+		return "", fmt.Errorf("must not include a scheme")
+	}
+	if strings.ContainsAny(value, "/?#") {
+		return "", fmt.Errorf("must not include a path, query, or fragment")
+	}
+	host := value
+	port := ""
+	if h, p, err := net.SplitHostPort(value); err == nil {
+		host, port = h, p
+	} else if strings.Contains(err.Error(), "missing port in address") {
+		host = value
+	} else if strings.Contains(value, ":") && strings.Count(value, ":") == 1 {
+		return "", fmt.Errorf("invalid host or port")
+	}
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	if host == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	if strings.Contains(host, "*") {
+		return "", fmt.Errorf("wildcards are not supported")
+	}
+	if port != "" {
+		if _, err := net.LookupPort("tcp", port); err != nil {
+			return "", fmt.Errorf("invalid port")
+		}
+		return net.JoinHostPort(host, port), nil
+	}
+	return host, nil
+}
+
+func normalizeAPIProxyPathFixed(value string) (string, error) {
+	u, err := url.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("must be an absolute http or https URL")
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("userinfo is not allowed")
+	}
+	if u.Fragment != "" {
+		return "", fmt.Errorf("fragment is not allowed")
+	}
+	if u.RawQuery != "" {
+		return "", fmt.Errorf("query is not allowed")
+	}
+	if u.Path == "" || u.Path == "/" {
+		return "", fmt.Errorf("path is required")
+	}
+	u.Host = strings.ToLower(u.Host)
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func normalizeAPIProxyMethods(values []string) ([]string, bool, error) {
+	if len(values) == 0 {
+		return []string{"GET"}, false, nil
+	}
+	allowed := map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		method := strings.ToUpper(strings.TrimSpace(value))
+		if method == "" {
+			return nil, false, fmt.Errorf("cannot contain an empty method")
+		}
+		if method == "ALL" {
+			return []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}, true, nil
+		}
+		if !allowed[method] {
+			return nil, false, fmt.Errorf("unsupported method %q", value)
+		}
+		if _, ok := seen[method]; ok {
+			continue
+		}
+		seen[method] = struct{}{}
+		out = append(out, method)
+	}
+	return out, false, nil
 }

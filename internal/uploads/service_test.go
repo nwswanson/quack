@@ -125,6 +125,15 @@ func TestRuntimeRoutesFromManifestPersistsExposeErrors(t *testing.T) {
 	}
 }
 
+func TestManifestSettingsPersistsAPIProxies(t *testing.T) {
+	settings := ManifestSettings(manifest.Manifest{
+		APIProxies: []manifest.APIProxy{{Name: "api", Domain: "api.example.com", Methods: []string{"GET"}}},
+	})
+	if got := settings[appsettings.SettingRuntimeHTTPClientAPIProxies]; got == "" || !strings.Contains(got, `"name":"api"`) {
+		t.Fatalf("api proxy setting = %q, want marshaled proxies", got)
+	}
+}
+
 func TestServiceUploadArchiveCountsOnlyTarEntriesAfterExclusions(t *testing.T) {
 	dir := t.TempDir()
 	writeUploadArchiveFile(t, dir, "site.yml", "exclude:\n  - \"*.swp\"\n  - \"node_modules\"\n")
@@ -343,6 +352,10 @@ func (r uploadServiceRead) SystemDatabasePolicy(ctx context.Context) (domain.Pol
 }
 
 func (r uploadServiceRead) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
+func (r uploadServiceRead) SystemRuntimeHTTPClientPolicy(ctx context.Context) (domain.PolicyRecord, error) {
 	return domain.PolicyRecord{}, nil
 }
 

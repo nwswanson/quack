@@ -228,6 +228,78 @@ func TestParseRejectsInvalidStarlarkFilesystem(t *testing.T) {
 	}
 }
 
+func TestParseAPIProxiesValidatesAndNormalizes(t *testing.T) {
+	body := `api_proxies:
+  - name: my_api
+    domain: API.Example.COM
+  - name: local_api
+    path_fixed: http://192.168.1.50:8080/api/v1/widget
+    methods: [post, GET]
+`
+	manifest, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.APIProxies[0]; got.Name != "my_api" || got.Domain != "api.example.com" || strings.Join(got.Methods, ",") != "GET" {
+		t.Fatalf("domain proxy = %+v, want normalized GET proxy", got)
+	}
+	if got := manifest.APIProxies[1]; got.PathFixed != "http://192.168.1.50:8080/api/v1/widget" || strings.Join(got.Methods, ",") != "POST,GET" {
+		t.Fatalf("fixed proxy = %+v, want normalized path/methods", got)
+	}
+}
+
+func TestParseRejectsInvalidAPIProxies(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "both domain and fixed path",
+			body: "api_proxies:\n  - name: p\n    domain: api.example.com\n    path_fixed: https://api.example.com/v1\n",
+			want: "cannot set both domain and path_fixed",
+		},
+		{
+			name: "neither domain nor fixed path",
+			body: "api_proxies:\n  - name: p\n",
+			want: "must set exactly one",
+		},
+		{
+			name: "duplicate name",
+			body: "api_proxies:\n  - name: p\n    domain: api.example.com\n  - name: p\n    domain: other.example.com\n",
+			want: "duplicates",
+		},
+		{
+			name: "userinfo",
+			body: "api_proxies:\n  - name: p\n    path_fixed: https://user:pass@api.example.com/v1\n",
+			want: "userinfo is not allowed",
+		},
+		{
+			name: "fragment",
+			body: "api_proxies:\n  - name: p\n    path_fixed: https://api.example.com/v1#frag\n",
+			want: "fragment is not allowed",
+		},
+		{
+			name: "bad name",
+			body: "api_proxies:\n  - name: ../p\n    domain: api.example.com\n",
+			want: "must contain only",
+		},
+		{
+			name: "domain scheme",
+			body: "api_proxies:\n  - name: p\n    domain: https://api.example.com\n",
+			want: "must not include a scheme",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(strings.NewReader(tt.body), int64(len(tt.body)))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseRejectsRuntimeWithoutEntrypoint(t *testing.T) {
 	body := "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n"
 	_, err := Parse(strings.NewReader(body), int64(len(body)))

@@ -21,6 +21,7 @@ func main() {
 	databasePath := flag.String("database", "", "sqlite database file")
 	memoryDir := flag.String("memory-dir", "", "directory for runtime memory snapshots")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow unauthenticated /v1 API access; development only")
+	runtimeHTTPClientAllowSelf := flag.Bool("runtime-http-client-allow-self", false, "allow Starlark HTTP client access to loopback/self addresses; development only")
 	flag.Parse()
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "-root is required")
@@ -93,6 +94,7 @@ func main() {
 	opts := server.DefaultOptions()
 	opts.AllowUnauthenticated = *allowUnauthenticated
 	opts.MemoryDirectory = *memoryDir
+	opts.RuntimeHTTPClientAllowSelf = *runtimeHTTPClientAllowSelf
 
 	servers := server.New(adminAddr, publicAddr, uploadToken, store, db, opts)
 	slog.Warn("starting quack server",
@@ -108,6 +110,7 @@ func main() {
 		"log_level", settings.LogLevel,
 		"legacy_upload_token_enabled", uploadToken != "",
 		"allow_unauthenticated", *allowUnauthenticated,
+		"runtime_http_client_allow_self", *runtimeHTTPClientAllowSelf,
 	)
 
 	type serverError struct {

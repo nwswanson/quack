@@ -29,8 +29,9 @@ const (
 )
 
 type Options struct {
-	AllowUnauthenticated bool
-	MemoryDirectory      string
+	AllowUnauthenticated       bool
+	MemoryDirectory            string
+	RuntimeHTTPClientAllowSelf bool
 }
 
 func DefaultOptions() Options {
@@ -101,6 +102,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		starlarkExecutor = nil
 	} else {
 		starlarkExecutor.SetLogBuffer(logs)
+		starlarkExecutor.SetHTTPClientPolicy(hot, hot, opts.RuntimeHTTPClientAllowSelf)
 	}
 	metrics := newPrometheusMetrics(metricsDB, runtimehttp.Handler{})
 	runtimeService := appruntime.NewService(appruntime.ServiceOptions{

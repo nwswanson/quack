@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	"quack/internal/policy"
 	"time"
 )
@@ -39,11 +40,12 @@ const (
 )
 
 type Bundle struct {
-	Site    string
-	Version int64
-	Routes  []Route
-	Files   []BundleFile
-	Limits  ResourceLimits
+	Site       string
+	Version    int64
+	Routes     []Route
+	Files      []BundleFile
+	APIProxies []manifest.APIProxy
+	Limits     ResourceLimits
 }
 type BundleFile struct {
 	Path     string
@@ -115,6 +117,7 @@ type Repository interface {
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]RouteMetadata, error)
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetadata, error)
 	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
+	ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error)
 }
 type SettingsReader interface {
 	GetServerSettings(ctx context.Context) (domain.ServerSettings, error)
@@ -146,15 +149,16 @@ type NoopMetrics struct{}
 func (NoopMetrics) RecordInvocation(context.Context, InvocationEvent) {}
 
 type ServiceOptions struct {
-	Repository        Repository
-	Policies          policy.Loader
-	Executor          Executor
-	WebSocketExecutor WebSocketExecutor
-	MaxConcurrency    int64
-	DefaultLimits     ResourceLimits
-	Settings          SettingsReader
-	Metrics           Metrics
-	EnableExecution   bool
+	Repository          Repository
+	Policies            policy.Loader
+	Executor            Executor
+	WebSocketExecutor   WebSocketExecutor
+	MaxConcurrency      int64
+	DefaultLimits       ResourceLimits
+	Settings            SettingsReader
+	AllowHTTPClientSelf bool
+	Metrics             Metrics
+	EnableExecution     bool
 }
 type Service interface {
 	InvokeHTTP(ctx context.Context, req InvocationRequest) (InvocationResponse, error)

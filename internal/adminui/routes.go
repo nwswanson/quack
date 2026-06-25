@@ -470,12 +470,17 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "/policy", "error", "Dynamic HTTP routes policy must be inherit, allow, or deny.")
 		return
 	}
+	runtimeHTTPClientPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPClientFeature, "runtime_http_client_policy", user.ID)
+	if !ok {
+		redirectAdminMessage(w, r, "/policy", "error", "Outbound HTTP policy must be inherit, allow, or deny.")
+		return
+	}
 	runtimeWebSocketPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeWebSocketFeature, "runtime_websocket_policy", user.ID)
 	if !ok {
 		redirectAdminMessage(w, r, "/policy", "error", "Dynamic WebSocket routes policy must be inherit, allow, or deny.")
 		return
 	}
-	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeWebSocketPolicy} {
+	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeHTTPClientPolicy, runtimeWebSocketPolicy} {
 		if err := h.write.SavePolicy(r.Context(), record); err != nil {
 			slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "key", record.Key, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -595,21 +600,22 @@ func (s adminSiteRow) IsUnpublished() bool {
 }
 
 type adminPageData struct {
-	User                   domain.AdminUser
-	Page                   string
-	Title                  string
-	Nav                    []adminNavItem
-	Error                  string
-	Message                string
-	Sites                  []adminSiteRow
-	Users                  []domain.AdminUser
-	Settings               domain.ServerSettings
-	DatabasePolicy         domain.PolicyRecord
-	RuntimeHTTPPolicy      domain.PolicyRecord
-	RuntimeWebSocketPolicy domain.PolicyRecord
-	CreatedUser            domain.CreatedUser
-	LogSite                string
-	LogEvents              []logbuffer.Event
+	User                    domain.AdminUser
+	Page                    string
+	Title                   string
+	Nav                     []adminNavItem
+	Error                   string
+	Message                 string
+	Sites                   []adminSiteRow
+	Users                   []domain.AdminUser
+	Settings                domain.ServerSettings
+	DatabasePolicy          domain.PolicyRecord
+	RuntimeHTTPPolicy       domain.PolicyRecord
+	RuntimeHTTPClientPolicy domain.PolicyRecord
+	RuntimeWebSocketPolicy  domain.PolicyRecord
+	CreatedUser             domain.CreatedUser
+	LogSite                 string
+	LogEvents               []logbuffer.Event
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -630,6 +636,10 @@ func (d adminPageData) ActivePage(page string) bool {
 
 func (d adminPageData) AllowedHostsValue() string {
 	return appsettings.FormatAllowedHosts(d.Settings.AllowedHosts)
+}
+
+func (d adminPageData) HTTPClientAllowedCIDRsValue() string {
+	return appsettings.FormatHTTPClientAllowedCIDRs(d.Settings.HTTPClientAllowedCIDRs)
 }
 
 func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page string) (adminPageData, error) {
@@ -700,12 +710,17 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 		if err != nil {
 			return adminPageData{}, err
 		}
+		runtimeHTTPClientPolicy, err := h.read.SystemRuntimeHTTPClientPolicy(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
 		runtimeWebSocketPolicy, err := h.read.SystemRuntimeWebSocketPolicy(r.Context())
 		if err != nil {
 			return adminPageData{}, err
 		}
 		data.DatabasePolicy = databasePolicy
 		data.RuntimeHTTPPolicy = runtimeHTTPPolicy
+		data.RuntimeHTTPClientPolicy = runtimeHTTPClientPolicy
 		data.RuntimeWebSocketPolicy = runtimeWebSocketPolicy
 	case adminPageLogs:
 		data.LogSite = strings.TrimSpace(r.URL.Query().Get("site"))
@@ -867,6 +882,24 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if maxRuntimeDurationMillis == 0 {
 		maxRuntimeDurationMillis = parseDefaultInt64(appsettings.SettingRuntimeMaxDurationMillis)
 	}
+	httpClientMaxBytes, err := parseNonNegativeInt64(r.Form.Get("http_client_max_bytes"), "http client max bytes")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if httpClientMaxBytes == 0 {
+		httpClientMaxBytes = parseDefaultInt64(appsettings.SettingRuntimeHTTPClientMaxBytes)
+	}
+	httpClientMaxTimeoutMS, err := parseNonNegativeInt64(r.Form.Get("http_client_max_timeout_ms"), "http client max timeout")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if httpClientMaxTimeoutMS == 0 {
+		httpClientMaxTimeoutMS = parseDefaultInt64(appsettings.SettingRuntimeHTTPClientMaxTimeoutMS)
+	}
+	httpClientAllowedCIDRs, err := appsettings.ParseHTTPClientAllowedCIDRs(r.Form.Get("http_client_allowed_cidrs"))
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
 	maxWebSocketConnections, err := parseNonNegativeInt64(r.Form.Get("max_websocket_connections"), "max websocket connections")
 	if err != nil {
 		return domain.ServerSettings{}, err
@@ -949,6 +982,10 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		MaxUploadFiles:                 maxUploadFiles,
 		MaxRetainedVersions:            maxRetainedVersions,
 		MaxRuntimeDurationMillis:       maxRuntimeDurationMillis,
+		HTTPClientMaxBytes:             httpClientMaxBytes,
+		HTTPClientMaxTimeoutMS:         httpClientMaxTimeoutMS,
+		HTTPClientAllowedCIDRs:         httpClientAllowedCIDRs,
+		HTTPClientAllowInsecureSSL:     r.Form.Get("http_client_allow_insecure_ssl") == "on",
 		MaxWebSocketConnections:        maxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: maxWebSocketConnectionsPerSite,
 		HTTPCacheMode:                  httpCacheMode,

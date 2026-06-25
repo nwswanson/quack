@@ -18,6 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
@@ -662,6 +663,8 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		MaxUploadFiles:                 appsettings.DefaultMaxUploadFiles,
 		MaxRetainedVersions:            0,
 		MaxRuntimeDurationMillis:       appsettings.DefaultRuntimeMaxDurationMillis,
+		HTTPClientMaxBytes:             appsettings.DefaultHTTPClientMaxBytes,
+		HTTPClientMaxTimeoutMS:         appsettings.DefaultHTTPClientMaxTimeoutMS,
 		MaxWebSocketConnections:        appsettings.DefaultMaxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: appsettings.DefaultMaxWebSocketConnectionsPerSite,
 		HTTPCacheMode:                  appsettings.Default(appsettings.SettingHTTPCacheMode),
@@ -720,6 +723,30 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxRuntimeDurationMillis = n
+		case appsettings.SettingRuntimeHTTPClientMaxBytes:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.HTTPClientMaxBytes = n
+		case appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.HTTPClientMaxTimeoutMS = n
+		case appsettings.SettingRuntimeHTTPClientAllowedCIDRs:
+			prefixes, err := appsettings.ParseHTTPClientAllowedCIDRs(value)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.HTTPClientAllowedCIDRs = prefixes
+		case appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:
+			allowed, err := strconv.ParseBool(strings.TrimSpace(value))
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.HTTPClientAllowInsecureSSL = allowed
 		case "runtime.websocket.max_connections":
 			n, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
@@ -799,6 +826,12 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.MaxRuntimeDurationMillis < 0 {
 		return fmt.Errorf("max runtime duration must be >= 0")
 	}
+	if settings.HTTPClientMaxBytes < 0 {
+		return fmt.Errorf("http client max bytes must be >= 0")
+	}
+	if settings.HTTPClientMaxTimeoutMS < 0 {
+		return fmt.Errorf("http client max timeout must be >= 0")
+	}
 	if settings.MaxWebSocketConnections < 0 {
 		return fmt.Errorf("max websocket connections must be >= 0")
 	}
@@ -812,6 +845,7 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 		return fmt.Errorf("log buffer count must be >= 0")
 	}
 	normalizeRuntimeServerSettings(&settings)
+	normalizeHTTPClientServerSettings(&settings)
 	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
 	if err := validateMemoryServerSettings(settings); err != nil {
@@ -838,6 +872,10 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
 		appsettings.SettingRuntimeMaxDurationMillis:            strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
+		appsettings.SettingRuntimeHTTPClientMaxBytes:           strconv.FormatInt(settings.HTTPClientMaxBytes, 10),
+		appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:       strconv.FormatInt(settings.HTTPClientMaxTimeoutMS, 10),
+		appsettings.SettingRuntimeHTTPClientAllowedCIDRs:       appsettings.FormatHTTPClientAllowedCIDRs(settings.HTTPClientAllowedCIDRs),
+		appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:   strconv.FormatBool(settings.HTTPClientAllowInsecureSSL),
 		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
 		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
 		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
@@ -890,6 +928,12 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.MaxRuntimeDurationMillis < 0 {
 		return fmt.Errorf("max runtime duration must be >= 0")
 	}
+	if settings.HTTPClientMaxBytes < 0 {
+		return fmt.Errorf("http client max bytes must be >= 0")
+	}
+	if settings.HTTPClientMaxTimeoutMS < 0 {
+		return fmt.Errorf("http client max timeout must be >= 0")
+	}
 	if settings.MaxWebSocketConnections < 0 {
 		return fmt.Errorf("max websocket connections must be >= 0")
 	}
@@ -903,6 +947,7 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		return fmt.Errorf("log buffer count must be >= 0")
 	}
 	normalizeRuntimeServerSettings(&settings)
+	normalizeHTTPClientServerSettings(&settings)
 	normalizeHTTPCacheServerSettings(&settings)
 	normalizeMemoryServerSettings(&settings)
 	if err := validateMemoryServerSettings(settings); err != nil {
@@ -923,6 +968,10 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
 		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
 		appsettings.SettingRuntimeMaxDurationMillis:            strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
+		appsettings.SettingRuntimeHTTPClientMaxBytes:           strconv.FormatInt(settings.HTTPClientMaxBytes, 10),
+		appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:       strconv.FormatInt(settings.HTTPClientMaxTimeoutMS, 10),
+		appsettings.SettingRuntimeHTTPClientAllowedCIDRs:       appsettings.FormatHTTPClientAllowedCIDRs(settings.HTTPClientAllowedCIDRs),
+		appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:   strconv.FormatBool(settings.HTTPClientAllowInsecureSSL),
 		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
 		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
 		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
@@ -957,6 +1006,15 @@ func normalizeRuntimeServerSettings(settings *domain.ServerSettings) {
 	}
 	if settings.LogBufferCount <= 0 {
 		settings.LogBufferCount = appsettings.DefaultLogBufferCount
+	}
+}
+
+func normalizeHTTPClientServerSettings(settings *domain.ServerSettings) {
+	if settings.HTTPClientMaxBytes <= 0 {
+		settings.HTTPClientMaxBytes = appsettings.DefaultHTTPClientMaxBytes
+	}
+	if settings.HTTPClientMaxTimeoutMS <= 0 {
+		settings.HTTPClientMaxTimeoutMS = appsettings.DefaultHTTPClientMaxTimeoutMS
 	}
 }
 
@@ -1353,6 +1411,27 @@ func (d *Database) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, v
 		return nil, true, fmt.Errorf("iterate runtime bundle files: %w", err)
 	}
 	return out, true, nil
+}
+
+func (d *Database) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	var value string
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT us.value
+		FROM upload_settings us
+		JOIN uploads u ON u.id = us.upload_id
+		WHERE u.site_sha = ? AND u.version = ? AND u.state = ? AND us.key = ?
+	`, siteSHA, version, string(domain.UploadStateFinished), appsettings.SettingRuntimeHTTPClientAPIProxies).Scan(&value)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load runtime api proxies: %w", err)
+	}
+	var out []manifest.APIProxy
+	if err := json.Unmarshal([]byte(value), &out); err != nil {
+		return nil, fmt.Errorf("decode runtime api proxies: %w", err)
+	}
+	return out, nil
 }
 
 func (d *Database) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {

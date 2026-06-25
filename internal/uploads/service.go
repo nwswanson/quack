@@ -253,6 +253,10 @@ func ManifestSettings(manifest manifest.Manifest) map[string]string {
 		data, _ := json.Marshal(manifest.Routes)
 		settings[appsettings.SettingRoutes] = string(data)
 	}
+	if len(manifest.APIProxies) > 0 {
+		data, _ := json.Marshal(manifest.APIProxies)
+		settings[appsettings.SettingRuntimeHTTPClientAPIProxies] = string(data)
+	}
 	return settings
 }
 

@@ -486,6 +486,22 @@
               <input name="max_runtime_duration_millis" type="number" min="1" value="{{.Settings.MaxRuntimeDurationMillis}}" required>
             </label>
             <label>
+              HTTP client max bytes
+              <input name="http_client_max_bytes" type="number" min="1" value="{{.Settings.HTTPClientMaxBytes}}" required>
+            </label>
+            <label>
+              HTTP client max timeout ms
+              <input name="http_client_max_timeout_ms" type="number" min="1" value="{{.Settings.HTTPClientMaxTimeoutMS}}" required>
+            </label>
+            <label>
+              HTTP client allowed CIDRs
+              <textarea name="http_client_allowed_cidrs" spellcheck="false" placeholder="private-v4">{{.HTTPClientAllowedCIDRsValue}}</textarea>
+            </label>
+            <label>
+              HTTP client allow insecure SSL
+              <input name="http_client_allow_insecure_ssl" type="checkbox" {{if .Settings.HTTPClientAllowInsecureSSL}}checked{{end}}>
+            </label>
+            <label>
               Max WebSocket connections
               <input name="max_websocket_connections" type="number" min="0" value="{{.Settings.MaxWebSocketConnections}}" required>
             </label>
@@ -575,6 +591,18 @@
             <label>
               Dynamic HTTP routes policy reason
               <input name="runtime_http_policy_reason" value="{{.RuntimeHTTPPolicy.Reason}}">
+            </label>
+            <label>
+              Outbound HTTP policy
+              <select name="runtime_http_client_policy_mode">
+                <option value="inherit" {{if eq .RuntimeHTTPClientPolicy.Mode "inherit"}}selected{{end}}>inherit</option>
+                <option value="allow" {{if eq .RuntimeHTTPClientPolicy.Mode "allow"}}selected{{end}}>allow</option>
+                <option value="deny" {{if eq .RuntimeHTTPClientPolicy.Mode "deny"}}selected{{end}}>deny</option>
+              </select>
+            </label>
+            <label>
+              Outbound HTTP policy reason
+              <input name="runtime_http_client_policy_reason" value="{{.RuntimeHTTPClientPolicy.Reason}}">
             </label>
             <label>
               Dynamic WebSocket routes policy

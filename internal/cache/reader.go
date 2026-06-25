@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 )
 
@@ -15,6 +16,7 @@ type HotDataReader interface {
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error)
 	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
+	ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
@@ -28,6 +30,7 @@ type Source interface {
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error)
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]appruntime.RouteMetadata, error)
 	ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error)
+	ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error)
 	ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error)
 	FindCurrentSiteFile(ctx context.Context, site string, relativePath string) (domain.UploadFileRecord, bool, bool, error)
 	ListCurrentSiteFiles(ctx context.Context, site string) ([]domain.UploadFileRecord, bool, error)
@@ -109,6 +112,14 @@ func (r passthroughHotDataReader) ListRuntimeBundleFiles(ctx context.Context, si
 		return nil, false, err
 	}
 	return append([]domain.UploadFileRecord(nil), files...), uploadExists, nil
+}
+
+func (r passthroughHotDataReader) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	proxies, err := r.db.ListRuntimeAPIProxies(ctx, siteSHA, version)
+	if err != nil {
+		return nil, err
+	}
+	return append([]manifest.APIProxy(nil), proxies...), nil
 }
 
 func (r passthroughHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

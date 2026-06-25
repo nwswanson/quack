@@ -63,6 +63,29 @@ func TestEvaluateRuntimeHTTPAllowsExplicitPolicy(t *testing.T) {
 	}
 }
 
+func TestEvaluateRuntimeHTTPClientDefaultsToDenied(t *testing.T) {
+	eval := Evaluate(nil, []CapabilityRequest{{Key: CapabilityRuntimeHTTPClient, Required: true, Value: "true"}})
+
+	if eval.Allowed {
+		t.Fatal("runtime HTTP client should default to denied")
+	}
+	if len(eval.Violations) != 1 || eval.Violations[0].Key != CapabilityRuntimeHTTPClient {
+		t.Fatalf("violations = %+v, want runtime HTTP client violation", eval.Violations)
+	}
+}
+
+func TestEvaluateRuntimeHTTPClientAllowsExplicitPolicy(t *testing.T) {
+	eval := Evaluate([]domain.PolicyRecord{{
+		ScopeType: domain.ScopeSystem,
+		Key:       appsettings.SettingRuntimeHTTPClientFeature,
+		Mode:      "allow",
+	}}, []CapabilityRequest{{Key: CapabilityRuntimeHTTPClient, Required: true, Value: "true"}})
+
+	if !eval.Allowed || len(eval.Violations) != 0 {
+		t.Fatalf("evaluation = %+v, want allowed runtime HTTP client", eval)
+	}
+}
+
 func TestEvaluateRuntimeWebSocketDefaultsToDenied(t *testing.T) {
 	eval := Evaluate(nil, []CapabilityRequest{{Key: CapabilityRuntimeWebSocket, Required: true, Value: "true"}})
 
@@ -136,6 +159,15 @@ func TestRequestsFromManifestConvertsHTTPRoutes(t *testing.T) {
 	})
 	if len(requests) != 1 || requests[0].Key != CapabilityRuntimeHTTP || !requests[0].Required {
 		t.Fatalf("requests = %+v, want required runtime HTTP request", requests)
+	}
+}
+
+func TestRequestsFromManifestConvertsAPIProxies(t *testing.T) {
+	requests := RequestsFromManifest(manifest.Manifest{
+		APIProxies: []manifest.APIProxy{{Name: "api", Domain: "api.example.com"}},
+	})
+	if len(requests) != 1 || requests[0].Key != CapabilityRuntimeHTTPClient || !requests[0].Required {
+		t.Fatalf("requests = %+v, want required runtime HTTP client request", requests)
 	}
 }
 

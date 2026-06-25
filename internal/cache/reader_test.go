@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
@@ -155,6 +156,10 @@ func (db *readerBackingDatabase) ListRuntimeBundleFiles(ctx context.Context, sit
 		return nil, true, nil
 	}
 	return []domain.UploadFileRecord{db.file}, true, nil
+}
+
+func (db *readerBackingDatabase) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	return nil, nil
 }
 
 func (db *readerBackingDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

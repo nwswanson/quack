@@ -41,7 +41,7 @@ func requiredCapabilities(route RouteMetadata) []string {
 func capabilityRequests(capabilities []string) ([]policy.CapabilityRequest, error) {
 	requests := make([]policy.CapabilityRequest, 0, len(capabilities))
 	for _, capability := range capabilities {
-		if capability != policy.CapabilityRuntimeHTTP && capability != policy.CapabilityRuntimeWebSocket {
+		if capability != policy.CapabilityRuntimeHTTP && capability != policy.CapabilityRuntimeHTTPClient && capability != policy.CapabilityRuntimeWebSocket {
 			return nil, fmt.Errorf("%w: unsupported runtime capability %s", ErrCapabilityDenied, capability)
 		}
 		requests = append(requests, policy.CapabilityRequest{Key: capability, Required: true, Value: "true"})

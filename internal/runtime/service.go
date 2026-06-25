@@ -12,15 +12,16 @@ import (
 )
 
 type service struct {
-	repo        Repository
-	policies    policy.Loader
-	executor    Executor
-	wsExecutor  WebSocketExecutor
-	metrics     Metrics
-	sem         chan struct{}
-	defaults    ResourceLimits
-	settings    SettingsReader
-	executionOn bool
+	repo                Repository
+	policies            policy.Loader
+	executor            Executor
+	wsExecutor          WebSocketExecutor
+	metrics             Metrics
+	sem                 chan struct{}
+	defaults            ResourceLimits
+	settings            SettingsReader
+	allowHTTPClientSelf bool
+	executionOn         bool
 }
 
 func NewService(opts ServiceOptions) Service {
@@ -36,15 +37,16 @@ func NewService(opts ServiceOptions) Service {
 		wsExecutor, _ = opts.Executor.(WebSocketExecutor)
 	}
 	return &service{
-		repo:        opts.Repository,
-		policies:    opts.Policies,
-		executor:    opts.Executor,
-		wsExecutor:  wsExecutor,
-		metrics:     metrics,
-		sem:         make(chan struct{}, positiveOr(opts.MaxConcurrency, DefaultMaxConcurrentInvocations)),
-		defaults:    opts.DefaultLimits.withDefaults(),
-		settings:    opts.Settings,
-		executionOn: true,
+		repo:                opts.Repository,
+		policies:            opts.Policies,
+		executor:            opts.Executor,
+		wsExecutor:          wsExecutor,
+		metrics:             metrics,
+		sem:                 make(chan struct{}, positiveOr(opts.MaxConcurrency, DefaultMaxConcurrentInvocations)),
+		defaults:            opts.DefaultLimits.withDefaults(),
+		settings:            opts.Settings,
+		allowHTTPClientSelf: opts.AllowHTTPClientSelf,
+		executionOn:         true,
 	}
 }
 
@@ -134,7 +136,13 @@ func (s *service) runtimeBundle(ctx context.Context, route RouteMetadata, limits
 	if err != nil {
 		return Bundle{}, err
 	}
-	return route.bundle(limits, files), nil
+	apiProxies, err := s.repo.ListRuntimeAPIProxies(ctx, route.SiteSHA, route.Version)
+	if err != nil {
+		return Bundle{}, err
+	}
+	bundle := route.bundle(limits, files)
+	bundle.APIProxies = apiProxies
+	return bundle, nil
 }
 func (s *service) prepareHTTPInvocation(ctx context.Context, req InvocationRequest) (RouteMetadata, ResourceLimits, error) {
 	route, err := s.lookupRoute(ctx, req)

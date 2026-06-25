@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 	"quack/internal/storage"
@@ -396,6 +398,22 @@ func (db *fakeDatabase) ListRuntimeBundleFiles(ctx context.Context, siteSHA stri
 	}
 	files, siteExists, err := db.ListCurrentSiteFiles(ctx, siteName)
 	return files, siteExists, err
+}
+
+func (db *fakeDatabase) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	settings, err := db.LoadUploadSettings(ctx, siteSHA, version)
+	if err != nil {
+		return nil, err
+	}
+	value := strings.TrimSpace(settings[appsettings.SettingRuntimeHTTPClientAPIProxies])
+	if value == "" {
+		return nil, nil
+	}
+	var out []manifest.APIProxy
+	if err := json.Unmarshal([]byte(value), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (db *fakeDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {

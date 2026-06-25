@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"quack/internal/cache"
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	"quack/internal/publichttp"
 	appruntime "quack/internal/runtime"
 	"quack/internal/settings"
@@ -107,6 +108,10 @@ func (r staticHotDataReader) ListRuntimeRoutes(ctx context.Context, siteSHA stri
 
 func (r staticHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSHA string, version int64) ([]domain.UploadFileRecord, bool, error) {
 	return nil, true, nil
+}
+
+func (r staticHotDataReader) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	return nil, nil
 }
 
 func (r staticHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

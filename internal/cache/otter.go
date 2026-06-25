@@ -11,6 +11,7 @@ import (
 	"github.com/maypok86/otter"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 )
 
@@ -168,6 +169,21 @@ func (r *otterHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSHA
 	}
 	cached := value.(cachedCurrentSiteFiles)
 	return append([]domain.UploadFileRecord(nil), cached.files...), cached.siteExists, nil
+}
+
+func (r *otterHotDataReader) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	key := "runtime_api_proxies:" + siteSHA + ":" + strconv.FormatInt(version, 10)
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		proxies, err := r.source.ListRuntimeAPIProxies(ctx, siteSHA, version)
+		if err != nil {
+			return nil, err
+		}
+		return append([]manifest.APIProxy(nil), proxies...), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]manifest.APIProxy(nil), value.([]manifest.APIProxy)...), nil
 }
 
 func (r *otterHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

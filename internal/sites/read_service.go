@@ -31,6 +31,7 @@ type SiteReadService interface {
 	ServeSiteFile(ctx context.Context, site string, urlPath string, routePath string, staticRoot string, staticFile string) (ServeSiteFileDecision, error)
 	SystemDatabasePolicy(ctx context.Context) (domain.PolicyRecord, error)
 	SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error)
+	SystemRuntimeHTTPClientPolicy(ctx context.Context) (domain.PolicyRecord, error)
 	SystemRuntimeWebSocketPolicy(ctx context.Context) (domain.PolicyRecord, error)
 }
 
@@ -324,6 +325,10 @@ func (s siteReadService) SystemDatabasePolicy(ctx context.Context) (domain.Polic
 
 func (s siteReadService) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error) {
 	return s.systemPolicy(ctx, appsettings.SettingRuntimeHTTPFeature)
+}
+
+func (s siteReadService) SystemRuntimeHTTPClientPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return s.systemPolicy(ctx, appsettings.SettingRuntimeHTTPClientFeature)
 }
 
 func (s siteReadService) SystemRuntimeWebSocketPolicy(ctx context.Context) (domain.PolicyRecord, error) {

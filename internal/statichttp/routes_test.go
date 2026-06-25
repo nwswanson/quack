@@ -214,6 +214,10 @@ func (r testReadService) SystemRuntimeHTTPPolicy(ctx context.Context) (domain.Po
 	return domain.PolicyRecord{}, nil
 }
 
+func (r testReadService) SystemRuntimeHTTPClientPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
 func (r testReadService) SystemRuntimeWebSocketPolicy(ctx context.Context) (domain.PolicyRecord, error) {
 	return domain.PolicyRecord{}, nil
 }

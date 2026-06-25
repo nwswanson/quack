@@ -9,6 +9,7 @@ import (
 	"math"
 	"strings"
 
+	"quack/internal/domain"
 	"quack/internal/logbuffer"
 	"quack/internal/runtime/modules"
 
@@ -17,9 +18,16 @@ import (
 )
 
 type StarlarkExecutor struct {
-	loader ScriptLoader
-	limits ResourceLimits
-	logs   *logbuffer.Service
+	loader              ScriptLoader
+	limits              ResourceLimits
+	logs                *logbuffer.Service
+	policies            policyLoader
+	settings            SettingsReader
+	allowHTTPClientSelf bool
+}
+
+type policyLoader interface {
+	LoadPolicies(ctx context.Context, scopes []domain.PolicyScope) ([]domain.PolicyRecord, error)
 }
 
 var predeclareds = starlark.StringDict{
@@ -37,6 +45,12 @@ func NewStarlarkExecutor(loader ScriptLoader, limits ResourceLimits) (*StarlarkE
 
 func (e *StarlarkExecutor) SetLogBuffer(logs *logbuffer.Service) {
 	e.logs = logs
+}
+
+func (e *StarlarkExecutor) SetHTTPClientPolicy(policies policyLoader, settings SettingsReader, allowSelf bool) {
+	e.policies = policies
+	e.settings = settings
+	e.allowHTTPClientSelf = allowSelf
 }
 
 func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req InvocationRequest) (InvocationResponse, error) {
@@ -85,6 +99,7 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 		Version: bundle.Version,
 		Route:   route.Path,
 	})
+	out["http"] = e.newHTTPModule(ctx, bundle, route)
 	if route.FilesystemEnabled {
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
 	}
@@ -139,6 +154,7 @@ func (e *StarlarkExecutor) readScript(ctx context.Context, objectKey string, lim
 }
 func starlarkThread(ctx context.Context, name string, maxSteps uint64) (*starlark.Thread, func()) {
 	thread := &starlark.Thread{Name: name}
+	thread.SetLocal("context", ctx)
 	if maxSteps != 0 && maxSteps != math.MaxUint64 {
 		thread.SetMaxExecutionSteps(maxSteps)
 	}

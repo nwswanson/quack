@@ -17,8 +17,9 @@ const (
 	// secrets, writable temp storage, and database privileges. Do not let
 	// "runtime.http" become a broad permission to do everything user code might
 	// eventually request.
-	CapabilityRuntimeHTTP      = "runtime.http"
-	CapabilityRuntimeWebSocket = "runtime.websocket"
+	CapabilityRuntimeHTTP       = "runtime.http"
+	CapabilityRuntimeHTTPClient = "runtime.http_client"
+	CapabilityRuntimeWebSocket  = "runtime.websocket"
 )
 
 type CapabilityRequest struct {
@@ -50,6 +51,9 @@ func RequestsFromManifest(siteManifest manifest.Manifest) []CapabilityRequest {
 			Required: siteManifest.Features.Database.Required,
 			Value:    "true",
 		})
+	}
+	if len(siteManifest.APIProxies) > 0 {
+		out = append(out, CapabilityRequest{Key: CapabilityRuntimeHTTPClient, Required: true, Value: "true"})
 	}
 	seenRuntimeHTTP := false
 	seenRuntimeWebSocket := false
@@ -109,6 +113,21 @@ func RuntimeHTTPAllowedByRecords(policies []domain.PolicyRecord) (bool, string, 
 	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeHTTPFeature, "dynamic HTTP routes are disabled by administrator policy")
 }
 
+func RuntimeHTTPClientAllowed(ctx context.Context, loader Loader, site string) (bool, string, error) {
+	if loader == nil {
+		return false, "outbound HTTP is disabled by administrator policy", nil
+	}
+	policies, err := loader.LoadPolicies(ctx, ScopesFor(domain.AdminUser{}, site))
+	if err != nil {
+		return false, "", err
+	}
+	return RuntimeHTTPClientAllowedByRecords(policies)
+}
+
+func RuntimeHTTPClientAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
+	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeHTTPClientFeature, "outbound HTTP is disabled by administrator policy")
+}
+
 func RuntimeWebSocketAllowed(ctx context.Context, loader Loader, site string) (bool, string, error) {
 	policies, err := loader.LoadPolicies(ctx, ScopesFor(domain.AdminUser{}, site))
 	if err != nil {
@@ -131,6 +150,8 @@ func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Eval
 			allowed, reason, _ = DatabaseAllowedByRecords(policies)
 		case CapabilityRuntimeHTTP:
 			allowed, reason, _ = RuntimeHTTPAllowedByRecords(policies)
+		case CapabilityRuntimeHTTPClient:
+			allowed, reason, _ = RuntimeHTTPClientAllowedByRecords(policies)
 		case CapabilityRuntimeWebSocket:
 			allowed, reason, _ = RuntimeWebSocketAllowedByRecords(policies)
 		default:

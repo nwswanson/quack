@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 
 	"quack/internal/domain"
 	"quack/internal/logbuffer"
+	"quack/internal/manifest"
 	appsettings "quack/internal/settings"
 )
 
@@ -57,6 +59,60 @@ def handle(req):
 	}
 	if got := strings.Join(resp.Headers["X-Seen"], "|"); got != "POST|/echo|a=1|visible" {
 		t.Fatalf("x-seen = %q, want tuple values from request", got)
+	}
+}
+
+func TestStarlarkHTTPModuleCallsManifestProxy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/widget" || r.URL.RawQuery != "id=123" {
+			t.Fatalf("request URL = %s, want /api/widget?id=123", r.URL.String())
+		}
+		w.Header().Set("X-Proxy-Test", "yes")
+		_, _ = w.Write([]byte("from proxy"))
+	}))
+	defer server.Close()
+
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    resp = http.get("api://local?id=123")
+    return (resp.status_code, {"x-proxy-test": resp.headers["x-proxy-test"]}, resp.text)
+`})
+	executor.SetHTTPClientPolicy(allowRuntimeHTTPClientPolicy(), runtimeSettings{settings: domain.ServerSettings{
+		HTTPClientMaxBytes:     1024,
+		HTTPClientMaxTimeoutMS: 1000,
+	}}, true)
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1,
+		Routes:     []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		APIProxies: []manifest.APIProxy{{Name: "local", PathFixed: server.URL + "/api/widget", Methods: []string{"GET"}}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(resp.Body) != "from proxy" || strings.Join(resp.Headers["X-Proxy-Test"], ",") != "yes" {
+		t.Fatalf("response = %+v body=%q, want proxied response", resp, string(resp.Body))
+	}
+}
+
+func TestStarlarkHTTPModuleDeniesWhenPolicyDisabledAfterUpload(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    http.get("api://local")
+    return (200, {}, "unreachable")
+`})
+	executor.SetHTTPClientPolicy(allowRuntimeHTTPPolicy(), runtimeSettings{settings: domain.ServerSettings{
+		HTTPClientMaxBytes:     1024,
+		HTTPClientMaxTimeoutMS: 1000,
+	}}, true)
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1,
+		Routes:     []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		APIProxies: []manifest.APIProxy{{Name: "local", PathFixed: "http://127.0.0.1/api", Methods: []string{"GET"}}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err == nil || !strings.Contains(err.Error(), "outbound HTTP is disabled") {
+		t.Fatalf("err = %v, want outbound HTTP policy denial", err)
 	}
 }
 
@@ -1193,8 +1249,9 @@ func (m scriptMap) OpenScript(ctx context.Context, objectKey string) (io.ReadClo
 }
 
 type runtimeRepo struct {
-	routes []RouteMetadata
-	files  []domain.UploadFileRecord
+	routes     []RouteMetadata
+	files      []domain.UploadFileRecord
+	apiProxies []manifest.APIProxy
 }
 
 func newRuntimeRepo(routes ...RouteMetadata) runtimeRepo {
@@ -1213,6 +1270,10 @@ func (r runtimeRepo) ListRuntimeBundleFiles(ctx context.Context, siteSHA string,
 	return append([]domain.UploadFileRecord(nil), r.files...), true, nil
 }
 
+func (r runtimeRepo) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	return append([]manifest.APIProxy(nil), r.apiProxies...), nil
+}
+
 type runtimeSettings struct {
 	settings domain.ServerSettings
 }
@@ -1227,6 +1288,13 @@ type runtimePolicyLoader struct {
 
 func allowRuntimeHTTPPolicy() runtimePolicyLoader {
 	return runtimePolicyLoader{policies: []domain.PolicyRecord{{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPFeature, Mode: "allow"}}}
+}
+
+func allowRuntimeHTTPClientPolicy() runtimePolicyLoader {
+	return runtimePolicyLoader{policies: []domain.PolicyRecord{
+		{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPFeature, Mode: "allow"},
+		{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPClientFeature, Mode: "allow"},
+	}}
 }
 
 func allowRuntimeWebSocketPolicy() runtimePolicyLoader {

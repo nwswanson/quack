@@ -1,6 +1,9 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"net/netip"
+)
 
 var ErrSiteOwnership = errors.New("site is owned by another user")
 
@@ -63,6 +66,10 @@ type ServerSettings struct {
 	MaxUploadFiles                 int64
 	MaxRetainedVersions            int64
 	MaxRuntimeDurationMillis       int64
+	HTTPClientMaxBytes             int64
+	HTTPClientMaxTimeoutMS         int64
+	HTTPClientAllowedCIDRs         []netip.Prefix
+	HTTPClientAllowInsecureSSL     bool
 	MaxWebSocketConnections        int64
 	MaxWebSocketConnectionsPerSite int64
 	HTTPCacheMode                  string

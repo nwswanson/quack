@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 )
 
@@ -153,6 +154,21 @@ func (r *memoryHotDataReader) ListRuntimeBundleFiles(ctx context.Context, siteSH
 	}
 	cached := value.(cachedCurrentSiteFiles)
 	return append([]domain.UploadFileRecord(nil), cached.files...), cached.siteExists, nil
+}
+
+func (r *memoryHotDataReader) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, version int64) ([]manifest.APIProxy, error) {
+	key := "runtime_api_proxies:" + siteSHA + ":" + strconv.FormatInt(version, 10)
+	value, err := r.load(ctx, key, r.ttl, func(ctx context.Context) (any, error) {
+		proxies, err := r.source.ListRuntimeAPIProxies(ctx, siteSHA, version)
+		if err != nil {
+			return nil, err
+		}
+		return append([]manifest.APIProxy(nil), proxies...), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]manifest.APIProxy(nil), value.([]manifest.APIProxy)...), nil
 }
 
 func (r *memoryHotDataReader) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

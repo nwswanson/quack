@@ -2,6 +2,7 @@ package settings
 
 import (
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ const (
 	DefaultRuntimeMaxDurationMillis       int64 = 500
 	DefaultMaxWebSocketConnections        int64 = 1024
 	DefaultMaxWebSocketConnectionsPerSite int64 = 128
+	DefaultHTTPClientMaxBytes             int64 = 1 << 20
+	DefaultHTTPClientMaxTimeoutMS         int64 = 1000
 	DefaultHTTPCacheMaxAgeSeconds         int64 = 3600
 	DefaultLogBufferCount                 int64 = 500
 )
@@ -60,8 +63,14 @@ const (
 	SettingDatabaseFeature                       = "features.database.enabled"
 	SettingDatabaseFeatureRequired               = "features.database.required"
 	SettingRuntimeHTTPFeature                    = "features.runtime.http.enabled"
+	SettingRuntimeHTTPClientFeature              = "features.runtime.http_client.enabled"
 	SettingRuntimeWebSocketFeature               = "features.runtime.websocket.enabled"
 	SettingRuntimeMaxDurationMillis              = "runtime.max_duration_ms"
+	SettingRuntimeHTTPClientMaxBytes             = "runtime.http_client.max_bytes"
+	SettingRuntimeHTTPClientMaxTimeoutMS         = "runtime.http_client.max_timeout_ms"
+	SettingRuntimeHTTPClientAllowedCIDRs         = "runtime.http_client.allowed_cidrs"
+	SettingRuntimeHTTPClientAllowInsecureSSL     = "runtime.http_client.allow_insecure_ssl"
+	SettingRuntimeHTTPClientAPIProxies           = "runtime.http_client.api_proxies"
 	SettingRuntimeMemoryMaxBytes                 = "runtime.memory.max_bytes"
 	SettingRuntimeMemoryWipe                     = "runtime.memory.wipe"
 	SettingRuntimeMemoryPersistenceMode          = "runtime.memory.persistence_mode"
@@ -126,6 +135,10 @@ var registry = map[string]SettingDefinition{
 		Key: SettingRuntimeHTTPFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
+	SettingRuntimeHTTPClientFeature: {
+		Key: SettingRuntimeHTTPClientFeature, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
 	SettingRuntimeWebSocketFeature: {
 		Key: SettingRuntimeWebSocketFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
@@ -133,6 +146,22 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeMaxDurationMillis: {
 		Key: SettingRuntimeMaxDurationMillis, Type: SettingTypeInt64, DefaultValue: "500",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeHTTPClientMaxBytes: {
+		Key: SettingRuntimeHTTPClientMaxBytes, Type: SettingTypeInt64, DefaultValue: "1048576",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeHTTPClientMaxTimeoutMS: {
+		Key: SettingRuntimeHTTPClientMaxTimeoutMS, Type: SettingTypeInt64, DefaultValue: "1000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimeHTTPClientAllowedCIDRs: {
+		Key: SettingRuntimeHTTPClientAllowedCIDRs, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true,
+	},
+	SettingRuntimeHTTPClientAllowInsecureSSL: {
+		Key: SettingRuntimeHTTPClientAllowInsecureSSL, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true,
 	},
 	SettingRuntimeMemoryMaxBytes: {
 		Key: SettingRuntimeMemoryMaxBytes, Type: SettingTypeInt64, DefaultValue: "33554432",
@@ -178,6 +207,10 @@ var registry = map[string]SettingDefinition{
 	},
 	SettingRoutes: {
 		Key: SettingRoutes, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
+	},
+	SettingRuntimeHTTPClientAPIProxies: {
+		Key: SettingRuntimeHTTPClientAPIProxies, Type: SettingTypeString, DefaultValue: "",
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
 	},
 }
@@ -233,6 +266,11 @@ func Validate(key, value string) error {
 		}
 		if key == SettingRuntimeMemorySnapshotSave {
 			if _, err := ParseMemorySnapshotSaveRules(value); err != nil {
+				return err
+			}
+		}
+		if key == SettingRuntimeHTTPClientAllowedCIDRs {
+			if _, err := ParseHTTPClientAllowedCIDRs(value); err != nil {
 				return err
 			}
 		}
@@ -358,6 +396,60 @@ func ParseAllowedHosts(value string) ([]string, error) {
 
 func FormatAllowedHosts(hosts []string) string {
 	return strings.Join(hosts, "\n")
+}
+
+func ParseHTTPClientAllowedCIDRs(value string) ([]netip.Prefix, error) {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	var out []netip.Prefix
+	seen := map[netip.Prefix]bool{}
+	for _, field := range fields {
+		for _, prefix := range expandHTTPClientCIDRAlias(strings.TrimSpace(field)) {
+			if prefix == "" {
+				continue
+			}
+			parsed, err := netip.ParsePrefix(prefix)
+			if err != nil {
+				return nil, fmt.Errorf("%s contains invalid CIDR %q", SettingRuntimeHTTPClientAllowedCIDRs, prefix)
+			}
+			parsed = parsed.Masked()
+			if parsed.Bits() == 0 {
+				return nil, fmt.Errorf("%s cannot allow all addresses", SettingRuntimeHTTPClientAllowedCIDRs)
+			}
+			if seen[parsed] {
+				continue
+			}
+			seen[parsed] = true
+			out = append(out, parsed)
+		}
+	}
+	return out, nil
+}
+
+func FormatHTTPClientAllowedCIDRs(prefixes []netip.Prefix) string {
+	lines := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		lines = append(lines, prefix.Masked().String())
+	}
+	return strings.Join(lines, "\n")
+}
+
+func expandHTTPClientCIDRAlias(value string) []string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return nil
+	case "private-v4":
+		return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	case "private-v6":
+		return []string{"fc00::/7"}
+	case "link-local":
+		return []string{"169.254.0.0/16", "fe80::/10"}
+	case "private":
+		return []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"}
+	default:
+		return []string{value}
+	}
 }
 
 func validateAllowedHostPattern(host string) error {
