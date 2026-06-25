@@ -299,6 +299,43 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	}
 }
 
+func TestSaveHardwareDeviceRejectsDuplicatePath(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:   "cam_01",
+		Kind: hardware.AdminKindUVCCamera,
+		Path: "/dev/video2",
+		Site: "acme",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:    "cam_01",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video2",
+		Label: "Updated label",
+		Site:  "beta",
+	}); err != nil {
+		t.Fatalf("updating existing device path failed: %v", err)
+	}
+
+	err = db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:   "cam_02",
+		Kind: hardware.AdminKindUVCCamera,
+		Path: "/dev/video2",
+		Site: "gamma",
+	})
+	if err == nil || !strings.Contains(err.Error(), `path "/dev/video2" is already used by device "cam_01"`) {
+		t.Fatalf("SaveHardwareDevice error = %v, want duplicate path rejection", err)
+	}
+}
+
 func TestMetricsSnapshotCountsUsersSitesBytesAndRoutes(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

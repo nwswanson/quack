@@ -47,3 +47,13 @@ func TestParseConfigRejectsUnknownFields(t *testing.T) {
 		t.Fatalf("ParseConfig error = %v, want unknown field rejection", err)
 	}
 }
+
+func TestValidateConfigRejectsDuplicateDevicePath(t *testing.T) {
+	err := ValidateConfig(Config{Devices: []DeviceDescriptor{
+		{ID: "cam_01", Kind: DeviceKindCameraUVC, Path: "/dev/video2"},
+		{ID: "cam_02", Kind: DeviceKindCameraUVC, Path: "/dev/video2"},
+	}})
+	if err == nil || !strings.Contains(err.Error(), `path "/dev/video2" is already used by device "cam_01"`) {
+		t.Fatalf("ValidateConfig error = %v, want duplicate path rejection", err)
+	}
+}

@@ -1468,6 +1468,14 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 		return fmt.Errorf("begin save hardware device: %w", err)
 	}
 	defer tx.Rollback()
+	var existingID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM hardware_devices WHERE path = ? AND id <> ? LIMIT 1`, device.Path, device.ID).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("hardware device path %q is already used by device %q", device.Path, existingID)
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check hardware device path: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO hardware_devices (id, kind, path, label)
 		VALUES (?, ?, ?, ?)

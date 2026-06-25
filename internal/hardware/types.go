@@ -224,6 +224,7 @@ func (p StaticConfigProvider) HardwareConfig(context.Context) (Config, error) {
 
 func ValidateConfig(config Config) error {
 	devices := make(map[string]DeviceDescriptor, len(config.Devices))
+	paths := make(map[string]string, len(config.Devices))
 	bindings := make(map[string]SiteDeviceBinding, len(config.SiteDeviceBindings))
 	for _, device := range config.Devices {
 		device.ID = strings.TrimSpace(device.ID)
@@ -241,7 +242,11 @@ func ValidateConfig(config Config) error {
 		if _, exists := devices[device.ID]; exists {
 			return fmt.Errorf("duplicate hardware device id %q", device.ID)
 		}
+		if existingID, exists := paths[device.Path]; exists {
+			return fmt.Errorf("hardware device path %q is already used by device %q", device.Path, existingID)
+		}
 		devices[device.ID] = device
+		paths[device.Path] = device.ID
 	}
 	for _, binding := range config.SiteDeviceBindings {
 		binding.Site = strings.TrimSpace(binding.Site)
