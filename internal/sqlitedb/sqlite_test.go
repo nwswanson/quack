@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
@@ -870,6 +871,43 @@ func TestPublishedSitesShowPublisherAndAdminSeesAll(t *testing.T) {
 	}
 	if len(bobByName) != 1 || bobByName[0].Site != "site-b" || bobByName[0].PublishedBy != "bob" {
 		t.Fatalf("bobByName = %#v, want site-b by bob", bobByName)
+	}
+}
+
+func TestListRuntimeAPIProxiesLoadsUploadSettings(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	upload, err := db.BeginUpload(ctx, "example", "site-sha", 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload.Files = []domain.UploadFileRecord{{
+		RelativePath: "api/app.star",
+		BlobPath:     "blobs/site:site-sha/1/file:app",
+		FileSHA:      "app-sha",
+		Bytes:        1,
+	}}
+	if err := db.SaveUploadSettings(ctx, upload.SiteSHA, upload.Version, map[string]string{
+		appsettings.SettingRuntimeHTTPClientAPIProxies: `[{"name":"ifconfig","domain":"ifconfig.me","methods":["GET"]}]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishUpload(ctx, upload); err != nil {
+		t.Fatal(err)
+	}
+
+	proxies, err := db.ListRuntimeAPIProxies(ctx, upload.SiteSHA, upload.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []manifest.APIProxy{{Name: "ifconfig", Domain: "ifconfig.me", Methods: []string{"GET"}}}
+	if !reflect.DeepEqual(proxies, want) {
+		t.Fatalf("proxies = %#v, want %#v", proxies, want)
 	}
 }
 

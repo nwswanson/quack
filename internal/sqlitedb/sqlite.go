@@ -1418,7 +1418,8 @@ func (d *Database) ListRuntimeAPIProxies(ctx context.Context, siteSHA string, ve
 	err := d.readDB.QueryRowContext(ctx, `
 		SELECT us.value
 		FROM upload_settings us
-		JOIN uploads u ON u.id = us.upload_id
+		JOIN uploads u ON u.site_sha = us.site_sha
+			AND u.version = us.upload_version
 		WHERE u.site_sha = ? AND u.version = ? AND u.state = ? AND us.key = ?
 	`, siteSHA, version, string(domain.UploadStateFinished), appsettings.SettingRuntimeHTTPClientAPIProxies).Scan(&value)
 	if err == sql.ErrNoRows {

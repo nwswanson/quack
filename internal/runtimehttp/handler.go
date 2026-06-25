@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"quack/internal/domain"
+	"quack/internal/logbuffer"
 	appruntime "quack/internal/runtime"
 )
 
@@ -15,6 +17,7 @@ type Handler struct {
 	runtime  appruntime.Service
 	settings SettingsReader
 	sockets  *socketManager
+	logs     *logbuffer.Service
 }
 
 type SettingsReader interface {
@@ -26,6 +29,12 @@ type Option func(*Handler)
 func WithSettings(settings SettingsReader) Option {
 	return func(h *Handler) {
 		h.settings = settings
+	}
+}
+
+func WithLogBuffer(logs *logbuffer.Service) Option {
+	return func(h *Handler) {
+		h.logs = logs
 	}
 }
 
@@ -81,6 +90,7 @@ func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appr
 	req.Headers = publicHeaders(r.Header)
 	resp, err := h.runtime.InvokeHTTP(r.Context(), req)
 	if err != nil {
+		h.logRuntimeError(r.Context(), req, err)
 		if errors.Is(err, appruntime.ErrDisabled) {
 			http.Error(w, "runtime execution is disabled", http.StatusNotImplemented)
 			return
@@ -124,6 +134,59 @@ func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appr
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(resp.Body)
+}
+
+func (h Handler) logRuntimeError(ctx context.Context, req appruntime.InvocationRequest, err error) {
+	kind := runtimeErrorKind(err)
+	slog.ErrorContext(ctx, "runtime invocation failed",
+		"site", req.Site,
+		"version", req.Version,
+		"route", req.Route,
+		"method", req.Method,
+		"error_kind", kind,
+		"error", err,
+	)
+	if h.logs == nil {
+		return
+	}
+	h.logs.Add(logbuffer.Event{
+		Level:   "error",
+		Source:  "runtime_error",
+		Site:    req.Site,
+		Version: req.Version,
+		Route:   req.Route,
+		Message: "runtime invocation failed",
+		Attributes: map[string]string{
+			"method":     req.Method,
+			"error_kind": kind,
+			"error":      err.Error(),
+		},
+	})
+}
+
+func runtimeErrorKind(err error) string {
+	switch {
+	case errors.Is(err, appruntime.ErrDisabled):
+		return "disabled"
+	case errors.Is(err, appruntime.ErrCapabilityDenied):
+		return "capability_denied"
+	case errors.Is(err, appruntime.ErrMethodNotAllowed):
+		return "method_not_allowed"
+	case errors.Is(err, appruntime.ErrRequestTooLarge):
+		return "request_too_large"
+	case errors.Is(err, appruntime.ErrResponseTooLarge):
+		return "response_too_large"
+	case errors.Is(err, appruntime.ErrTimeout):
+		return "timeout"
+	case errors.Is(err, appruntime.ErrConcurrencyLimit):
+		return "concurrency_limit"
+	case errors.Is(err, appruntime.ErrRouteNotFound):
+		return "route_not_found"
+	case errors.Is(err, appruntime.ErrInvocationFailure):
+		return "invocation_failure"
+	default:
+		return "other"
+	}
 }
 
 func publicHeaders(in http.Header) map[string][]string {

@@ -113,7 +113,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Metrics:         metrics,
 		EnableExecution: true,
 	})
-	runtimeHandler := runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot))
+	runtimeHandler := runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot), runtimehttp.WithLogBuffer(logs))
 	metrics.runtime = prometheusRuntimeStats{runtime: runtimeHandler}
 
 	adminui.New(adminui.Options{
