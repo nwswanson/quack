@@ -56,23 +56,29 @@ func (m *cameraModule) list(thread *starlark.Thread, fn *starlark.Builtin, args 
 func (m *cameraModule) capture(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var cameraID, format string
 	var width, height int
+	var timeoutMillis int
 	if err := starlark.UnpackArgs(fn.Name(), args, kwargs,
 		"id", &cameraID,
 		"width?", &width,
 		"height?", &height,
 		"format?", &format,
+		"timeout_ms?", &timeoutMillis,
 	); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(cameraID) == "" {
 		return nil, fmt.Errorf("%s: id is required", fn.Name())
 	}
+	if timeoutMillis < 0 {
+		return nil, fmt.Errorf("%s: timeout_ms must be >= 0", fn.Name())
+	}
 	resp, err := m.hardware.Capture(m.ctx, hardware.CaptureRequest{
-		CameraID: cameraID,
-		Site:     m.site,
-		Width:    width,
-		Height:   height,
-		Format:   format,
+		CameraID:      cameraID,
+		Site:          m.site,
+		Width:         width,
+		Height:        height,
+		Format:        format,
+		TimeoutMillis: int64(timeoutMillis),
 	})
 	if err != nil {
 		return nil, err

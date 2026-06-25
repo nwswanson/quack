@@ -20,6 +20,7 @@ var (
 type Service interface {
 	ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error)
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
+	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
 	Close() error
 }
 
@@ -55,11 +56,13 @@ type CameraFormat struct {
 }
 
 type CaptureRequest struct {
-	CameraID string
-	Site     string
-	Width    int
-	Height   int
-	Format   string
+	CameraID      string
+	Site          string
+	Width         int
+	Height        int
+	Format        string
+	TimeoutMillis int64
+	OperationID   string
 }
 
 type CaptureResponse struct {
@@ -69,6 +72,16 @@ type CaptureResponse struct {
 	Width    int
 	Height   int
 	Format   string
+}
+
+type CancelCaptureRequest struct {
+	CameraID    string
+	Site        string
+	OperationID string
+}
+
+type CancelCaptureResponse struct {
+	Cancelled bool
 }
 
 type Config struct {
@@ -127,6 +140,7 @@ type DeviceLimits struct {
 type Provider interface {
 	ListDevices(ctx context.Context, req ListDevicesRequest) ([]DeviceInfo, error)
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
+	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
 }
 
 type ConfigProvider interface {
@@ -157,6 +171,13 @@ func (s *LocalService) Capture(ctx context.Context, req CaptureRequest) (Capture
 		return CaptureResponse{}, ErrNotConfigured
 	}
 	return s.provider.Capture(ctx, req)
+}
+
+func (s *LocalService) CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
+	if s == nil || s.provider == nil {
+		return CancelCaptureResponse{}, ErrNotConfigured
+	}
+	return s.provider.CancelCapture(ctx, req)
 }
 
 func (s *LocalService) Close() error {
@@ -321,6 +342,21 @@ func (s *BoundService) Capture(ctx context.Context, req CaptureRequest) (Capture
 		resp.Height = limits.MaxHeight
 	}
 	return resp, nil
+}
+
+func (s *BoundService) CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
+	if s == nil || s.upstream == nil {
+		return CancelCaptureResponse{}, ErrNotConfigured
+	}
+	devices, _, err := s.resolvedConfig(ctx)
+	if err != nil {
+		return CancelCaptureResponse{}, err
+	}
+	upstreamReq := req
+	if device, ok := devices[strings.TrimSpace(req.CameraID)]; ok {
+		upstreamReq.CameraID = device.Path
+	}
+	return s.upstream.CancelCapture(ctx, upstreamReq)
 }
 
 func (s *BoundService) resolvedConfig(ctx context.Context) (map[string]DeviceDescriptor, map[string]SiteDeviceBinding, error) {

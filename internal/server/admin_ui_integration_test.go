@@ -2,11 +2,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"quack/internal/adminui"
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	"strings"
@@ -320,6 +322,39 @@ func TestAdminPostRejectsMissingOrigin(t *testing.T) {
 	}
 }
 
+func TestAdminHardwareUnstuckCancelsConfiguredCapture(t *testing.T) {
+	db := &fakeDatabase{
+		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
+		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
+		hardwareDevices: []hardware.AdminDevice{{
+			ID:    "cam_01",
+			Kind:  hardware.AdminKindUVCCamera,
+			Path:  "/dev/video2",
+			Label: "Front desk",
+		}},
+	}
+	hw := &recordingHardwareService{cancelResp: hardware.CancelCaptureResponse{Cancelled: true}}
+	srv := New("", "", "token", fakeStorage{}, db, Options{HardwareService: hw})
+
+	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader("action=unstuck&id=cam_01"))
+	req.Host = "quack.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://quack.example.com")
+	req.AddCookie(&http.Cookie{Name: adminui.SessionCookieName, Value: "session"})
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/hardware?message=Hardware+read+cancelled." {
+		t.Fatalf("location = %q, want hardware cancel message redirect", got)
+	}
+	if hw.cancelReq.CameraID != "cam_01" {
+		t.Fatalf("cancel camera id = %q, want cam_01", hw.cancelReq.CameraID)
+	}
+}
+
 func TestAdminSettingsUpdate(t *testing.T) {
 	db := &fakeDatabase{
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
@@ -362,6 +397,28 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	if !strings.Contains(page.Body.String(), "Settings saved.") {
 		t.Fatalf("body = %q, want settings message", page.Body.String())
 	}
+}
+
+type recordingHardwareService struct {
+	cancelReq  hardware.CancelCaptureRequest
+	cancelResp hardware.CancelCaptureResponse
+}
+
+func (s *recordingHardwareService) ListDevices(context.Context, hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error) {
+	return hardware.ListDevicesResponse{}, nil
+}
+
+func (s *recordingHardwareService) Capture(context.Context, hardware.CaptureRequest) (hardware.CaptureResponse, error) {
+	return hardware.CaptureResponse{}, nil
+}
+
+func (s *recordingHardwareService) CancelCapture(_ context.Context, req hardware.CancelCaptureRequest) (hardware.CancelCaptureResponse, error) {
+	s.cancelReq = req
+	return s.cancelResp, nil
+}
+
+func (s *recordingHardwareService) Close() error {
+	return nil
 }
 
 func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {

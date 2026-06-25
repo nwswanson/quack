@@ -17,3 +17,7 @@ func (p *UVCProvider) ListDevices(context.Context, ListDevicesRequest) ([]Device
 func (p *UVCProvider) Capture(context.Context, CaptureRequest) (CaptureResponse, error) {
 	return CaptureResponse{}, ErrUnsupportedPlatform
 }
+
+func (p *UVCProvider) CancelCapture(context.Context, CancelCaptureRequest) (CancelCaptureResponse, error) {
+	return CancelCaptureResponse{}, ErrUnsupportedPlatform
+}

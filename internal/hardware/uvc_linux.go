@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -35,10 +37,29 @@ const (
 	vidiocStreamOff = 0x40045613
 )
 
-type UVCProvider struct{}
+type UVCProvider struct {
+	mu         sync.Mutex
+	byID       map[string]*captureOperation
+	byDevice   map[string]map[string]*captureOperation
+	operationN int64
+}
 
 func NewUVCProvider() *UVCProvider {
-	return &UVCProvider{}
+	return &UVCProvider{
+		byID:     make(map[string]*captureOperation),
+		byDevice: make(map[string]map[string]*captureOperation),
+	}
+}
+
+type captureOperation struct {
+	id     string
+	device string
+	cancel context.CancelFunc
+
+	mu     sync.Mutex
+	fd     int
+	hasFD  bool
+	closed bool
 }
 
 type v4l2Capability struct {
@@ -178,6 +199,11 @@ func (p *UVCProvider) Capture(ctx context.Context, req CaptureRequest) (CaptureR
 	if err != nil {
 		return CaptureResponse{}, err
 	}
+	op, opCtx, finish, err := p.startCaptureOperation(ctx, device, req.OperationID, req.TimeoutMillis)
+	if err != nil {
+		return CaptureResponse{}, err
+	}
+	defer finish()
 	width := req.Width
 	if width <= 0 {
 		width = 640
@@ -193,7 +219,7 @@ func (p *UVCProvider) Capture(ctx context.Context, req CaptureRequest) (CaptureR
 	if format != "MJPG" && format != "MJPEG" {
 		return CaptureResponse{}, fmt.Errorf("unsupported camera format %q; only MJPG is implemented", req.Format)
 	}
-	frame, err := captureMJPEG(ctx, device, uint32(width), uint32(height))
+	frame, err := captureMJPEG(opCtx, op, device, uint32(width), uint32(height))
 	if err != nil {
 		return CaptureResponse{}, err
 	}
@@ -207,6 +233,38 @@ func (p *UVCProvider) Capture(ctx context.Context, req CaptureRequest) (CaptureR
 	}, nil
 }
 
+func (p *UVCProvider) CancelCapture(_ context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
+	if p == nil {
+		return CancelCaptureResponse{}, ErrNotConfigured
+	}
+	device := strings.TrimSpace(req.CameraID)
+	if device != "" {
+		resolved, err := p.resolveCamera(device)
+		if err == nil {
+			device = resolved
+		}
+	}
+	operationID := strings.TrimSpace(req.OperationID)
+
+	p.mu.Lock()
+	var ops []*captureOperation
+	if operationID != "" {
+		if op := p.byID[operationID]; op != nil {
+			ops = append(ops, op)
+		}
+	} else if device != "" {
+		for _, op := range p.byDevice[device] {
+			ops = append(ops, op)
+		}
+	}
+	p.mu.Unlock()
+
+	for _, op := range ops {
+		op.cancelAndClose()
+	}
+	return CancelCaptureResponse{Cancelled: len(ops) > 0}, nil
+}
+
 func (p *UVCProvider) resolveCamera(id string) (string, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -218,12 +276,108 @@ func (p *UVCProvider) resolveCamera(id string) (string, error) {
 	return "/dev/video" + id, nil
 }
 
-func captureMJPEG(ctx context.Context, device string, width uint32, height uint32) ([]byte, error) {
+func (p *UVCProvider) startCaptureOperation(parent context.Context, device string, operationID string, timeoutMillis int64) (*captureOperation, context.Context, func(), error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx := parent
+	cancel := func() {}
+	if timeoutMillis > 0 {
+		ctx, cancel = context.WithTimeout(parent, time.Duration(timeoutMillis)*time.Millisecond)
+	} else {
+		ctx, cancel = context.WithCancel(parent)
+	}
+	operationID = strings.TrimSpace(operationID)
+	if operationID == "" {
+		p.mu.Lock()
+		p.operationN++
+		operationID = fmt.Sprintf("uvc-%d-%d", time.Now().UnixNano(), p.operationN)
+		p.mu.Unlock()
+	}
+	op := &captureOperation{id: operationID, device: device, cancel: cancel}
+
+	p.mu.Lock()
+	if len(p.byDevice[device]) > 0 {
+		p.mu.Unlock()
+		cancel()
+		return nil, nil, nil, fmt.Errorf("camera %q is already capturing", device)
+	}
+	if p.byID == nil {
+		p.byID = make(map[string]*captureOperation)
+	}
+	if p.byDevice == nil {
+		p.byDevice = make(map[string]map[string]*captureOperation)
+	}
+	p.byID[operationID] = op
+	if p.byDevice[device] == nil {
+		p.byDevice[device] = make(map[string]*captureOperation)
+	}
+	p.byDevice[device][operationID] = op
+	p.mu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+		op.closeFD()
+	}()
+
+	finish := func() {
+		cancel()
+		op.closeFD()
+		p.mu.Lock()
+		delete(p.byID, operationID)
+		if ops := p.byDevice[device]; ops != nil {
+			delete(ops, operationID)
+			if len(ops) == 0 {
+				delete(p.byDevice, device)
+			}
+		}
+		p.mu.Unlock()
+	}
+	return op, ctx, finish, nil
+}
+
+func (op *captureOperation) setFD(fd int) {
+	if op == nil {
+		return
+	}
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	if op.closed {
+		_ = unix.Close(fd)
+		return
+	}
+	op.fd = fd
+	op.hasFD = true
+}
+
+func (op *captureOperation) cancelAndClose() {
+	if op == nil {
+		return
+	}
+	op.cancel()
+	op.closeFD()
+}
+
+func (op *captureOperation) closeFD() {
+	if op == nil {
+		return
+	}
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	if !op.hasFD || op.closed {
+		return
+	}
+	op.closed = true
+	_ = unix.Close(op.fd)
+}
+
+func captureMJPEG(ctx context.Context, op *captureOperation, device string, width uint32, height uint32) ([]byte, error) {
 	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(fd)
+	op.setFD(fd)
+	defer op.closeFD()
 
 	var format v4l2Format
 	format.Type = v4l2BufTypeVideoCapture

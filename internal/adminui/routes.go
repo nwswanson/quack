@@ -53,6 +53,10 @@ type HardwareRepository interface {
 	DeleteHardwareDevice(ctx context.Context, id string) (bool, error)
 }
 
+type HardwareControl interface {
+	CancelCapture(ctx context.Context, req hardware.CancelCaptureRequest) (hardware.CancelCaptureResponse, error)
+}
+
 type Handler struct {
 	users         UserRepository
 	sessions      SessionRepository
@@ -66,6 +70,7 @@ type Handler struct {
 	logs          *logbuffer.Service
 	secrets       *appsecrets.Service
 	hardware      HardwareRepository
+	hardwareCtl   HardwareControl
 }
 
 type SiteRuntimeStats struct {
@@ -90,6 +95,7 @@ type Options struct {
 	Logs          *logbuffer.Service
 	Secrets       *appsecrets.Service
 	Hardware      HardwareRepository
+	HardwareCtl   HardwareControl
 }
 
 func New(opts Options) Handler {
@@ -114,6 +120,7 @@ func New(opts Options) Handler {
 		logs:          opts.Logs,
 		secrets:       opts.Secrets,
 		hardware:      opts.Hardware,
+		hardwareCtl:   opts.HardwareCtl,
 	}
 }
 
@@ -689,6 +696,22 @@ func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request)
 			redirectAdminMessage(w, r, "/hardware", "message", "Hardware device deleted.")
 		} else {
 			redirectAdminMessage(w, r, "/hardware", "message", "Hardware device was already absent.")
+		}
+	case "unstuck":
+		if h.hardwareCtl == nil {
+			redirectAdminMessage(w, r, "/hardware", "error", "Hardware control is not configured.")
+			return
+		}
+		resp, err := h.hardwareCtl.CancelCapture(r.Context(), hardware.CancelCaptureRequest{CameraID: r.Form.Get("id")})
+		if err != nil {
+			slog.ErrorContext(r.Context(), "unstuck hardware capture failed", "username", user.Username, "device", r.Form.Get("id"), "error", err)
+			redirectAdminMessage(w, r, "/hardware", "error", err.Error())
+			return
+		}
+		if resp.Cancelled {
+			redirectAdminMessage(w, r, "/hardware", "message", "Hardware read cancelled.")
+		} else {
+			redirectAdminMessage(w, r, "/hardware", "message", "No active hardware read was found.")
 		}
 	default:
 		device := hardware.AdminDevice{

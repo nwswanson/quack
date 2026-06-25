@@ -696,6 +696,11 @@
                     <td>{{if .Alias}}{{.Alias}}{{else}}-{{end}}</td>
                     <td>
                       <form class="inline-form" method="post" action="/hardware">
+                        <input type="hidden" name="action" value="unstuck">
+                        <input type="hidden" name="id" value="{{.ID}}">
+                        <button class="small-button" type="submit">Unstuck</button>
+                      </form>
+                      <form class="inline-form" method="post" action="/hardware">
                         <input type="hidden" name="action" value="delete">
                         <input type="hidden" name="id" value="{{.ID}}">
                         <button class="small-button danger-button" type="submit">Delete</button>

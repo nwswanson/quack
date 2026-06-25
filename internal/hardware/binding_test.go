@@ -87,6 +87,22 @@ func TestBoundServiceRejectsOversizedCapture(t *testing.T) {
 	}
 }
 
+func TestBoundServiceCancelCaptureResolvesConfiguredDevicePath(t *testing.T) {
+	upstream := &recordingService{}
+	service := newTestBoundService(t, upstream)
+
+	resp, err := service.CancelCapture(context.Background(), CancelCaptureRequest{CameraID: "cam_01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Cancelled {
+		t.Fatal("CancelCapture returned not cancelled")
+	}
+	if upstream.cancelReq.CameraID != "/dev/video2" {
+		t.Fatalf("cancel camera id = %q, want physical path", upstream.cancelReq.CameraID)
+	}
+}
+
 func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 	t.Helper()
 	service, err := NewBoundService(upstream, Config{
@@ -128,6 +144,7 @@ func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 
 type recordingService struct {
 	captureReq CaptureRequest
+	cancelReq  CancelCaptureRequest
 	frame      CaptureResponse
 }
 
@@ -141,6 +158,11 @@ func (s *recordingService) Capture(_ context.Context, req CaptureRequest) (Captu
 		s.frame = CaptureResponse{CameraID: req.CameraID, MimeType: MimeJPEG, Data: []byte{1}, Width: req.Width, Height: req.Height, Format: "MJPG"}
 	}
 	return s.frame, nil
+}
+
+func (s *recordingService) CancelCapture(_ context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
+	s.cancelReq = req
+	return CancelCaptureResponse{Cancelled: true}, nil
 }
 
 func (s *recordingService) Close() error {

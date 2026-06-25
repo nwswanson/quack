@@ -2,8 +2,10 @@ package hardware
 
 import (
 	"context"
+	"fmt"
 	"net/rpc"
 	"os/exec"
+	"sync/atomic"
 	"time"
 
 	goplugin "github.com/hashicorp/go-plugin"
@@ -49,7 +51,22 @@ func (s *rpcServer) ListDevices(req ListDevicesRequest, resp *ListDevicesRespons
 }
 
 func (s *rpcServer) Capture(req CaptureRequest, resp *CaptureResponse) error {
-	out, err := s.impl.Capture(context.Background(), req)
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if req.TimeoutMillis > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutMillis)*time.Millisecond)
+		defer cancel()
+	}
+	out, err := s.impl.Capture(ctx, req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
+func (s *rpcServer) CancelCapture(req CancelCaptureRequest, resp *CancelCaptureResponse) error {
+	out, err := s.impl.CancelCapture(context.Background(), req)
 	if err != nil {
 		return err
 	}
@@ -61,19 +78,37 @@ type rpcClient struct {
 	client *rpc.Client
 }
 
+var rpcOperationSeq uint64
+
 func (c *rpcClient) ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error) {
 	var resp ListDevicesResponse
 	err := callRPC(ctx, func() error {
 		return c.client.Call("Plugin.ListDevices", req, &resp)
-	})
+	}, nil)
 	return resp, err
 }
 
 func (c *rpcClient) Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error) {
 	var resp CaptureResponse
+	if req.OperationID == "" {
+		req.OperationID = nextOperationID()
+	}
 	err := callRPC(ctx, func() error {
 		return c.client.Call("Plugin.Capture", req, &resp)
+	}, func() {
+		c.cancelCaptureBestEffort(req.OperationID, req.CameraID)
 	})
+	if err != nil {
+		c.cancelCaptureBestEffort(req.OperationID, req.CameraID)
+	}
+	return resp, err
+}
+
+func (c *rpcClient) CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
+	var resp CancelCaptureResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.CancelCapture", req, &resp)
+	}, nil)
 	return resp, err
 }
 
@@ -81,7 +116,7 @@ func (c *rpcClient) Close() error {
 	return c.client.Close()
 }
 
-func callRPC(ctx context.Context, call func() error) error {
+func callRPC(ctx context.Context, call func() error, cancel func()) error {
 	done := make(chan error, 1)
 	go func() {
 		done <- call()
@@ -90,8 +125,21 @@ func callRPC(ctx context.Context, call func() error) error {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		if cancel != nil {
+			cancel()
+		}
 		return ctx.Err()
 	}
+}
+
+func (c *rpcClient) cancelCaptureBestEffort(operationID string, cameraID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _ = c.CancelCapture(ctx, CancelCaptureRequest{OperationID: operationID, CameraID: cameraID})
+}
+
+func nextOperationID() string {
+	return fmt.Sprintf("rpc-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&rpcOperationSeq, 1))
 }
 
 type ClientService struct {
@@ -139,6 +187,13 @@ func (s *ClientService) Capture(ctx context.Context, req CaptureRequest) (Captur
 		return CaptureResponse{}, ErrNotConfigured
 	}
 	return s.impl.Capture(ctx, req)
+}
+
+func (s *ClientService) CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
+	if s == nil || s.impl == nil {
+		return CancelCaptureResponse{}, ErrNotConfigured
+	}
+	return s.impl.CancelCapture(ctx, req)
 }
 
 func (s *ClientService) Close() error {
