@@ -621,6 +621,55 @@
         </section>
       {{end}}
 
+      {{if and .IsAdmin (.ActivePage "secrets")}}
+        <section class="panel">
+          <p>Status: {{if .SecretsHasRootKey}}{{if .SecretsUnlocked}}unlocked{{else}}locked{{end}}{{else}}not created{{end}}</p>
+          {{if not .SecretsHasRootKey}}
+            <form method="post" action="/secrets">
+              <input type="hidden" name="action" value="create">
+              <label>
+                Password
+                <input name="passphrase" type="password" autocomplete="new-password" required>
+              </label>
+              <label>
+                Confirm password
+                <input name="passphrase_confirm" type="password" autocomplete="new-password" required>
+              </label>
+              <button type="submit">Create unlock key</button>
+            </form>
+          {{else}}
+            {{if not .SecretsUnlocked}}
+              <form method="post" action="/secrets">
+                <input type="hidden" name="action" value="unlock">
+                <label>
+                  Password
+                  <input name="passphrase" type="password" autocomplete="current-password" required>
+                </label>
+                <button type="submit">Unlock secrets</button>
+              </form>
+            {{end}}
+            {{if .SecretsUnlocked}}
+              <form method="post" action="/secrets">
+                <input type="hidden" name="action" value="reset">
+                <label>
+                  Current password
+                  <input name="old_passphrase" type="password" autocomplete="current-password" required>
+                </label>
+                <label>
+                  New password
+                  <input name="new_passphrase" type="password" autocomplete="new-password" required>
+                </label>
+                <label>
+                  Confirm new password
+                  <input name="new_passphrase_confirm" type="password" autocomplete="new-password" required>
+                </label>
+                <button type="submit">Reset password</button>
+              </form>
+            {{end}}
+          {{end}}
+        </section>
+      {{end}}
+
       {{if .ActivePage "logs"}}
         <section>
           <form method="get" action="/logs" class="panel">

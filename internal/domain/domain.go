@@ -6,6 +6,7 @@ import (
 )
 
 var ErrSiteOwnership = errors.New("site is owned by another user")
+var ErrSecretsLocked = errors.New("secrets are locked")
 
 type AdminUser struct {
 	ID        int64
@@ -22,6 +23,13 @@ type CreatedUser struct {
 	Password string
 	Token    string
 }
+
+type SecretScope string
+
+const (
+	SecretScopeSite SecretScope = "site"
+	SecretScopeUser SecretScope = "user"
+)
 
 type ScopeType string
 

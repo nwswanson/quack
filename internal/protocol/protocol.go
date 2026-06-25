@@ -10,6 +10,7 @@ const UploadArchivePath = "/v1/uploads/archive"
 const SitesPath = "/v1/sites"
 const SettingsDefaultSitePath = "/v1/settings/default-site"
 const LogsPath = "/v1/logs"
+const SecretsPath = "/v1/secrets"
 const DeleteSitePathPrefix = "/v1/sites/"
 const SiteRevisionPathSuffix = "/revisions"
 const SiteRollbackPathSuffix = "/rollback"
@@ -67,6 +68,29 @@ type LogsRequest struct {
 }
 
 func (LogsRequest) OperationName() string { return "logs" }
+
+type SetSecretRequest struct {
+	Site  string `json:"site"`
+	Scope string `json:"scope"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+func (SetSecretRequest) OperationName() string { return "set secret" }
+
+type ListSecretsRequest struct {
+	Site string
+}
+
+func (ListSecretsRequest) OperationName() string { return "list secrets" }
+
+type DeleteSecretRequest struct {
+	Site  string
+	Scope string
+	Name  string
+}
+
+func (DeleteSecretRequest) OperationName() string { return "delete secret" }
 
 type Endpoint interface {
 	UploadArchive(UploadArchiveRequest) (UploadArchiveResponse, error)
@@ -148,6 +172,19 @@ func LogsURL(baseURL string, req LogsRequest) (string, error) {
 	}
 	if req.Follow {
 		query.Set("follow", "true")
+	}
+	target.RawQuery = query.Encode()
+	return target.String(), nil
+}
+
+func SecretsURL(baseURL string, site string) (string, error) {
+	target, err := url.Parse(JoinURL(baseURL, SecretsPath))
+	if err != nil {
+		return "", err
+	}
+	query := target.Query()
+	if site != "" {
+		query.Set("site", site)
 	}
 	target.RawQuery = query.Encode()
 	return target.String(), nil
@@ -317,3 +354,37 @@ type LogsResponse struct {
 
 func (r *LogsResponse) SetError(message string) { r.Error = message }
 func (r LogsResponse) ErrorMessage() string     { return r.Error }
+
+type SecretSummary struct {
+	Scope     string `json:"scope"`
+	Site      string `json:"site,omitempty"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+type SetSecretResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+func (r *SetSecretResponse) SetError(message string) { r.Error = message }
+func (r SetSecretResponse) ErrorMessage() string     { return r.Error }
+
+type ListSecretsResponse struct {
+	OK      bool            `json:"ok"`
+	Secrets []SecretSummary `json:"secrets,omitempty"`
+	Error   string          `json:"error,omitempty"`
+}
+
+func (r *ListSecretsResponse) SetError(message string) { r.Error = message }
+func (r ListSecretsResponse) ErrorMessage() string     { return r.Error }
+
+type DeleteSecretResponse struct {
+	OK      bool   `json:"ok"`
+	Deleted bool   `json:"deleted"`
+	Error   string `json:"error,omitempty"`
+}
+
+func (r *DeleteSecretResponse) SetError(message string) { r.Error = message }
+func (r DeleteSecretResponse) ErrorMessage() string     { return r.Error }

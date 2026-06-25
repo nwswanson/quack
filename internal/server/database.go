@@ -5,6 +5,7 @@ import (
 	"quack/internal/cache"
 	"quack/internal/controlapi"
 	"quack/internal/releases"
+	"quack/internal/secrets"
 	"quack/internal/sites"
 	"quack/internal/uploads"
 )
@@ -17,5 +18,6 @@ type Database interface {
 	adminui.SessionRepository
 	controlapi.UserRepository
 	releases.Repository
+	secrets.Repository
 	Close() error
 }

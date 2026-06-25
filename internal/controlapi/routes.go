@@ -18,6 +18,7 @@ import (
 	"quack/internal/protocol"
 	"quack/internal/publishing"
 	"quack/internal/releases"
+	"quack/internal/secrets"
 	"quack/internal/sites"
 	appstorage "quack/internal/storage"
 )
@@ -37,6 +38,7 @@ type Handler struct {
 	users      UserRepository
 	releases   releases.Service
 	logs       *logbuffer.Service
+	secrets    *secrets.Service
 }
 
 type Options struct {
@@ -49,6 +51,7 @@ type Options struct {
 	Users                UserRepository
 	Releases             releases.Service
 	Logs                 *logbuffer.Service
+	Secrets              *secrets.Service
 }
 
 func New(opts Options) Handler {
@@ -62,6 +65,7 @@ func New(opts Options) Handler {
 		users:                opts.Users,
 		releases:             opts.Releases,
 		logs:                 opts.Logs,
+		secrets:              opts.Secrets,
 	}
 }
 
@@ -71,6 +75,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc(protocol.SitesPath, h.handleListSites)
 	mux.HandleFunc(protocol.LogsPath, h.handleLogs)
 	mux.HandleFunc(protocol.SettingsDefaultSitePath, h.handleSetDefaultSite)
+	mux.HandleFunc(protocol.SecretsPath, h.handleSecrets)
 	mux.HandleFunc(protocol.DeleteSitePathPrefix, h.handleDeleteSite)
 }
 
@@ -288,6 +293,94 @@ func (h Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.streamLogs(w, r, filter, limit)
+}
+
+func (h Handler) handleSecrets(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.authorizedAPIUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "secret authorization lookup failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok {
+		protocol.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.secrets == nil {
+		protocol.WriteError(w, http.StatusServiceUnavailable, "secrets are not configured")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		h.handleListSecrets(w, r, user)
+	case http.MethodPost:
+		h.handleSetSecret(w, r, user)
+	case http.MethodDelete:
+		h.handleDeleteSecret(w, r, user)
+	default:
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h Handler) handleListSecrets(w http.ResponseWriter, r *http.Request, user domain.AdminUser) {
+	site := strings.TrimSpace(r.URL.Query().Get("site"))
+	secretsList, err := h.secrets.List(r.Context(), user, site)
+	if err != nil {
+		h.writeSecretError(w, err)
+		return
+	}
+	resp := protocol.ListSecretsResponse{OK: true}
+	for _, secret := range secretsList {
+		resp.Secrets = append(resp.Secrets, protocol.SecretSummary{
+			Scope: string(secret.Scope), Site: secret.Site, Name: secret.Name,
+			CreatedAt: secret.CreatedAt, UpdatedAt: secret.UpdatedAt,
+		})
+	}
+	protocol.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h Handler) handleSetSecret(w http.ResponseWriter, r *http.Request, user domain.AdminUser) {
+	var req protocol.SetSecretRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		protocol.WriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Scope == "" {
+		req.Scope = string(domain.SecretScopeSite)
+	}
+	if err := h.secrets.Set(r.Context(), user, req.Site, domain.SecretScope(req.Scope), req.Name, req.Value); err != nil {
+		h.writeSecretError(w, err)
+		return
+	}
+	protocol.WriteJSON(w, http.StatusOK, protocol.SetSecretResponse{OK: true})
+}
+
+func (h Handler) handleDeleteSecret(w http.ResponseWriter, r *http.Request, user domain.AdminUser) {
+	var req protocol.DeleteSecretRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		protocol.WriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Scope == "" {
+		req.Scope = string(domain.SecretScopeSite)
+	}
+	deleted, err := h.secrets.Delete(r.Context(), user, req.Site, domain.SecretScope(req.Scope), req.Name)
+	if err != nil {
+		h.writeSecretError(w, err)
+		return
+	}
+	protocol.WriteJSON(w, http.StatusOK, protocol.DeleteSecretResponse{OK: true, Deleted: deleted})
+}
+
+func (h Handler) writeSecretError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrSecretsLocked):
+		protocol.WriteError(w, http.StatusLocked, "secrets are locked")
+	case errors.Is(err, domain.ErrSiteOwnership):
+		protocol.WriteError(w, http.StatusForbidden, "not allowed to manage secrets for this site")
+	default:
+		protocol.WriteError(w, http.StatusBadRequest, err.Error())
+	}
 }
 
 func (h Handler) logFilter(r *http.Request, user domain.AdminUser, legacyAdmin bool) (logbuffer.Filter, error) {

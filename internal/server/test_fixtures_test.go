@@ -9,6 +9,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
+	appsecrets "quack/internal/secrets"
 	appsettings "quack/internal/settings"
 	"quack/internal/storage"
 	"strconv"
@@ -77,6 +78,8 @@ type fakeDatabase struct {
 	lastPublisherIsAdmin bool
 	linkedUserID         int64
 	linkedSiteSHA        string
+	unlockKeys           []appsecrets.UnlockKeyRecord
+	secrets              map[string]appsecrets.SecretRecord
 }
 
 func (db *fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error) {
@@ -217,6 +220,70 @@ func (db *fakeDatabase) ListUsers(ctx context.Context) ([]domain.AdminUser, erro
 		return []domain.AdminUser{db.adminUser}, nil
 	}
 	return nil, nil
+}
+
+func (db *fakeDatabase) LoadUnlockKeys(ctx context.Context) ([]appsecrets.UnlockKeyRecord, error) {
+	return append([]appsecrets.UnlockKeyRecord(nil), db.unlockKeys...), nil
+}
+
+func (db *fakeDatabase) SaveUnlockKey(ctx context.Context, record appsecrets.UnlockKeyRecord) error {
+	for i := range db.unlockKeys {
+		if db.unlockKeys[i].KeyID == record.KeyID {
+			db.unlockKeys[i] = record
+			return nil
+		}
+	}
+	db.unlockKeys = append(db.unlockKeys, record)
+	return nil
+}
+
+func (db *fakeDatabase) UpsertSecret(ctx context.Context, record appsecrets.SecretRecord) error {
+	if db.secrets == nil {
+		db.secrets = map[string]appsecrets.SecretRecord{}
+	}
+	db.secrets[secretKey(record.Scope, record.ScopeID, record.Name)] = record
+	return nil
+}
+
+func (db *fakeDatabase) GetSecret(ctx context.Context, scope domain.SecretScope, scopeID string, name string) (appsecrets.SecretRecord, bool, error) {
+	record, ok := db.secrets[secretKey(scope, scopeID, name)]
+	return record, ok, nil
+}
+
+func (db *fakeDatabase) ListSecretsForUser(ctx context.Context, userID int64, siteSHA string) ([]appsecrets.SecretRecord, error) {
+	var out []appsecrets.SecretRecord
+	for _, record := range db.secrets {
+		if record.CreatedByUserID != userID {
+			continue
+		}
+		if siteSHA != "" && (record.Scope != domain.SecretScopeSite || record.ScopeID != siteSHA) {
+			continue
+		}
+		out = append(out, record)
+	}
+	return out, nil
+}
+
+func (db *fakeDatabase) DeleteSecretForUser(ctx context.Context, userID int64, scope domain.SecretScope, scopeID string, name string) (bool, error) {
+	key := secretKey(scope, scopeID, name)
+	record, ok := db.secrets[key]
+	if !ok || record.CreatedByUserID != userID {
+		return false, nil
+	}
+	delete(db.secrets, key)
+	return true, nil
+}
+
+func (db *fakeDatabase) UserCanAccessSite(ctx context.Context, userID int64, siteSHA string) (bool, error) {
+	if db.adminUser.ID == userID && db.adminUser.IsAdmin() {
+		return true, nil
+	}
+	for _, site := range db.sites {
+		if site.SiteSHA == siteSHA {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (db *fakeDatabase) MetricsSnapshot(ctx context.Context) (domain.MetricsSnapshot, error) {
@@ -468,6 +535,10 @@ func (fakeDatabase) Close() error {
 
 func fileKey(site string, relativePath string) string {
 	return site + "\x00" + relativePath
+}
+
+func secretKey(scope domain.SecretScope, scopeID string, name string) string {
+	return string(scope) + "\x00" + scopeID + "\x00" + name
 }
 
 func writeTestBlob(t *testing.T, root string, name string, body string) {

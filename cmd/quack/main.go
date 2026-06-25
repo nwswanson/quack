@@ -48,6 +48,9 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case "secrets":
+		resp, err = runSecrets(os.Args[2:])
+		textOutput = true
 	case "revisions":
 		resp, err = runRevisions(os.Args[2:])
 		textOutput = true
@@ -80,6 +83,18 @@ func main() {
 			writeSitesText(os.Stdout, out)
 		case *protocol.ListRevisionsResponse:
 			writeRevisionsText(os.Stdout, out)
+		case *protocol.ListSecretsResponse:
+			writeSecretsText(os.Stdout, out)
+		case *protocol.SetSecretResponse:
+			if out.OK {
+				fmt.Fprintln(os.Stdout, "Secret saved.")
+			}
+		case *protocol.DeleteSecretResponse:
+			if out.Deleted {
+				fmt.Fprintln(os.Stdout, "Secret deleted.")
+			} else {
+				fmt.Fprintln(os.Stdout, "Secret not found.")
+			}
 		}
 		return
 	}
@@ -259,6 +274,108 @@ func writeLogsText(w io.Writer, events []protocol.LogEvent) {
 	}
 }
 
+func runSecrets(args []string) (any, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("usage: quack secrets <set|list|delete> ...")
+	}
+	switch args[0] {
+	case "set":
+		return runSecretSet(args[1:])
+	case "list":
+		return runSecretList(args[1:])
+	case "delete":
+		return runSecretDelete(args[1:])
+	default:
+		return nil, fmt.Errorf("usage: quack secrets <set|list|delete> ...")
+	}
+}
+
+func runSecretSet(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) != 3 {
+		return nil, fmt.Errorf("usage: quack secrets set <site> <name> <value> [--scope site] [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	scope := values.scope
+	if scope == "" {
+		scope = "site"
+	}
+	return client.SetSecret(context.Background(), resolved.serverURL, resolved.token, protocol.SetSecretRequest{
+		Site: positionals[0], Scope: scope, Name: positionals[1], Value: positionals[2],
+	})
+}
+
+func runSecretList(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) > 1 {
+		return nil, fmt.Errorf("usage: quack secrets list [site] [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	site := ""
+	if len(positionals) == 1 {
+		site = positionals[0]
+	}
+	return client.ListSecrets(context.Background(), resolved.serverURL, resolved.token, protocol.ListSecretsRequest{Site: site})
+}
+
+func runSecretDelete(args []string) (any, error) {
+	values, positionals, err := parseCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(positionals) != 2 {
+		return nil, fmt.Errorf("usage: quack secrets delete <site> <name> [--scope site] [--token <token>] [--serverURL <url>]")
+	}
+	resolved, err := resolveCommandValues(values)
+	if err != nil {
+		return nil, err
+	}
+	scope := values.scope
+	if scope == "" {
+		scope = "site"
+	}
+	return client.DeleteSecret(context.Background(), resolved.serverURL, resolved.token, protocol.DeleteSecretRequest{
+		Site: positionals[0], Scope: scope, Name: positionals[1],
+	})
+}
+
+func writeSecretsText(w io.Writer, resp *protocol.ListSecretsResponse) {
+	if len(resp.Secrets) == 0 {
+		fmt.Fprintln(w, "No secrets.")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SCOPE\tSITE\tNAME\tCREATED\tUPDATED")
+	for _, secret := range resp.Secrets {
+		site := secret.Site
+		if site == "" {
+			site = "-"
+		}
+		createdAt := secret.CreatedAt
+		if createdAt == "" {
+			createdAt = "-"
+		}
+		updatedAt := secret.UpdatedAt
+		if updatedAt == "" {
+			updatedAt = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", secret.Scope, site, secret.Name, createdAt, updatedAt)
+	}
+	_ = tw.Flush()
+}
+
 func writeLogEvent(w io.Writer, event protocol.LogEvent) {
 	fmt.Fprintln(w, logformat.Format(logformat.Event{
 		TimeText:   event.Time,
@@ -430,6 +547,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  quack login")
 	fmt.Fprintln(os.Stderr, "  quack sites [username] [--all] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack logs [site] [--follow] [--all] [--system] [--limit <n>] [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack secrets set <site> <name> <value> [--scope site] [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack secrets list [site] [--token <token>] [--serverURL <url>]")
+	fmt.Fprintln(os.Stderr, "  quack secrets delete <site> <name> [--scope site] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack deploy <directory> [site name] [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack revisions <site name> [--token <token>] [--serverURL <url>]")
 	fmt.Fprintln(os.Stderr, "  quack rollback <site name> [--token <token>] [--serverURL <url>]")
@@ -448,6 +568,7 @@ type commandValues struct {
 	follow    bool
 	system    bool
 	limit     int
+	scope     string
 }
 
 type configFile struct {
@@ -509,6 +630,15 @@ func parseCommandArgs(args []string) (commandValues, []string, error) {
 				return values, nil, fmt.Errorf("--limit must be >= 0")
 			}
 			values.limit = n
+		case "--scope":
+			if !hasValue {
+				i++
+				if i >= len(args) {
+					return values, nil, fmt.Errorf("--scope requires a value")
+				}
+				value = args[i]
+			}
+			values.scope = strings.TrimSpace(value)
 		case "--clear":
 			if hasValue {
 				return values, nil, fmt.Errorf("--clear does not take a value")

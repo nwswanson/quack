@@ -16,6 +16,7 @@ import (
 	"quack/internal/releases"
 	appruntime "quack/internal/runtime"
 	"quack/internal/runtimehttp"
+	appsecrets "quack/internal/secrets"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 	"quack/internal/statichttp"
@@ -67,6 +68,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	uploadService := uploads.NewService(db, store, read, write)
 	publishingService := publishing.NewService(uploadService)
 	releaseService := releases.NewService(db, hot)
+	secretService := appsecrets.NewService(db)
 	if opts.MemoryDirectory != "" {
 		settings, err := db.GetServerSettings(context.Background())
 		if err != nil {
@@ -91,6 +93,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 		Users:                db,
 		Releases:             releaseService,
 		Logs:                 logs,
+		Secrets:              secretService,
 	}).Register(adminMux)
 
 	publicMux := http.NewServeMux()
@@ -103,6 +106,7 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	} else {
 		starlarkExecutor.SetLogBuffer(logs)
 		starlarkExecutor.SetHTTPClientPolicy(hot, hot, opts.RuntimeHTTPClientAllowSelf)
+		starlarkExecutor.SetSecretStore(secretService)
 	}
 	metrics := newPrometheusMetrics(metricsDB, runtimehttp.Handler{})
 	runtimeService := appruntime.NewService(appruntime.ServiceOptions{
@@ -129,7 +133,8 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 			logs.SetCapacity(int(settings.LogBufferCount))
 			return ApplyRuntimeSettings(settings, opts.MemoryDirectory)
 		},
-		Logs: logs,
+		Logs:    logs,
+		Secrets: secretService,
 	}).Register(adminMux)
 	adminMux.HandleFunc("/metrics", metrics.handle)
 

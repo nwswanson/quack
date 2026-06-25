@@ -18,6 +18,7 @@ import (
 	"quack/internal/logbuffer"
 	"quack/internal/protocol"
 	"quack/internal/releases"
+	appsecrets "quack/internal/secrets"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
 )
@@ -56,6 +57,7 @@ type Handler struct {
 	setLogLevel   func(string) error
 	applySettings func(domain.ServerSettings) error
 	logs          *logbuffer.Service
+	secrets       *appsecrets.Service
 }
 
 type SiteRuntimeStats struct {
@@ -78,6 +80,7 @@ type Options struct {
 	SetLogLevel   func(string) error
 	ApplySettings func(domain.ServerSettings) error
 	Logs          *logbuffer.Service
+	Secrets       *appsecrets.Service
 }
 
 func New(opts Options) Handler {
@@ -100,6 +103,7 @@ func New(opts Options) Handler {
 		setLogLevel:   setLogLevel,
 		applySettings: applySettings,
 		logs:          opts.Logs,
+		secrets:       opts.Secrets,
 	}
 }
 
@@ -111,6 +115,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/users", h.handleAdminUsers)
 	mux.HandleFunc("/settings", h.handleAdminSettings)
 	mux.HandleFunc("/policy", h.handleAdminPolicy)
+	mux.HandleFunc("/secrets", h.handleAdminSecrets)
 	mux.HandleFunc("/logs", h.handleAdminLogsPage)
 }
 
@@ -517,6 +522,95 @@ func (h Handler) handleAdminPolicyPage(w http.ResponseWriter, r *http.Request) {
 	h.renderAdminPage(w, r, data)
 }
 
+func (h Handler) handleAdminSecrets(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.handleAdminSecretsPage(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireAdminSameOrigin(w, r) {
+		return
+	}
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() {
+		http.NotFound(w, r)
+		return
+	}
+	if h.secrets == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		redirectAdminMessage(w, r, "/secrets", "error", "Unable to read secrets form.")
+		return
+	}
+	action := strings.TrimSpace(r.Form.Get("action"))
+	switch action {
+	case "create":
+		passphrase := r.Form.Get("passphrase")
+		confirm := r.Form.Get("passphrase_confirm")
+		if passphrase != confirm {
+			redirectAdminMessage(w, r, "/secrets", "error", "Passwords do not match.")
+			return
+		}
+		if err := h.secrets.Initialize(r.Context(), passphrase, user.ID); err != nil {
+			redirectAdminMessage(w, r, "/secrets", "error", err.Error())
+			return
+		}
+		redirectAdminMessage(w, r, "/secrets", "message", "Secrets root key created and unlocked.")
+	case "unlock":
+		if err := h.secrets.Unlock(r.Context(), r.Form.Get("passphrase")); err != nil {
+			redirectAdminMessage(w, r, "/secrets", "error", err.Error())
+			return
+		}
+		redirectAdminMessage(w, r, "/secrets", "message", "Secrets unlocked.")
+	case "reset":
+		newPassphrase := r.Form.Get("new_passphrase")
+		confirm := r.Form.Get("new_passphrase_confirm")
+		if newPassphrase != confirm {
+			redirectAdminMessage(w, r, "/secrets", "error", "New passwords do not match.")
+			return
+		}
+		if err := h.secrets.ResetPassphrase(r.Context(), r.Form.Get("old_passphrase"), newPassphrase, user.ID); err != nil {
+			redirectAdminMessage(w, r, "/secrets", "error", err.Error())
+			return
+		}
+		redirectAdminMessage(w, r, "/secrets", "message", "Secrets password reset.")
+	default:
+		redirectAdminMessage(w, r, "/secrets", "error", "Secret action is invalid.")
+	}
+}
+
+func (h Handler) handleAdminSecretsPage(w http.ResponseWriter, r *http.Request) {
+	user, ok, err := h.currentAdminUser(r)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "lookup admin session failed", "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !ok || !user.IsAdmin() || h.secrets == nil {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := h.adminPageData(r, user, adminPageSecrets)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "load admin secrets page data failed", "username", user.Username, "error", err)
+		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	data.Message = strings.TrimSpace(r.URL.Query().Get("message"))
+	data.Error = strings.TrimSpace(r.URL.Query().Get("error"))
+	h.renderAdminPage(w, r, data)
+}
+
 func (h Handler) handleAdminLogsPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -571,6 +665,7 @@ const (
 	adminPageUsers    = "users"
 	adminPageSettings = "settings"
 	adminPagePolicy   = "policy"
+	adminPageSecrets  = "secrets"
 	adminPageLogs     = "logs"
 )
 
@@ -616,6 +711,8 @@ type adminPageData struct {
 	CreatedUser             domain.CreatedUser
 	LogSite                 string
 	LogEvents               []logbuffer.Event
+	SecretsHasRootKey       bool
+	SecretsUnlocked         bool
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -722,6 +819,15 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 		data.RuntimeHTTPPolicy = runtimeHTTPPolicy
 		data.RuntimeHTTPClientPolicy = runtimeHTTPClientPolicy
 		data.RuntimeWebSocketPolicy = runtimeWebSocketPolicy
+	case adminPageSecrets:
+		if h.secrets != nil {
+			hasKey, unlocked, err := h.secrets.Status(r.Context())
+			if err != nil {
+				return adminPageData{}, err
+			}
+			data.SecretsHasRootKey = hasKey
+			data.SecretsUnlocked = unlocked
+		}
 	case adminPageLogs:
 		data.LogSite = strings.TrimSpace(r.URL.Query().Get("site"))
 		if h.logs == nil {
@@ -767,6 +873,8 @@ func adminPageTitle(page string) string {
 		return "Server Settings"
 	case adminPagePolicy:
 		return "Policies"
+	case adminPageSecrets:
+		return "Secrets"
 	case adminPageLogs:
 		return "Logs"
 	default:
@@ -782,6 +890,7 @@ func adminNav(user domain.AdminUser) []adminNavItem {
 			adminNavItem{Key: adminPageUsers, Label: "Users", Path: "/users"},
 			adminNavItem{Key: adminPageSettings, Label: "Server Settings", Path: "/settings"},
 			adminNavItem{Key: adminPagePolicy, Label: "Policies", Path: "/policy"},
+			adminNavItem{Key: adminPageSecrets, Label: "Secrets", Path: "/secrets"},
 		)
 	}
 	return nav

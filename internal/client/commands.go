@@ -172,6 +172,35 @@ func ListLogs(ctx context.Context, serverURL, token string, req protocol.LogsReq
 	return request[protocol.LogsResponse](ctx, http.MethodGet, target, token, nil, "create logs request", "logs", "logs")
 }
 
+func SetSecret(ctx context.Context, serverURL, token string, req protocol.SetSecretRequest) (*protocol.SetSecretResponse, error) {
+	if err := require("serverURL", serverURL, "token", token); err != nil {
+		return nil, err
+	}
+	return created[protocol.SetSecretResponse]("create secret set request", "set secret", "set secret")(
+		protocol.NewJSONRequest(ctx, http.MethodPost, protocol.JoinURL(serverURL, protocol.SecretsPath), token, req),
+	)
+}
+
+func ListSecrets(ctx context.Context, serverURL, token string, req protocol.ListSecretsRequest) (*protocol.ListSecretsResponse, error) {
+	if err := require("serverURL", serverURL, "token", token); err != nil {
+		return nil, err
+	}
+	target, err := protocol.SecretsURL(serverURL, req.Site)
+	if err != nil {
+		return nil, fmt.Errorf("parse secrets URL: %w", err)
+	}
+	return request[protocol.ListSecretsResponse](ctx, http.MethodGet, target, token, nil, "create secret list request", "list secrets", "list secrets")
+}
+
+func DeleteSecret(ctx context.Context, serverURL, token string, req protocol.DeleteSecretRequest) (*protocol.DeleteSecretResponse, error) {
+	if err := require("serverURL", serverURL, "token", token); err != nil {
+		return nil, err
+	}
+	return created[protocol.DeleteSecretResponse]("create secret delete request", "delete secret", "delete secret")(
+		protocol.NewJSONRequest(ctx, http.MethodDelete, protocol.JoinURL(serverURL, protocol.SecretsPath), token, req),
+	)
+}
+
 func StreamLogs(ctx context.Context, serverURL, token string, req protocol.LogsRequest, handle func(protocol.LogEvent) error) error {
 	if err := require("serverURL", serverURL, "token", token); err != nil {
 		return err

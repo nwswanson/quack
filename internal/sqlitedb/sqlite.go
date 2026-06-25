@@ -20,6 +20,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
+	"quack/internal/secrets"
 	appsettings "quack/internal/settings"
 )
 
@@ -224,6 +225,30 @@ func (d *Database) init(ctx context.Context) error {
 			PRIMARY KEY (site_sha, upload_version, route_path, route_kind),
 			FOREIGN KEY(site_sha, upload_version) REFERENCES uploads(site_sha, version) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS secret_unlock_keys (
+			key_id TEXT PRIMARY KEY,
+			kdf TEXT NOT NULL,
+			iterations INTEGER NOT NULL,
+			salt BLOB NOT NULL,
+			nonce BLOB NOT NULL,
+			encrypted_root_key BLOB NOT NULL,
+			created_by_user_id INTEGER,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS secrets (
+			scope_type TEXT NOT NULL CHECK (scope_type IN ('site', 'user')),
+			scope_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			nonce BLOB NOT NULL,
+			ciphertext BLOB NOT NULL,
+			created_by_user_id INTEGER NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (scope_type, scope_id, name),
+			FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
 	}
 
 	for _, statement := range statements {
@@ -287,6 +312,151 @@ func (d *Database) FindUserByToken(ctx context.Context, token string) (domain.Ad
 		return domain.AdminUser{}, false, fmt.Errorf("find user by token: %w", err)
 	}
 	return user, true, nil
+}
+
+func (d *Database) LoadUnlockKeys(ctx context.Context) ([]secrets.UnlockKeyRecord, error) {
+	rows, err := d.readDB.QueryContext(ctx, `
+		SELECT key_id, kdf, iterations, salt, nonce, encrypted_root_key,
+			COALESCE(created_by_user_id, 0), created_at, updated_at
+		FROM secret_unlock_keys
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("load secret unlock keys: %w", err)
+	}
+	defer rows.Close()
+
+	var out []secrets.UnlockKeyRecord
+	for rows.Next() {
+		var record secrets.UnlockKeyRecord
+		if err := rows.Scan(&record.KeyID, &record.KDF, &record.Iterations, &record.Salt, &record.Nonce, &record.EncryptedRootKey, &record.CreatedByUserID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan secret unlock key: %w", err)
+		}
+		out = append(out, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate secret unlock keys: %w", err)
+	}
+	return out, nil
+}
+
+func (d *Database) SaveUnlockKey(ctx context.Context, record secrets.UnlockKeyRecord) error {
+	if record.KeyID == "" {
+		return fmt.Errorf("unlock key id is required")
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO secret_unlock_keys (key_id, kdf, iterations, salt, nonce, encrypted_root_key, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(key_id) DO UPDATE SET
+			kdf = excluded.kdf,
+			iterations = excluded.iterations,
+			salt = excluded.salt,
+			nonce = excluded.nonce,
+			encrypted_root_key = excluded.encrypted_root_key,
+			created_by_user_id = excluded.created_by_user_id,
+			updated_at = CURRENT_TIMESTAMP
+	`, record.KeyID, record.KDF, record.Iterations, record.Salt, record.Nonce, record.EncryptedRootKey, nullInt64(record.CreatedByUserID))
+	if err != nil {
+		return fmt.Errorf("save secret unlock key: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) UpsertSecret(ctx context.Context, record secrets.SecretRecord) error {
+	if record.ScopeID == "" {
+		return fmt.Errorf("secret scope id is required")
+	}
+	if record.Name == "" {
+		return fmt.Errorf("secret name is required")
+	}
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	_, err := d.writeDB.ExecContext(ctx, `
+		INSERT INTO secrets (scope_type, scope_id, name, nonce, ciphertext, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(scope_type, scope_id, name) DO UPDATE SET
+			nonce = excluded.nonce,
+			ciphertext = excluded.ciphertext,
+			created_by_user_id = excluded.created_by_user_id,
+			updated_at = CURRENT_TIMESTAMP
+	`, string(record.Scope), record.ScopeID, record.Name, record.Nonce, record.Ciphertext, record.CreatedByUserID)
+	if err != nil {
+		return fmt.Errorf("save secret: %w", err)
+	}
+	return nil
+}
+
+func (d *Database) GetSecret(ctx context.Context, scope domain.SecretScope, scopeID string, name string) (secrets.SecretRecord, bool, error) {
+	var record secrets.SecretRecord
+	var rawScope string
+	err := d.readDB.QueryRowContext(ctx, `
+		SELECT scope_type, scope_id, name, nonce, ciphertext, created_by_user_id, created_at, updated_at
+		FROM secrets
+		WHERE scope_type = ? AND scope_id = ? AND name = ?
+	`, string(scope), scopeID, name).Scan(&rawScope, &record.ScopeID, &record.Name, &record.Nonce, &record.Ciphertext, &record.CreatedByUserID, &record.CreatedAt, &record.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return secrets.SecretRecord{}, false, nil
+	}
+	if err != nil {
+		return secrets.SecretRecord{}, false, fmt.Errorf("get secret: %w", err)
+	}
+	record.Scope = domain.SecretScope(rawScope)
+	return record, true, nil
+}
+
+func (d *Database) ListSecretsForUser(ctx context.Context, userID int64, siteSHA string) ([]secrets.SecretRecord, error) {
+	query := `
+		SELECT scope_type, scope_id, name, nonce, ciphertext, created_by_user_id, created_at, updated_at
+		FROM secrets
+		WHERE created_by_user_id = ?`
+	args := []any{userID}
+	if siteSHA != "" {
+		query += ` AND scope_type = ? AND scope_id = ?`
+		args = append(args, string(domain.SecretScopeSite), siteSHA)
+	}
+	query += ` ORDER BY scope_type, name`
+	rows, err := d.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list secrets: %w", err)
+	}
+	defer rows.Close()
+	var out []secrets.SecretRecord
+	for rows.Next() {
+		var record secrets.SecretRecord
+		var rawScope string
+		if err := rows.Scan(&rawScope, &record.ScopeID, &record.Name, &record.Nonce, &record.Ciphertext, &record.CreatedByUserID, &record.CreatedAt, &record.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan secret: %w", err)
+		}
+		record.Scope = domain.SecretScope(rawScope)
+		out = append(out, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate secrets: %w", err)
+	}
+	return out, nil
+}
+
+func (d *Database) DeleteSecretForUser(ctx context.Context, userID int64, scope domain.SecretScope, scopeID string, name string) (bool, error) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+	result, err := d.writeDB.ExecContext(ctx, `
+		DELETE FROM secrets
+		WHERE created_by_user_id = ? AND scope_type = ? AND scope_id = ? AND name = ?
+	`, userID, string(scope), scopeID, name)
+	if err != nil {
+		return false, fmt.Errorf("delete secret: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete secret rows affected: %w", err)
+	}
+	return affected > 0, nil
+}
+
+func (d *Database) UserCanAccessSite(ctx context.Context, userID int64, siteSHA string) (bool, error) {
+	return d.userCanAccessSite(ctx, d.readDB, userID, siteSHA)
 }
 
 func (d *Database) CreateUser(ctx context.Context, username string, adminPriv string) (domain.CreatedUser, error) {
@@ -2379,6 +2549,10 @@ func uploadID(ctx context.Context, tx *sql.Tx, upload domain.UploadRecord) (int6
 
 type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func nullInt64(value int64) sql.NullInt64 {
+	return sql.NullInt64{Int64: value, Valid: value != 0}
 }
 
 func (d *Database) siteExists(ctx context.Context, q rowQuerier, siteSHA string) (bool, error) {
