@@ -1,0 +1,28 @@
+capabilities:
+  camera:
+    video0:
+      required: true
+      description: Raw frame from /dev/video0 via admin binding
+      permissions:
+        capture:
+          roles: ["admin", "staff"]
+    video1:
+      required: true
+      description: Raw frame from /dev/video1 via admin binding
+      permissions:
+        capture:
+          roles: ["admin", "staff"]
+
+routes:
+  - path: /video0
+    kind: http
+    runtime: starlark
+    entrypoint: api/video0.star
+    methods: [GET]
+    expose_errors: true
+  - path: /video1
+    kind: http
+    runtime: starlark
+    entrypoint: api/video1.star
+    methods: [GET]
+    expose_errors: true
