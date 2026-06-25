@@ -5,7 +5,7 @@ import "time"
 const (
 	DefaultMaxRequestBytes                int64  = 1 << 20
 	DefaultMaxResponseBytes               int64  = 1 << 20
-	DefaultMaxDuration                           = 2500 * time.Millisecond
+	DefaultMaxDuration                           = 120 * time.Second
 	DefaultMaxMemoryBytes                 int64  = 32 << 20
 	DefaultMaxConcurrentInvocations       int64  = 8
 	DefaultMaxExecutionSteps              uint64 = 0
