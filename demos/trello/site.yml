@@ -1,0 +1,15 @@
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/boards.star
+    methods: [GET, POST, PUT, DELETE]
+
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/ws.star

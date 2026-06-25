@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jump!</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: #1a1a2e;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        font-family: system-ui, sans-serif;
+      }
+      main { position: relative; }
+      .ui-overlay {
+        position: absolute;
+        padding: 4px 10px;
+        background: rgba(0,0,0,0.55);
+        color: #fff;
+        border-radius: 4px;
+        font-size: 13px;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #status { top: 8px; right: 8px; }
+      #status.ok { color: #90ee90; }
+      #status.connecting { color: #ffd93d; }
+      #status.error { color: #ff6b6b; }
+      #info { bottom: 8px; left: 8px; font-size: 12px; }
+      #controls {
+        bottom: 8px; right: 8px;
+        font-size: 11px;
+        color: #aaa;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="game"></div>
+      <div class="ui-overlay" id="status">Connecting</div>
+      <div class="ui-overlay" id="info">0 online</div>
+      <div class="ui-overlay" id="controls">Arrow / WASD to move  |  Space / Up to jump</div>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.2/dist/pixi.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

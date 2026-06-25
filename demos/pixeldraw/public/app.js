@@ -7,6 +7,9 @@ const SPRAY_SIZE = 4;
 const SPRAY_INTERVAL_MS = 125;
 const EXPORT_FORMAT = "pixeldraw-buffer-v1";
 const MAX_LOAD_BATCH_PIXELS = 512;
+const MAX_NAMESPACE_LENGTH = 64;
+const MAX_DRAWING_NAME_LENGTH = 48;
+const NAMESPACE_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 const canvas = document.querySelector("#canvas");
 const ctx = canvas.getContext("2d");
@@ -17,11 +20,16 @@ const gridSizeEl = document.querySelector("#gridSize");
 const palette = document.querySelector("#palette");
 const brushes = document.querySelector("#brushes");
 const tabsEl = document.querySelector("#tabs");
+const namespaceForm = document.querySelector("#namespaceForm");
+const namespaceInput = document.querySelector("#namespaceInput");
 const drawingFileInput = document.querySelector("#drawingFile");
 const saveDrawingButton = document.querySelector("#saveDrawing");
 const loadDrawingButton = document.querySelector("#loadDrawing");
+const renameDrawingButton = document.querySelector("#renameDrawing");
 const newDrawingButton = document.querySelector("#newDrawing");
 const deleteDrawingButton = document.querySelector("#deleteDrawing");
+
+const initialRoute = readRoute();
 
 const state = {
   width: DEFAULT_WIDTH,
@@ -33,7 +41,10 @@ const state = {
   brush: "square",
   brushSize: 1,
   drawingId: "",
+  requestedDrawingId: initialRoute.drawingId,
+  namespace: initialRoute.namespace,
   drawings: [],
+  drawingNames: new Map(),
   revision: 0,
   socket: null,
   retryTimer: 0,
@@ -45,11 +56,74 @@ const state = {
   sprayCell: null,
   sprayBoost: 0,
   pending: new Map(),
+  pendingLoadedDrawing: null,
 };
 
 function socketUrl() {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${window.location.host}/ws`;
+  const url = new URL(`${scheme}//${window.location.host}/ws`);
+  if (state.namespace) {
+    url.searchParams.set("ns", state.namespace);
+    if (state.requestedDrawingId) {
+      url.searchParams.set("tab", state.requestedDrawingId);
+    }
+  }
+  return url.toString();
+}
+
+function readRoute() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    namespace: normalizeNamespace(params.get("ns") || params.get("namespace") || ""),
+    drawingId: params.get("tab") || "",
+  };
+}
+
+function normalizeNamespace(value) {
+  const namespace = String(value || "").trim().slice(0, MAX_NAMESPACE_LENGTH);
+  if (!namespace || !NAMESPACE_PATTERN.test(namespace)) return "";
+  return namespace;
+}
+
+function cleanDrawingName(value) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, MAX_DRAWING_NAME_LENGTH);
+}
+
+function messageWithContext(message) {
+  if (state.namespace) {
+    return { ...message, namespace: state.namespace };
+  }
+  return message;
+}
+
+function sendMessage(message) {
+  if (!isOpen()) return;
+  state.socket.send(JSON.stringify(messageWithContext(message)));
+}
+
+function updateRoute(drawingId = state.drawingId) {
+  if (!state.namespace) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("ns", state.namespace);
+  if (drawingId) {
+    url.searchParams.set("tab", drawingId);
+  } else {
+    url.searchParams.delete("tab");
+  }
+  window.history.replaceState(null, "", url);
+}
+
+function applyNamespace(namespace) {
+  state.namespace = namespace;
+  state.requestedDrawingId = "";
+  state.drawingId = "";
+  state.drawings = [];
+  state.drawingNames = new Map();
+  state.pending.clear();
+  updateRoute("");
+  connect();
 }
 
 function setStatus(mode, label) {
@@ -118,21 +192,54 @@ function renderPalette() {
   }
 }
 
-function setDrawings(drawings) {
-  state.drawings = Array.isArray(drawings)
-    ? drawings.filter((id) => typeof id === "string" && id.length > 0)
-    : [];
+function setDrawings(drawings, drawingTabs = []) {
+  const ids = [];
+  const names = new Map();
+  const seen = new Set();
+
+  const addTab = (id, name = "") => {
+    if (typeof id !== "string" || !id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+    if (typeof name === "string" && name) {
+      names.set(id, cleanDrawingName(name));
+    }
+  };
+
+  if (Array.isArray(drawingTabs)) {
+    for (const tab of drawingTabs) {
+      if (typeof tab === "string") {
+        addTab(tab);
+      } else if (tab && typeof tab === "object") {
+        addTab(tab.id, tab.name);
+      }
+    }
+  }
+  if (Array.isArray(drawings)) {
+    for (const drawing of drawings) {
+      if (typeof drawing === "string") {
+        addTab(drawing);
+      } else if (drawing && typeof drawing === "object") {
+        addTab(drawing.id, drawing.name);
+      }
+    }
+  }
+
+  state.drawings = ids;
+  state.drawingNames = names;
   renderTabs();
 }
 
 function renderTabs() {
   tabsEl.replaceChildren();
   for (const drawingId of state.drawings) {
+    const name = state.drawingNames.get(drawingId) || "";
     const button = document.createElement("button");
     button.className = "tab";
     button.type = "button";
     button.dataset.drawingId = drawingId;
-    button.textContent = `tab ${drawingId.slice(0, 5)}`;
+    button.textContent = name || `tab ${drawingId.slice(0, 5)}`;
+    button.title = name ? `${name} (${drawingId})` : drawingId;
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", drawingId === state.drawingId ? "true" : "false");
     if (drawingId === state.drawingId) {
@@ -142,12 +249,17 @@ function renderTabs() {
   }
   saveDrawingButton.disabled = !state.drawingId;
   loadDrawingButton.disabled = !state.drawingId;
+  renameDrawingButton.disabled = !state.drawingId;
   deleteDrawingButton.disabled = state.drawings.length <= 1 || !state.drawingId;
 }
 
 function connect() {
   window.clearTimeout(state.retryTimer);
+  if (state.socket) {
+    state.socket.close();
+  }
   setStatus("closed", "Connecting");
+  namespaceInput.value = state.namespace;
 
   const ws = new WebSocket(socketUrl());
   state.socket = ws;
@@ -180,10 +292,12 @@ function connect() {
 
 function handleMessage(msg) {
   if (msg.type === "canvas_snapshot") {
+    if (typeof msg.namespace === "string" && msg.namespace !== state.namespace) return;
     state.width = msg.width || DEFAULT_WIDTH;
     state.height = msg.height || DEFAULT_HEIGHT;
     state.drawingId = typeof msg.drawing_id === "string" ? msg.drawing_id : "";
-    setDrawings(msg.drawings);
+    state.requestedDrawingId = state.drawingId;
+    setDrawings(msg.drawings, msg.drawing_tabs);
     state.pending.clear();
     state.pixels = new Array(state.width * state.height).fill(0);
     if (Array.isArray(msg.pixels)) {
@@ -198,11 +312,20 @@ function handleMessage(msg) {
     revisionEl.textContent = String(state.revision);
     gridSizeEl.textContent = `${state.width} x ${state.height}`;
     render();
+    updateRoute();
+    if (msg.missing_drawing_id) {
+      flashStatus("Tab not found");
+    } else if (state.pendingLoadedDrawing) {
+      const drawing = state.pendingLoadedDrawing;
+      state.pendingLoadedDrawing = null;
+      applyLoadedDrawing(drawing);
+    }
     return;
   }
 
   if (msg.type === "drawings_changed") {
-    setDrawings(msg.drawings);
+    if (typeof msg.namespace === "string" && msg.namespace !== state.namespace) return;
+    setDrawings(msg.drawings, msg.drawing_tabs);
     if (state.drawingId && !state.drawings.includes(state.drawingId)) {
       requestDrawing(state.drawings[0]);
     }
@@ -282,7 +405,9 @@ function isOpen() {
 function requestDrawing(drawingId) {
   if (!isOpen() || !drawingId || drawingId === state.drawingId) return;
   state.pending.clear();
-  state.socket.send(JSON.stringify({ type: "get_drawing", drawing_id: drawingId }));
+  state.requestedDrawingId = drawingId;
+  updateRoute(drawingId);
+  sendMessage({ type: "get_drawing", drawing_id: drawingId });
 }
 
 function serializeCurrentDrawing() {
@@ -291,8 +416,18 @@ function serializeCurrentDrawing() {
     width: state.width,
     height: state.height,
     drawing_id: state.drawingId,
+    name: state.drawingNames.get(state.drawingId) || "",
     pixels: state.pixels,
   }, null, 2);
+}
+
+function filenameLabel(value) {
+  const label = String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return label || "drawing";
 }
 
 function saveCurrentDrawing() {
@@ -301,7 +436,7 @@ function saveCurrentDrawing() {
   const text = serializeCurrentDrawing();
   const blob = new Blob([text], { type: "application/json;charset=utf-8" });
   const link = document.createElement("a");
-  const drawingLabel = state.drawingId ? state.drawingId.slice(0, 8) : "drawing";
+  const drawingLabel = filenameLabel(state.drawingNames.get(state.drawingId) || state.drawingId.slice(0, 8));
   link.href = URL.createObjectURL(blob);
   link.download = `pixeldraw-${drawingLabel}.json`;
   document.body.append(link);
@@ -336,7 +471,13 @@ function parseLoadedDrawing(text) {
     }
     return color;
   });
-  return { pixels };
+  return { name: cleanDrawingName(body.name), pixels };
+}
+
+function loadedDrawingName(file, drawing) {
+  if (drawing.name) return drawing.name;
+  const stem = file.name.replace(/\.[^.]+$/, "").replace(/^pixeldraw[-_]?/i, "");
+  return cleanDrawingName(stem);
 }
 
 function applyLoadedDrawing(drawing) {
@@ -357,11 +498,11 @@ function applyLoadedDrawing(drawing) {
 
   render();
   for (let i = 0; i < changed.length; i += MAX_LOAD_BATCH_PIXELS) {
-    state.socket.send(JSON.stringify({
+    sendMessage({
       type: "draw_pixels",
       drawing_id: state.drawingId,
       pixels: changed.slice(i, i + MAX_LOAD_BATCH_PIXELS),
-    }));
+    });
   }
   flashStatus(changed.length > 0 ? "Loaded" : "Already loaded");
 }
@@ -474,11 +615,11 @@ function flushPixels() {
   if (!isOpen() || state.pending.size === 0 || !state.drawingId) return;
   const pixels = Array.from(state.pending.values());
   state.pending.clear();
-  state.socket.send(JSON.stringify({
+  sendMessage({
     type: "draw_pixels",
     drawing_id: state.drawingId,
     pixels,
-  }));
+  });
 }
 
 function startSpray(cell) {
@@ -536,6 +677,30 @@ tabsEl.addEventListener("click", (event) => {
   requestDrawing(button.dataset.drawingId);
 });
 
+tabsEl.addEventListener("dblclick", (event) => {
+  const button = event.target.closest(".tab");
+  if (!button) return;
+  renameDrawing(button.dataset.drawingId);
+});
+
+namespaceForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const namespace = normalizeNamespace(namespaceInput.value);
+  if (!namespaceInput.value.trim()) {
+    state.namespace = "";
+    state.requestedDrawingId = "";
+    window.history.replaceState(null, "", window.location.pathname);
+    connect();
+    return;
+  }
+  if (!namespace) {
+    flashStatus("Bad namespace");
+    window.alert("Use letters, numbers, underscores, hyphens, or periods for namespaces.");
+    return;
+  }
+  applyNamespace(namespace);
+});
+
 saveDrawingButton.addEventListener("click", saveCurrentDrawing);
 
 loadDrawingButton.addEventListener("click", () => {
@@ -550,9 +715,12 @@ drawingFileInput.addEventListener("change", async () => {
 
   try {
     const drawing = parseLoadedDrawing(await file.text());
+    drawing.name = loadedDrawingName(file, drawing);
     flushPixels();
-    applyLoadedDrawing(drawing);
+    state.pendingLoadedDrawing = drawing;
+    sendMessage({ type: "create_drawing", name: drawing.name });
   } catch (error) {
+    state.pendingLoadedDrawing = null;
     flashStatus("Load failed");
     window.alert(error.message);
   }
@@ -561,13 +729,23 @@ drawingFileInput.addEventListener("change", async () => {
 newDrawingButton.addEventListener("click", () => {
   if (!isOpen()) return;
   flushPixels();
-  state.socket.send(JSON.stringify({ type: "create_drawing" }));
+  sendMessage({ type: "create_drawing" });
 });
+
+function renameDrawing(drawingId = state.drawingId) {
+  if (!isOpen() || !drawingId) return;
+  const currentName = state.drawingNames.get(drawingId) || "";
+  const nextName = window.prompt("Tab name", currentName);
+  if (nextName === null) return;
+  sendMessage({ type: "rename_drawing", drawing_id: drawingId, name: cleanDrawingName(nextName) });
+}
+
+renameDrawingButton.addEventListener("click", () => renameDrawing());
 
 deleteDrawingButton.addEventListener("click", () => {
   if (!isOpen() || !state.drawingId || state.drawings.length <= 1) return;
   state.pending.clear();
-  state.socket.send(JSON.stringify({ type: "delete_drawing", drawing_id: state.drawingId }));
+  sendMessage({ type: "delete_drawing", drawing_id: state.drawingId });
 });
 
 canvas.addEventListener("pointerdown", (event) => {

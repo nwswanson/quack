@@ -99,10 +99,28 @@ h1 {
 
 .drawing-tabs {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   margin-bottom: 14px;
+}
+
+.namespace-login {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.namespace-login input {
+  width: 160px;
+  height: 40px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 0.82rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .tabs {
@@ -356,8 +374,19 @@ canvas {
     grid-template-columns: 1fr;
   }
 
+  .namespace-login {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .namespace-login input {
+    flex: 1 1 auto;
+    width: auto;
+  }
+
   .tab-actions {
     justify-content: end;
+    overflow-x: auto;
   }
 
   .status {

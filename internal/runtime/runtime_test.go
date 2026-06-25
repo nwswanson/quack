@@ -687,6 +687,75 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 	}
 }
 
+func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
+	site := "demo-pixeldraw-namespaced-tabs"
+	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{"pixels.star": string(src)})
+	bundle := Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "pixels.star"}},
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", Query: "ns=team", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pixeldraw:canvas:team" {
+		t.Fatalf("connect effects = %#v, want namespaced subscribe, ready, and snapshot", effects)
+	}
+	if got := string(effects[2].Payload); !strings.Contains(got, `"namespace":"team"`) || !strings.Contains(got, `"drawing_tabs"`) {
+		t.Fatalf("snapshot payload = %s, want namespace and drawing_tabs", got)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", Query: "ns=team", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"create_drawing","name":"Intro"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 2 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw:canvas:team" {
+		t.Fatalf("create effects = %#v, want namespaced publish and snapshot", effects)
+	}
+	created := string(effects[1].Payload)
+	drawingID := jsonStringField(t, created, "drawing_id")
+	if drawingID == "" || !strings.Contains(created, `"name":"Intro"`) {
+		t.Fatalf("create snapshot = %s, want drawing id and tab name", created)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", Query: "ns=team", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"rename_drawing","drawing_id":"` + drawingID + `","name":"Main"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw:canvas:team" {
+		t.Fatalf("rename effects = %#v, want namespaced publish", effects)
+	}
+	if got := string(effects[0].Payload); !strings.Contains(got, `"name":"Main"`) || !strings.Contains(got, `"active_drawing_id":"`+drawingID+`"`) {
+		t.Fatalf("rename payload = %s, want renamed drawing tab", got)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: site, Version: 1, Route: "/ws", Query: "ns=team&tab=deleted-tab", ConnID: "c2", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := string(effects[2].Payload)
+	for _, want := range []string{`"namespace":"team"`, `"missing_drawing_id":"deleted-tab"`, `"drawing_id":`} {
+		if !strings.Contains(fallback, want) {
+			t.Fatalf("fallback payload = %s, want %s", fallback, want)
+		}
+	}
+}
+
 func TestDemoPixeldrawIgnoresLegacyCanvasKeys(t *testing.T) {
 	site := "demo-pixeldraw-legacy-noise"
 	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")

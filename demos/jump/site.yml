@@ -1,0 +1,8 @@
+routes:
+  - path: /
+    kind: static
+    root: public
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/game.star

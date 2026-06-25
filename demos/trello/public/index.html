@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trello Clone</title>
+<link rel="stylesheet" href="/styles.css?v=1">
+</head>
+<body>
+<div id="app">
+  <header id="header">
+    <h1 id="boardTitle"></h1>
+    <div id="headerActions">
+      <button id="newBoardBtn" class="btn btn-sm">+ New Board</button>
+      <div class="status" data-state="closed" id="status">
+        <span class="dot"></span>
+        <span id="statusText">Connecting</span>
+      </div>
+    </div>
+  </header>
+
+  <aside id="sidebar">
+    <h3>Boards</h3>
+    <ul id="boardList"></ul>
+  </aside>
+
+  <main id="board">
+    <div id="listContainer"></div>
+    <div id="addListWrap">
+      <button id="addListBtn" class="btn">+ Add List</button>
+    </div>
+  </main>
+</div>
+
+<div id="overlay" class="hidden"></div>
+
+<div id="listMenu" class="menu hidden">
+  <button id="deleteListBtn">Delete List</button>
+</div>
+
+<script src="/app.js?v=1"></script>
+</body>
+</html>

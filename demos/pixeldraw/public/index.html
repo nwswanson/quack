@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PixelDraw</title>
-    <link rel="stylesheet" href="/styles.css?v=files-2">
+    <link rel="stylesheet" href="/styles.css?v=tabs-1">
   </head>
   <body>
     <main>
@@ -20,11 +20,16 @@
       </header>
 
       <section class="drawing-tabs" aria-label="Drawings">
+        <form class="namespace-login" id="namespaceForm">
+          <input id="namespaceInput" name="namespace" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="namespace" aria-label="Namespace">
+          <button id="namespaceButton" class="file-button" type="submit">Open</button>
+        </form>
         <div class="tabs" id="tabs" role="tablist" aria-label="Drawing tabs"></div>
         <input id="drawingFile" type="file" accept=".json,application/json" hidden>
         <div class="tab-actions">
           <button id="saveDrawing" class="file-button" type="button" title="Save drawing" aria-label="Save drawing">Save</button>
           <button id="loadDrawing" class="file-button" type="button" title="Load drawing" aria-label="Load drawing">Load</button>
+          <button id="renameDrawing" class="file-button" type="button" title="Name tab" aria-label="Name tab">Name</button>
           <button id="newDrawing" class="icon-button" type="button" title="New drawing" aria-label="New drawing">+</button>
           <button id="deleteDrawing" class="icon-button danger" type="button" title="Delete drawing" aria-label="Delete drawing">&times;</button>
         </div>
@@ -67,6 +72,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=files-2"></script>
+    <script src="/app.js?v=tabs-1"></script>
   </body>
 </html>
