@@ -95,6 +95,43 @@ def handle(req):
 	}
 }
 
+func TestStarlarkHTTPModuleAcceptsKeywordOptions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != "quack-test" {
+			t.Fatalf("user-agent = %q, want quack-test", got)
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def handle(req):
+    resp = http.get("api://local", headers = {
+        "user-agent": "quack-test",
+    }, options = {
+        "timeout": "1s",
+        "follow_redirects": False,
+    })
+    return (resp.status_code, {}, resp.text)
+`})
+	executor.SetHTTPClientPolicy(allowRuntimeHTTPClientPolicy(), runtimeSettings{settings: domain.ServerSettings{
+		HTTPClientMaxBytes:     1024,
+		HTTPClientMaxTimeoutMS: 1000,
+	}}, true)
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1,
+		Routes:     []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		APIProxies: []manifest.APIProxy{{Name: "local", PathFixed: server.URL, Methods: []string{"GET"}}},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(resp.Body) != "ok" {
+		t.Fatalf("response = %+v body=%q, want ok response", resp, string(resp.Body))
+	}
+}
+
 func TestStarlarkHTTPModuleDeniesWhenPolicyDisabledAfterUpload(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
 def handle(req):

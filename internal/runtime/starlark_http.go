@@ -67,9 +67,9 @@ func httpRequestBuiltin(client httpclient.Client) func(*starlark.Thread, *starla
 	return func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var method string
 		var urlValue string
-		headers := starlark.None
-		body := starlark.None
-		options := starlark.None
+		var headers starlark.Value = starlark.None
+		var body starlark.Value = starlark.None
+		var options starlark.Value = starlark.None
 		if err := starlark.UnpackArgs(fn.Name(), args, kwargs, "method", &method, "url", &urlValue, "headers?", &headers, "body?", &body, "options?", &options); err != nil {
 			return nil, err
 		}
@@ -87,9 +87,9 @@ func httpRequestBuiltin(client httpclient.Client) func(*starlark.Thread, *starla
 
 func httpVerbBuiltin(thread *starlark.Thread, client httpclient.Client, method string, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var urlValue string
-	headers := starlark.None
-	body := starlark.None
-	options := starlark.None
+	var headers starlark.Value = starlark.None
+	var body starlark.Value = starlark.None
+	var options starlark.Value = starlark.None
 	if err := starlark.UnpackArgs(fn.Name(), args, kwargs, "url", &urlValue, "headers?", &headers, "body?", &body, "options?", &options); err != nil {
 		return nil, err
 	}
