@@ -134,7 +134,7 @@ var registry = map[string]SettingDefinition{
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true, PolicyKind: PolicyKindCapability,
 	},
 	SettingHardwareCameraFeature: {
-		Key: SettingHardwareCameraFeature, Type: SettingTypeBool, DefaultValue: "false",
+		Key: SettingHardwareCameraFeature, Type: SettingTypeBool, DefaultValue: "true", //TODO: Fix this later
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
 	SettingHardwareCameraFeatureRequired: {
