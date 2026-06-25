@@ -65,15 +65,16 @@ def handle(req):
         return (423, {"content-type": "text/html; charset=utf-8"}, _page("Secrets locked", body))
 
     hello_body = '<span class="missing">missing</span>'
-    if secret.unlocked():
+    if secret.exists("site", "hello"):
         hello_body = _escape_html(secret.get("site", "hello"))
 
     hello2_body = '<span class="missing">missing</span>'
-    # TODO fix this
+    if secret.exists("site", "hello2"):
+        hello2_body = _escape_html(secret.get("site", "hello2"))
 
     body = """
     <h1>Secrets demo</h1>
-    <p>Each value is guarded with <code>secret.unlocked("site", name)</code> before calling <code>secret.get</code>.</p>
+    <p>Each value is guarded with <code>secret.exists("site", name)</code> before calling <code>secret.get</code>.</p>
     <div class="secret"><code>hello</code>: %s</div>
     <div class="secret"><code>hello2</code>: %s</div>
 """ % (hello_body, hello2_body)
