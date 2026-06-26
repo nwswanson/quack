@@ -25,6 +25,10 @@ type Service interface {
 	ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error)
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
 	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
+	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
+	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
+	SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error)
+	CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error)
 	Close() error
 }
 
@@ -89,6 +93,83 @@ type CancelCaptureResponse struct {
 	Cancelled bool
 }
 
+type SerialOptions struct {
+	BaudRate             int    `json:"baud" yaml:"baud"`
+	DataBits             int    `json:"data_bits" yaml:"data_bits"`
+	Parity               string `json:"parity" yaml:"parity"`
+	StopBits             string `json:"stop_bits" yaml:"stop_bits"`
+	ReadTimeoutMillis    int    `json:"read_timeout_ms" yaml:"read_timeout_ms"`
+	RequestTimeoutMillis int    `json:"request_timeout_ms" yaml:"request_timeout_ms"`
+	WriteQueueSize       int    `json:"write_queue_size" yaml:"write_queue_size"`
+	RecentEvents         int    `json:"recent_events" yaml:"recent_events"`
+	ReconnectMillis      int    `json:"reconnect_ms" yaml:"reconnect_ms"`
+}
+
+type SerialWriteRequest struct {
+	DeviceID string
+	Site     string
+	Path     string
+	Options  SerialOptions
+	Data     []byte
+}
+
+type SerialWriteResponse struct {
+	DeviceID string
+	Bytes    int
+}
+
+type SerialRequestRequest struct {
+	DeviceID      string
+	Site          string
+	Path          string
+	Options       SerialOptions
+	Data          []byte
+	Until         []byte
+	MaxBytes      int
+	TimeoutMillis int
+}
+
+type SerialRequestResponse struct {
+	DeviceID string
+	Data     []byte
+	Timeout  bool
+}
+
+type SerialStatusRequest struct {
+	DeviceID string
+	Site     string
+	Path     string
+	Options  SerialOptions
+}
+
+type SerialStatusResponse struct {
+	DeviceID string
+	Path     string
+	Open     bool
+	Status   string
+	Error    string
+	Recent   []SerialEvent
+}
+
+type SerialCloseRequest struct {
+	DeviceID string
+	Site     string
+	Path     string
+	Options  SerialOptions
+}
+
+type SerialCloseResponse struct {
+	DeviceID string
+	Closed   bool
+}
+
+type SerialEvent struct {
+	UnixNano int64
+	Type     string
+	Data     []byte
+	Error    string
+}
+
 type Config struct {
 	Devices            []DeviceDescriptor  `json:"devices" yaml:"devices"`
 	SiteDeviceBindings []SiteDeviceBinding `json:"site_device_bindings" yaml:"site_device_bindings"`
@@ -114,6 +195,7 @@ type DeviceDescriptor struct {
 	Match  DeviceMatch       `json:"match" yaml:"match"`
 	Label  string            `json:"label" yaml:"label"`
 	Limits DeviceLimits      `json:"limits" yaml:"limits"`
+	Serial SerialOptions     `json:"serial" yaml:"serial"`
 	Meta   map[string]string `json:"meta,omitempty" yaml:"meta,omitempty"`
 }
 
@@ -132,8 +214,10 @@ type SiteDeviceBinding struct {
 }
 
 type DevicePermissions struct {
-	Capture bool `json:"capture" yaml:"capture"`
-	Stream  bool `json:"stream" yaml:"stream"`
+	Capture     bool `json:"capture" yaml:"capture"`
+	Stream      bool `json:"stream" yaml:"stream"`
+	SerialRead  bool `json:"serial_read" yaml:"serial_read"`
+	SerialWrite bool `json:"serial_write" yaml:"serial_write"`
 }
 
 type DeviceLimits struct {
@@ -147,6 +231,13 @@ type Provider interface {
 	ListDevices(ctx context.Context, req ListDevicesRequest) ([]DeviceInfo, error)
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
 	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
+}
+
+type SerialProvider interface {
+	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
+	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
+	SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error)
+	CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error)
 }
 
 type DeviceProvider interface {
@@ -222,8 +313,49 @@ func (s *LocalService) CancelCapture(ctx context.Context, req CancelCaptureReque
 	return provider.CancelCapture(ctx, req)
 }
 
+func (s *LocalService) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
+	provider, err := s.serialProvider()
+	if err != nil {
+		return SerialWriteResponse{}, err
+	}
+	return provider.WriteSerial(ctx, req)
+}
+
+func (s *LocalService) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
+	provider, err := s.serialProvider()
+	if err != nil {
+		return SerialRequestResponse{}, err
+	}
+	return provider.RequestSerial(ctx, req)
+}
+
+func (s *LocalService) SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error) {
+	provider, err := s.serialProvider()
+	if err != nil {
+		return SerialStatusResponse{}, err
+	}
+	return provider.SerialStatus(ctx, req)
+}
+
+func (s *LocalService) CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error) {
+	provider, err := s.serialProvider()
+	if err != nil {
+		return SerialCloseResponse{}, err
+	}
+	return provider.CloseSerial(ctx, req)
+}
+
 func (s *LocalService) Close() error {
-	return nil
+	if s == nil {
+		return nil
+	}
+	var out error
+	for _, provider := range s.providers {
+		if closer, ok := provider.(interface{ Close() error }); ok {
+			out = errors.Join(out, closer.Close())
+		}
+	}
+	return out
 }
 
 func (s *LocalService) providerForKind(kind string) (Provider, error) {
@@ -236,6 +368,18 @@ func (s *LocalService) providerForKind(kind string) (Provider, error) {
 		return nil, fmt.Errorf("%w: %s", ErrKindNotSupported, kind)
 	}
 	return provider, nil
+}
+
+func (s *LocalService) serialProvider() (SerialProvider, error) {
+	provider, err := s.providerForKind(DeviceKindSerial)
+	if err != nil {
+		return nil, err
+	}
+	serialProvider, ok := provider.(SerialProvider)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrNotImplemented, DeviceKindSerial)
+	}
+	return serialProvider, nil
 }
 
 type BoundService struct {
@@ -420,6 +564,105 @@ func (s *BoundService) CancelCapture(ctx context.Context, req CancelCaptureReque
 	return s.upstream.CancelCapture(ctx, upstreamReq)
 }
 
+func (s *BoundService) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
+	device, _, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, true, false)
+	if err != nil {
+		return SerialWriteResponse{}, err
+	}
+	upstreamReq := req
+	upstreamReq.Path = device.Path
+	upstreamReq.DeviceID = device.ID
+	upstreamReq.Options = effectiveSerialOptions(device.Serial, req.Options)
+	resp, err := s.upstream.WriteSerial(ctx, upstreamReq)
+	if err != nil {
+		return SerialWriteResponse{}, err
+	}
+	resp.DeviceID = strings.TrimSpace(req.DeviceID)
+	return resp, nil
+}
+
+func (s *BoundService) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
+	device, _, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, true, true)
+	if err != nil {
+		return SerialRequestResponse{}, err
+	}
+	upstreamReq := req
+	upstreamReq.Path = device.Path
+	upstreamReq.DeviceID = device.ID
+	upstreamReq.Options = effectiveSerialOptions(device.Serial, req.Options)
+	resp, err := s.upstream.RequestSerial(ctx, upstreamReq)
+	if err != nil {
+		return SerialRequestResponse{}, err
+	}
+	resp.DeviceID = strings.TrimSpace(req.DeviceID)
+	return resp, nil
+}
+
+func (s *BoundService) SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error) {
+	device, _, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, false, false)
+	if err != nil {
+		return SerialStatusResponse{}, err
+	}
+	upstreamReq := req
+	upstreamReq.Path = device.Path
+	upstreamReq.DeviceID = device.ID
+	upstreamReq.Options = effectiveSerialOptions(device.Serial, req.Options)
+	resp, err := s.upstream.SerialStatus(ctx, upstreamReq)
+	if err != nil {
+		return SerialStatusResponse{}, err
+	}
+	resp.DeviceID = strings.TrimSpace(req.DeviceID)
+	resp.Path = ""
+	return resp, nil
+}
+
+func (s *BoundService) CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error) {
+	device, _, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, false, false)
+	if err != nil {
+		return SerialCloseResponse{}, err
+	}
+	upstreamReq := req
+	upstreamReq.Path = device.Path
+	upstreamReq.DeviceID = device.ID
+	upstreamReq.Options = effectiveSerialOptions(device.Serial, req.Options)
+	resp, err := s.upstream.CloseSerial(ctx, upstreamReq)
+	if err != nil {
+		return SerialCloseResponse{}, err
+	}
+	resp.DeviceID = strings.TrimSpace(req.DeviceID)
+	return resp, nil
+}
+
+func (s *BoundService) resolveSerialAlias(ctx context.Context, site string, alias string, write bool, read bool) (DeviceDescriptor, SiteDeviceBinding, error) {
+	site = strings.TrimSpace(site)
+	alias = strings.TrimSpace(alias)
+	if site == "" {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, fmt.Errorf("site is required")
+	}
+	if alias == "" {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, fmt.Errorf("serial alias is required")
+	}
+	devices, bindings, err := s.resolvedConfig(ctx)
+	if err != nil {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, err
+	}
+	binding, ok := bindings[bindingKey(site, alias)]
+	if !ok {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, fmt.Errorf("serial device %q is not assigned to site %q", alias, site)
+	}
+	if write && !binding.Permissions.SerialWrite {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, fmt.Errorf("serial device %q write is not permitted for site %q", alias, site)
+	}
+	if read && !binding.Permissions.SerialRead {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, fmt.Errorf("serial device %q read is not permitted for site %q", alias, site)
+	}
+	device := devices[binding.DeviceID]
+	if device.Kind != DeviceKindSerial {
+		return DeviceDescriptor{}, SiteDeviceBinding{}, fmt.Errorf("device %q is %q, not serial", alias, device.Kind)
+	}
+	return device, binding, nil
+}
+
 func (s *BoundService) resolvedConfig(ctx context.Context) (map[string]DeviceDescriptor, map[string]SiteDeviceBinding, error) {
 	config, err := s.config.HardwareConfig(ctx)
 	if err != nil {
@@ -462,6 +705,38 @@ func effectiveLimits(admin DeviceLimits, binding DeviceLimits) DeviceLimits {
 		MaxFPS:          minPositive(admin.MaxFPS, binding.MaxFPS),
 		MaxCaptureBytes: minPositive(admin.MaxCaptureBytes, binding.MaxCaptureBytes),
 	}
+}
+
+func effectiveSerialOptions(admin SerialOptions, request SerialOptions) SerialOptions {
+	out := admin
+	if request.BaudRate > 0 {
+		out.BaudRate = request.BaudRate
+	}
+	if request.DataBits > 0 {
+		out.DataBits = request.DataBits
+	}
+	if strings.TrimSpace(request.Parity) != "" {
+		out.Parity = request.Parity
+	}
+	if strings.TrimSpace(request.StopBits) != "" {
+		out.StopBits = request.StopBits
+	}
+	if request.ReadTimeoutMillis > 0 {
+		out.ReadTimeoutMillis = request.ReadTimeoutMillis
+	}
+	if request.RequestTimeoutMillis > 0 {
+		out.RequestTimeoutMillis = request.RequestTimeoutMillis
+	}
+	if request.WriteQueueSize > 0 {
+		out.WriteQueueSize = request.WriteQueueSize
+	}
+	if request.RecentEvents > 0 {
+		out.RecentEvents = request.RecentEvents
+	}
+	if request.ReconnectMillis > 0 {
+		out.ReconnectMillis = request.ReconnectMillis
+	}
+	return out
 }
 
 func minPositive(a int, b int) int {

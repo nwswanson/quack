@@ -15,6 +15,10 @@ import (
 type HardwareService interface {
 	ListDevices(ctx context.Context, req hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error)
 	Capture(ctx context.Context, req hardware.CaptureRequest) (hardware.CaptureResponse, error)
+	WriteSerial(ctx context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error)
+	RequestSerial(ctx context.Context, req hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error)
+	SerialStatus(ctx context.Context, req hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error)
+	CloseSerial(ctx context.Context, req hardware.SerialCloseRequest) (hardware.SerialCloseResponse, error)
 }
 
 type cameraModule struct {
@@ -122,8 +126,10 @@ func deviceDict(device hardware.DeviceInfo) starlark.Value {
 
 func devicePermissionsDict(permissions hardware.DevicePermissions) starlark.Value {
 	return stringDict(map[string]starlark.Value{
-		"capture": starlark.Bool(permissions.Capture),
-		"stream":  starlark.Bool(permissions.Stream),
+		"capture":      starlark.Bool(permissions.Capture),
+		"stream":       starlark.Bool(permissions.Stream),
+		"serial_read":  starlark.Bool(permissions.SerialRead),
+		"serial_write": starlark.Bool(permissions.SerialWrite),
 	})
 }
 

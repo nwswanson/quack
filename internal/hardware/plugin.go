@@ -74,6 +74,48 @@ func (s *rpcServer) CancelCapture(req CancelCaptureRequest, resp *CancelCaptureR
 	return nil
 }
 
+func (s *rpcServer) WriteSerial(req SerialWriteRequest, resp *SerialWriteResponse) error {
+	out, err := s.impl.WriteSerial(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
+func (s *rpcServer) RequestSerial(req SerialRequestRequest, resp *SerialRequestResponse) error {
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if req.TimeoutMillis > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutMillis)*time.Millisecond)
+		defer cancel()
+	}
+	out, err := s.impl.RequestSerial(ctx, req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
+func (s *rpcServer) SerialStatus(req SerialStatusRequest, resp *SerialStatusResponse) error {
+	out, err := s.impl.SerialStatus(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
+func (s *rpcServer) CloseSerial(req SerialCloseRequest, resp *SerialCloseResponse) error {
+	out, err := s.impl.CloseSerial(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
 type rpcClient struct {
 	client *rpc.Client
 }
@@ -108,6 +150,38 @@ func (c *rpcClient) CancelCapture(ctx context.Context, req CancelCaptureRequest)
 	var resp CancelCaptureResponse
 	err := callRPC(ctx, func() error {
 		return c.client.Call("Plugin.CancelCapture", req, &resp)
+	}, nil)
+	return resp, err
+}
+
+func (c *rpcClient) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
+	var resp SerialWriteResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.WriteSerial", req, &resp)
+	}, nil)
+	return resp, err
+}
+
+func (c *rpcClient) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
+	var resp SerialRequestResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.RequestSerial", req, &resp)
+	}, nil)
+	return resp, err
+}
+
+func (c *rpcClient) SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error) {
+	var resp SerialStatusResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.SerialStatus", req, &resp)
+	}, nil)
+	return resp, err
+}
+
+func (c *rpcClient) CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error) {
+	var resp SerialCloseResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.CloseSerial", req, &resp)
 	}, nil)
 	return resp, err
 }
@@ -194,6 +268,34 @@ func (s *ClientService) CancelCapture(ctx context.Context, req CancelCaptureRequ
 		return CancelCaptureResponse{}, ErrNotConfigured
 	}
 	return s.impl.CancelCapture(ctx, req)
+}
+
+func (s *ClientService) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
+	if s == nil || s.impl == nil {
+		return SerialWriteResponse{}, ErrNotConfigured
+	}
+	return s.impl.WriteSerial(ctx, req)
+}
+
+func (s *ClientService) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
+	if s == nil || s.impl == nil {
+		return SerialRequestResponse{}, ErrNotConfigured
+	}
+	return s.impl.RequestSerial(ctx, req)
+}
+
+func (s *ClientService) SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error) {
+	if s == nil || s.impl == nil {
+		return SerialStatusResponse{}, ErrNotConfigured
+	}
+	return s.impl.SerialStatus(ctx, req)
+}
+
+func (s *ClientService) CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error) {
+	if s == nil || s.impl == nil {
+		return SerialCloseResponse{}, ErrNotConfigured
+	}
+	return s.impl.CloseSerial(ctx, req)
 }
 
 func (s *ClientService) Close() error {

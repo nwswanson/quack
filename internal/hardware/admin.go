@@ -48,11 +48,15 @@ func ConfigFromAdminDevices(devices []AdminDevice) Config {
 		if alias == "" {
 			alias = id
 		}
+		permissions := DevicePermissions{Capture: true}
+		if deviceKindFromAdminKind(adminKind) == DeviceKindSerial {
+			permissions = DevicePermissions{SerialRead: true, SerialWrite: true}
+		}
 		out.SiteDeviceBindings = append(out.SiteDeviceBindings, SiteDeviceBinding{
 			Site:        site,
 			Alias:       alias,
 			DeviceID:    id,
-			Permissions: DevicePermissions{Capture: true},
+			Permissions: permissions,
 		})
 	}
 	return out

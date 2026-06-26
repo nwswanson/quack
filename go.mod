@@ -5,8 +5,9 @@ go 1.25.0
 require (
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/maypok86/otter v1.2.4
+	go.bug.st/serial v1.7.1
 	go.starlark.net v0.0.0-20260613233743-8ba36ccb83fb
-	golang.org/x/sys v0.42.0
+	golang.org/x/sys v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )

@@ -48,6 +48,37 @@ func TestParseConfigRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestParseConfigAcceptsSerialSettings(t *testing.T) {
+	config, err := ParseConfig(strings.NewReader(`
+devices:
+  - id: meter_01
+    kind: serial
+    path: /dev/ttyUSB0
+    serial:
+      baud: 115200
+      data_bits: 8
+      parity: none
+      stop_bits: "1"
+      read_timeout_ms: 250
+site_device_bindings:
+  - site: acme
+    alias: meter
+    device_id: meter_01
+    permissions:
+      serial_read: true
+      serial_write: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Devices[0].Serial.BaudRate; got != 115200 {
+		t.Fatalf("serial baud = %d, want 115200", got)
+	}
+	if !config.SiteDeviceBindings[0].Permissions.SerialRead || !config.SiteDeviceBindings[0].Permissions.SerialWrite {
+		t.Fatalf("serial permissions = %+v, want read/write", config.SiteDeviceBindings[0].Permissions)
+	}
+}
+
 func TestValidateConfigRejectsDuplicateDevicePath(t *testing.T) {
 	err := ValidateConfig(Config{Devices: []DeviceDescriptor{
 		{ID: "cam_01", Kind: DeviceKindCameraUVC, Path: "/dev/video2"},

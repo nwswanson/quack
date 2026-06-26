@@ -10,7 +10,7 @@ import (
 )
 
 func TestCameraModuleUsesHardwareService(t *testing.T) {
-	module := NewCameraModule(context.Background(), "acme", fakeHardwareService{
+	module := NewCameraModule(context.Background(), "acme", &fakeHardwareService{
 		devices: []hardware.DeviceInfo{{
 			ID:    "front_door",
 			Alias: "front_door",
@@ -77,17 +77,105 @@ frame = camera.capture("front_door", width=640, height=480)
 	}
 }
 
-type fakeHardwareService struct {
-	devices []hardware.DeviceInfo
-	frame   hardware.CaptureResponse
-	listReq hardware.ListDevicesRequest
-	capReq  hardware.CaptureRequest
+func TestSerialModuleUsesHardwareService(t *testing.T) {
+	service := &fakeHardwareService{
+		devices: []hardware.DeviceInfo{{
+			ID:    "meter",
+			Alias: "meter",
+			Kind:  hardware.DeviceKindSerial,
+			Label: "Bench meter",
+			Permissions: hardware.DevicePermissions{
+				SerialRead:  true,
+				SerialWrite: true,
+			},
+		}},
+		serialResponse: hardware.SerialRequestResponse{
+			DeviceID: "meter",
+			Data:     []byte("42\n"),
+		},
+	}
+	module := NewSerialModule(context.Background(), "acme", service)
+
+	globals, err := starlark.ExecFile(&starlark.Thread{Name: "test"}, "test.star", `
+devices = serial.list()
+written = serial.write("meter", b"READ\n")
+resp = serial.request("meter", "MEASURE?\n", until="\n", timeout_ms=250, max_bytes=64)
+status = serial.status("meter")
+closed = serial.close("meter")
+`, starlark.StringDict{"serial": module})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.listReq.Kind != hardware.DeviceKindSerial || service.listReq.Site != "acme" {
+		t.Fatalf("list req = %+v, want serial/acme", service.listReq)
+	}
+	if string(service.serialWriteReq.Data) != "READ\n" {
+		t.Fatalf("write data = %q, want READ newline", string(service.serialWriteReq.Data))
+	}
+	if string(service.serialReq.Data) != "MEASURE?\n" || string(service.serialReq.Until) != "\n" {
+		t.Fatalf("request = %+v, want data and newline delimiter", service.serialReq)
+	}
+	if service.serialReq.TimeoutMillis != 250 || service.serialReq.MaxBytes != 64 {
+		t.Fatalf("request timeout/max = %d/%d, want 250/64", service.serialReq.TimeoutMillis, service.serialReq.MaxBytes)
+	}
+	resp := globals["resp"].(*starlark.Dict)
+	text, _, _ := resp.Get(starlark.String("text"))
+	if got := string(text.(starlark.String)); got != "42\n" {
+		t.Fatalf("response text = %q, want 42 newline", got)
+	}
+	written := globals["written"].(*starlark.Dict)
+	bytesValue, _, _ := written.Get(starlark.String("bytes"))
+	if got, _ := starlark.AsInt32(bytesValue); got != 5 {
+		t.Fatalf("written bytes = %d, want 5", got)
+	}
+	closed := globals["closed"].(*starlark.Dict)
+	closedValue, _, _ := closed.Get(starlark.String("closed"))
+	if closedValue != starlark.True {
+		t.Fatalf("closed = %v, want true", closedValue)
+	}
 }
 
-func (s fakeHardwareService) ListDevices(context.Context, hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error) {
+type fakeHardwareService struct {
+	devices        []hardware.DeviceInfo
+	frame          hardware.CaptureResponse
+	serialResponse hardware.SerialRequestResponse
+	status         hardware.SerialStatusResponse
+	listReq        hardware.ListDevicesRequest
+	capReq         hardware.CaptureRequest
+	serialWriteReq hardware.SerialWriteRequest
+	serialReq      hardware.SerialRequestRequest
+}
+
+func (s *fakeHardwareService) ListDevices(_ context.Context, req hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error) {
+	s.listReq = req
 	return hardware.ListDevicesResponse{Devices: s.devices}, nil
 }
 
-func (s fakeHardwareService) Capture(context.Context, hardware.CaptureRequest) (hardware.CaptureResponse, error) {
+func (s *fakeHardwareService) Capture(_ context.Context, req hardware.CaptureRequest) (hardware.CaptureResponse, error) {
+	s.capReq = req
 	return s.frame, nil
+}
+
+func (s *fakeHardwareService) WriteSerial(_ context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error) {
+	s.serialWriteReq = req
+	return hardware.SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
+}
+
+func (s *fakeHardwareService) RequestSerial(_ context.Context, req hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error) {
+	s.serialReq = req
+	if s.serialResponse.DeviceID == "" {
+		s.serialResponse = hardware.SerialRequestResponse{DeviceID: req.DeviceID, Data: []byte("42\n")}
+	}
+	return s.serialResponse, nil
+}
+
+func (s *fakeHardwareService) SerialStatus(context.Context, hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error) {
+	if s.status.DeviceID == "" {
+		s.status = hardware.SerialStatusResponse{DeviceID: "meter", Open: true, Status: "open"}
+	}
+	return s.status, nil
+}
+
+func (s *fakeHardwareService) CloseSerial(context.Context, hardware.SerialCloseRequest) (hardware.SerialCloseResponse, error) {
+	return hardware.SerialCloseResponse{DeviceID: "meter", Closed: true}, nil
 }

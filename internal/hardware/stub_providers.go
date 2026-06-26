@@ -9,10 +9,6 @@ type StubProvider struct {
 	kind string
 }
 
-func NewSerialProvider() *StubProvider {
-	return &StubProvider{kind: DeviceKindSerial}
-}
-
 func NewGPIOProvider() *StubProvider {
 	return &StubProvider{kind: DeviceKindGPIO}
 }

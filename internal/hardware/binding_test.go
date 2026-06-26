@@ -119,6 +119,84 @@ func TestBoundServiceCancelCaptureResolvesConfiguredDevicePath(t *testing.T) {
 	}
 }
 
+func TestBoundServiceResolvesSerialAliasAndPermissions(t *testing.T) {
+	upstream := &recordingService{}
+	service, err := NewBoundService(upstream, Config{
+		Devices: []DeviceDescriptor{{
+			ID:    "meter_01",
+			Kind:  DeviceKindSerial,
+			Path:  "/dev/ttyUSB0",
+			Label: "Bench meter",
+			Serial: SerialOptions{
+				BaudRate: 115200,
+				DataBits: 8,
+			},
+		}},
+		SiteDeviceBindings: []SiteDeviceBinding{{
+			Site:     "acme",
+			Alias:    "meter",
+			DeviceID: "meter_01",
+			Permissions: DevicePermissions{
+				SerialRead:  true,
+				SerialWrite: true,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeResp, err := service.WriteSerial(context.Background(), SerialWriteRequest{Site: "acme", DeviceID: "meter", Data: []byte("MEASURE?\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upstream.serialWriteReq.Path != "/dev/ttyUSB0" || upstream.serialWriteReq.DeviceID != "meter_01" {
+		t.Fatalf("upstream serial write req = %+v, want physical path/id", upstream.serialWriteReq)
+	}
+	if upstream.serialWriteReq.Options.BaudRate != 115200 {
+		t.Fatalf("baud = %d, want configured 115200", upstream.serialWriteReq.Options.BaudRate)
+	}
+	if writeResp.DeviceID != "meter" {
+		t.Fatalf("write response device id = %q, want alias", writeResp.DeviceID)
+	}
+
+	requestResp, err := service.RequestSerial(context.Background(), SerialRequestRequest{Site: "acme", DeviceID: "meter", Data: []byte("READ\n"), Until: []byte("\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestResp.DeviceID != "meter" || string(requestResp.Data) != "ok\n" {
+		t.Fatalf("request resp = %+v, want alias response", requestResp)
+	}
+
+	statusResp, err := service.SerialStatus(context.Background(), SerialStatusRequest{Site: "acme", DeviceID: "meter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statusResp.Path != "" {
+		t.Fatalf("status leaked path %q", statusResp.Path)
+	}
+}
+
+func TestBoundServiceRejectsSerialReadWithoutPermission(t *testing.T) {
+	service, err := NewBoundService(&recordingService{}, Config{
+		Devices: []DeviceDescriptor{{ID: "meter_01", Kind: DeviceKindSerial, Path: "/dev/ttyUSB0"}},
+		SiteDeviceBindings: []SiteDeviceBinding{{
+			Site:        "acme",
+			Alias:       "meter",
+			DeviceID:    "meter_01",
+			Permissions: DevicePermissions{SerialWrite: true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.RequestSerial(context.Background(), SerialRequestRequest{Site: "acme", DeviceID: "meter", Data: []byte("?")})
+	if err == nil || !strings.Contains(err.Error(), "read is not permitted") {
+		t.Fatalf("RequestSerial error = %v, want read permission denial", err)
+	}
+}
+
 func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 	t.Helper()
 	service, err := NewBoundService(upstream, Config{
@@ -159,10 +237,13 @@ func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 }
 
 type recordingService struct {
-	captureReq CaptureRequest
-	cancelReq  CancelCaptureRequest
-	frame      CaptureResponse
-	captureErr error
+	captureReq       CaptureRequest
+	cancelReq        CancelCaptureRequest
+	serialWriteReq   SerialWriteRequest
+	serialRequestReq SerialRequestRequest
+	serialStatusReq  SerialStatusRequest
+	frame            CaptureResponse
+	captureErr       error
 }
 
 func (s *recordingService) ListDevices(context.Context, ListDevicesRequest) (ListDevicesResponse, error) {
@@ -183,6 +264,25 @@ func (s *recordingService) Capture(_ context.Context, req CaptureRequest) (Captu
 func (s *recordingService) CancelCapture(_ context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
 	s.cancelReq = req
 	return CancelCaptureResponse{Cancelled: true}, nil
+}
+
+func (s *recordingService) WriteSerial(_ context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
+	s.serialWriteReq = req
+	return SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
+}
+
+func (s *recordingService) RequestSerial(_ context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
+	s.serialRequestReq = req
+	return SerialRequestResponse{DeviceID: req.DeviceID, Data: []byte("ok\n")}, nil
+}
+
+func (s *recordingService) SerialStatus(_ context.Context, req SerialStatusRequest) (SerialStatusResponse, error) {
+	s.serialStatusReq = req
+	return SerialStatusResponse{DeviceID: req.DeviceID, Path: req.Path, Status: serialStatusOpen, Open: true}, nil
+}
+
+func (s *recordingService) CloseSerial(context.Context, SerialCloseRequest) (SerialCloseResponse, error) {
+	return SerialCloseResponse{Closed: true}, nil
 }
 
 func (s *recordingService) Close() error {

@@ -417,6 +417,22 @@ func (s *recordingHardwareService) CancelCapture(_ context.Context, req hardware
 	return s.cancelResp, nil
 }
 
+func (s *recordingHardwareService) WriteSerial(context.Context, hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error) {
+	return hardware.SerialWriteResponse{}, nil
+}
+
+func (s *recordingHardwareService) RequestSerial(context.Context, hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error) {
+	return hardware.SerialRequestResponse{}, nil
+}
+
+func (s *recordingHardwareService) SerialStatus(context.Context, hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error) {
+	return hardware.SerialStatusResponse{}, nil
+}
+
+func (s *recordingHardwareService) CloseSerial(context.Context, hardware.SerialCloseRequest) (hardware.SerialCloseResponse, error) {
+	return hardware.SerialCloseResponse{}, nil
+}
+
 func (s *recordingHardwareService) Close() error {
 	return nil
 }

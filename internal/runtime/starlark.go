@@ -113,6 +113,7 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 	out["secret"] = modules.NewSecretModule(ctx, bundle.Site, e.secrets)
 	if e.hardware != nil {
 		out["camera"] = modules.NewCameraModule(ctx, bundle.Site, e.hardware)
+		out["serial"] = modules.NewSerialModule(ctx, bundle.Site, e.hardware)
 	}
 	if route.FilesystemEnabled {
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
