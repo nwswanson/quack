@@ -124,7 +124,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 	if policyRec.Code != http.StatusOK {
 		t.Fatalf("policy status = %d, want %d; body=%s", policyRec.Code, http.StatusOK, policyRec.Body.String())
 	}
-	if !strings.Contains(policyRec.Body.String(), "Policies") || !strings.Contains(policyRec.Body.String(), "Dynamic HTTP routes policy") {
+	if !strings.Contains(policyRec.Body.String(), "Policies") || !strings.Contains(policyRec.Body.String(), "Starlark HTTP Routes") {
 		t.Fatalf("body = %q, want policy page", policyRec.Body.String())
 	}
 

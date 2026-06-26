@@ -490,17 +490,17 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	runtimeHTTPPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPFeature, "runtime_http_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Dynamic HTTP routes policy must be allow or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Starlark HTTP Routes must be allow or deny.")
 		return
 	}
 	runtimeHTTPClientPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPClientFeature, "runtime_http_client_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Outbound HTTP policy must be allow or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Starlark HTTP Module must be allow or deny.")
 		return
 	}
 	runtimeWebSocketPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeWebSocketFeature, "runtime_websocket_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Dynamic WebSocket routes policy must be allow or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Starlark WebSocket routes must be allow or deny.")
 		return
 	}
 	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeHTTPClientPolicy, runtimeWebSocketPolicy} {
