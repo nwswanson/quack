@@ -11,6 +11,7 @@ import (
 	"quack/internal/domain"
 	"quack/internal/hardware"
 	"quack/internal/releases"
+	appsettings "quack/internal/settings"
 )
 
 func TestSameOriginAdminRequest(t *testing.T) {
@@ -38,6 +39,49 @@ func TestAdminSessionCookieSecureBehindProxy(t *testing.T) {
 	}
 	if !cookie.Secure {
 		t.Fatal("cookie should be secure behind https proxy")
+	}
+}
+
+func TestPolicyFromFormRejectsInherit(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(url.Values{
+		"database_policy_mode": {"inherit"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := policyFromForm(req, appsettings.SettingDatabaseFeature, "database_policy", 1); ok {
+		t.Fatal("policyFromForm accepted inherit")
+	}
+}
+
+func TestPolicyFromFormRequiresExplicitMode(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(url.Values{}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := policyFromForm(req, appsettings.SettingDatabaseFeature, "database_policy", 1); ok {
+		t.Fatal("policyFromForm accepted missing mode")
+	}
+}
+
+func TestPolicyFromFormAcceptsAllowAndDeny(t *testing.T) {
+	for _, mode := range []string{"allow", "deny"} {
+		req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(url.Values{
+			"database_policy_mode":   {mode},
+			"database_policy_reason": {"because"},
+		}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		policy, ok := policyFromForm(req, appsettings.SettingDatabaseFeature, "database_policy", 1)
+		if !ok || policy.Mode != mode || policy.Reason != "because" {
+			t.Fatalf("policyFromForm(%q) = %+v ok=%v, want mode and reason", mode, policy, ok)
+		}
 	}
 }
 

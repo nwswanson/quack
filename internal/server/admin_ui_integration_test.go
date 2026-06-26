@@ -225,7 +225,7 @@ func TestAdminPolicyUpdateSavesDatabaseAndRuntimeHTTPPolicies(t *testing.T) {
 	}
 	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
 
-	form := "database_policy_mode=deny&database_policy_reason=db+off&runtime_http_policy_mode=allow&runtime_http_policy_reason=runtime+ok"
+	form := "database_policy_mode=deny&database_policy_reason=db+off&runtime_http_policy_mode=allow&runtime_http_policy_reason=runtime+ok&runtime_http_client_policy_mode=deny&runtime_websocket_policy_mode=deny"
 	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(form))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

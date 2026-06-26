@@ -584,7 +584,6 @@
             <label>
               Database feature policy
               <select name="database_policy_mode">
-                <option value="inherit" {{if eq .DatabasePolicy.Mode "inherit"}}selected{{end}}>inherit</option>
                 <option value="allow" {{if eq .DatabasePolicy.Mode "allow"}}selected{{end}}>allow</option>
                 <option value="deny" {{if eq .DatabasePolicy.Mode "deny"}}selected{{end}}>deny</option>
               </select>
@@ -596,7 +595,6 @@
             <label>
               Dynamic HTTP routes policy
               <select name="runtime_http_policy_mode">
-                <option value="inherit" {{if eq .RuntimeHTTPPolicy.Mode "inherit"}}selected{{end}}>inherit</option>
                 <option value="allow" {{if eq .RuntimeHTTPPolicy.Mode "allow"}}selected{{end}}>allow</option>
                 <option value="deny" {{if eq .RuntimeHTTPPolicy.Mode "deny"}}selected{{end}}>deny</option>
               </select>
@@ -608,7 +606,6 @@
             <label>
               Outbound HTTP policy
               <select name="runtime_http_client_policy_mode">
-                <option value="inherit" {{if eq .RuntimeHTTPClientPolicy.Mode "inherit"}}selected{{end}}>inherit</option>
                 <option value="allow" {{if eq .RuntimeHTTPClientPolicy.Mode "allow"}}selected{{end}}>allow</option>
                 <option value="deny" {{if eq .RuntimeHTTPClientPolicy.Mode "deny"}}selected{{end}}>deny</option>
               </select>
@@ -620,7 +617,6 @@
             <label>
               Dynamic WebSocket routes policy
               <select name="runtime_websocket_policy_mode">
-                <option value="inherit" {{if eq .RuntimeWebSocketPolicy.Mode "inherit"}}selected{{end}}>inherit</option>
                 <option value="allow" {{if eq .RuntimeWebSocketPolicy.Mode "allow"}}selected{{end}}>allow</option>
                 <option value="deny" {{if eq .RuntimeWebSocketPolicy.Mode "deny"}}selected{{end}}>deny</option>
               </select>

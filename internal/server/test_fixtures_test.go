@@ -411,17 +411,11 @@ func (db *fakeDatabase) SavePolicy(ctx context.Context, policy domain.PolicyReco
 	}
 	for i := range db.policies {
 		if db.policies[i].ScopeType == policy.ScopeType && db.policies[i].ScopeID == policy.ScopeID && db.policies[i].Key == policy.Key {
-			if policy.Mode == "inherit" {
-				db.policies = append(db.policies[:i], db.policies[i+1:]...)
-				return nil
-			}
 			db.policies[i] = policy
 			return nil
 		}
 	}
-	if policy.Mode != "inherit" {
-		db.policies = append(db.policies, policy)
-	}
+	db.policies = append(db.policies, policy)
 	return nil
 }
 

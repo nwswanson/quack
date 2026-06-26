@@ -1271,7 +1271,6 @@ Camera hardware
 Each policy can be set to:
 
 ```text
-inherit
 allow
 deny
 ```

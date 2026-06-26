@@ -340,7 +340,7 @@ func (s siteReadService) systemPolicy(ctx context.Context, key string) (domain.P
 	if err != nil {
 		return domain.PolicyRecord{}, err
 	}
-	policy := domain.PolicyRecord{ScopeType: domain.ScopeSystem, Key: key, Mode: "inherit"}
+	policy := domain.PolicyRecord{ScopeType: domain.ScopeSystem, Key: key, Mode: defaultPolicyMode(key)}
 	for _, p := range policies {
 		if p.Key == key {
 			policy = p
@@ -348,6 +348,13 @@ func (s siteReadService) systemPolicy(ctx context.Context, key string) (domain.P
 		}
 	}
 	return policy, nil
+}
+
+func defaultPolicyMode(key string) string {
+	if appsettings.ParseBool(appsettings.Default(key)) {
+		return "allow"
+	}
+	return "deny"
 }
 
 func servingDecisionFromViolations(violations []domain.PolicyViolation) domain.SiteServingDecision {

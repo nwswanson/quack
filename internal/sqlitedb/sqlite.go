@@ -309,6 +309,9 @@ func (d *Database) init(ctx context.Context) error {
 	if _, err := d.writeDB.ExecContext(ctx, `UPDATE sites SET next_version = current_version + 1 WHERE next_version <= current_version`); err != nil {
 		return fmt.Errorf("repair sqlite version counter: %w", err)
 	}
+	if _, err := d.writeDB.ExecContext(ctx, `DELETE FROM policies WHERE mode = 'inherit'`); err != nil {
+		return fmt.Errorf("remove inherited policy rows: %w", err)
+	}
 	return nil
 }
 
@@ -1372,26 +1375,17 @@ func (d *Database) SavePolicy(ctx context.Context, policy domain.PolicyRecord) e
 	if policy.ScopeType == "" {
 		policy.ScopeType = domain.ScopeSystem
 	}
-	if policy.Mode == "" {
-		policy.Mode = "inherit"
-	}
 	if policy.Key == "" {
 		return fmt.Errorf("policy key is required")
 	}
 	switch policy.Mode {
-	case "inherit", "allow", "deny", "force_on", "force_off", "cap", "allow_list", "force_value":
+	case "allow", "deny", "force_on", "force_off", "cap", "allow_list", "force_value":
 	default:
 		return fmt.Errorf("unsupported policy mode: %s", policy.Mode)
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
-	if policy.Mode == "inherit" {
-		if _, err := d.writeDB.ExecContext(ctx, `DELETE FROM policies WHERE scope_type = ? AND scope_id = ? AND key = ?`, string(policy.ScopeType), policy.ScopeID, policy.Key); err != nil {
-			return fmt.Errorf("delete inherited policy: %w", err)
-		}
-		return nil
-	}
 	if _, err := d.writeDB.ExecContext(ctx, `
 		INSERT INTO policies (scope_type, scope_id, key, mode, value, reason, updated_by_user_id, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, 0), CURRENT_TIMESTAMP)

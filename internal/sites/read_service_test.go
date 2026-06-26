@@ -450,15 +450,15 @@ func TestSiteReadServiceSystemDatabasePolicy(t *testing.T) {
 	}
 }
 
-func TestSiteReadServiceSystemDatabasePolicyDefaultsToInherit(t *testing.T) {
+func TestSiteReadServiceSystemDatabasePolicyDefaultsToDeny(t *testing.T) {
 	read := NewSiteReadService(&siteReadServiceDatabase{})
 
 	policy, err := read.SystemDatabasePolicy(context.Background())
 	if err != nil {
 		t.Fatalf("SystemDatabasePolicy error = %v", err)
 	}
-	if policy.ScopeType != domain.ScopeSystem || policy.Key != appsettings.SettingDatabaseFeature || policy.Mode != "inherit" {
-		t.Fatalf("SystemDatabasePolicy = %+v, want inherit default", policy)
+	if policy.ScopeType != domain.ScopeSystem || policy.Key != appsettings.SettingDatabaseFeature || policy.Mode != "deny" {
+		t.Fatalf("SystemDatabasePolicy = %+v, want deny default", policy)
 	}
 }
 
@@ -482,15 +482,26 @@ func TestSiteReadServiceSystemRuntimeHTTPPolicy(t *testing.T) {
 	}
 }
 
-func TestSiteReadServiceSystemRuntimeHTTPPolicyDefaultsToInherit(t *testing.T) {
+func TestSiteReadServiceSystemRuntimeHTTPPolicyDefaultsToDeny(t *testing.T) {
 	read := NewSiteReadService(&siteReadServiceDatabase{})
 
 	policy, err := read.SystemRuntimeHTTPPolicy(context.Background())
 	if err != nil {
 		t.Fatalf("SystemRuntimeHTTPPolicy error = %v", err)
 	}
-	if policy.ScopeType != domain.ScopeSystem || policy.Key != appsettings.SettingRuntimeHTTPFeature || policy.Mode != "inherit" {
-		t.Fatalf("SystemRuntimeHTTPPolicy = %+v, want inherit default", policy)
+	if policy.ScopeType != domain.ScopeSystem || policy.Key != appsettings.SettingRuntimeHTTPFeature || policy.Mode != "deny" {
+		t.Fatalf("SystemRuntimeHTTPPolicy = %+v, want deny default", policy)
+	}
+}
+
+func TestSiteReadServiceSystemHardwareCameraPolicyDefaultsToAllow(t *testing.T) {
+	policy := domain.PolicyRecord{
+		ScopeType: domain.ScopeSystem,
+		Key:       appsettings.SettingHardwareCameraFeature,
+		Mode:      defaultPolicyMode(appsettings.SettingHardwareCameraFeature),
+	}
+	if policy.Mode != "allow" {
+		t.Fatalf("hardware camera policy = %+v, want allow default", policy)
 	}
 }
 

@@ -244,6 +244,24 @@ func TestRuntimeRoutesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSavePolicyRejectsInherit(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	err = db.SavePolicy(ctx, domain.PolicyRecord{
+		ScopeType: domain.ScopeSystem,
+		Key:       appsettings.SettingDatabaseFeature,
+		Mode:      "inherit",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported policy mode: inherit") {
+		t.Fatalf("SavePolicy error = %v, want unsupported inherit mode", err)
+	}
+}
+
 func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))

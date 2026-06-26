@@ -485,22 +485,22 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	databasePolicy, ok := policyFromForm(r, appsettings.SettingDatabaseFeature, "database_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Database policy must be inherit, allow, or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Database policy must be allow or deny.")
 		return
 	}
 	runtimeHTTPPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPFeature, "runtime_http_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Dynamic HTTP routes policy must be inherit, allow, or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Dynamic HTTP routes policy must be allow or deny.")
 		return
 	}
 	runtimeHTTPClientPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeHTTPClientFeature, "runtime_http_client_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Outbound HTTP policy must be inherit, allow, or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Outbound HTTP policy must be allow or deny.")
 		return
 	}
 	runtimeWebSocketPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeWebSocketFeature, "runtime_websocket_policy", user.ID)
 	if !ok {
-		redirectAdminMessage(w, r, "/policy", "error", "Dynamic WebSocket routes policy must be inherit, allow, or deny.")
+		redirectAdminMessage(w, r, "/policy", "error", "Dynamic WebSocket routes policy must be allow or deny.")
 		return
 	}
 	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeHTTPClientPolicy, runtimeWebSocketPolicy} {
@@ -794,11 +794,8 @@ func (h Handler) handleAdminLogsPage(w http.ResponseWriter, r *http.Request) {
 
 func policyFromForm(r *http.Request, key string, prefix string, userID int64) (domain.PolicyRecord, bool) {
 	mode := strings.TrimSpace(r.Form.Get(prefix + "_mode"))
-	if mode == "" {
-		mode = "inherit"
-	}
 	switch mode {
-	case "inherit", "allow", "deny":
+	case "allow", "deny":
 	default:
 		return domain.PolicyRecord{}, false
 	}
