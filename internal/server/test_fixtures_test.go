@@ -536,6 +536,9 @@ func (db *fakeDatabase) ListRuntimeAPIProxies(ctx context.Context, siteSHA strin
 func (db *fakeDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.RouteMetadata, error) {
 	var out []appruntime.RouteMetadata
 	for _, site := range db.sites {
+		if !siteIsLive(site.LiveState) {
+			continue
+		}
 		routes, _ := db.ListRuntimeRoutes(ctx, site.SiteSHA, site.CurrentVersion)
 		for _, route := range routes {
 			route.Site = site.Site
@@ -550,10 +553,17 @@ func (db *fakeDatabase) ListCurrentRuntimeRoutes(ctx context.Context) ([]apprunt
 func (db *fakeDatabase) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
 	var out []domain.CurrentSiteManifest
 	for _, site := range db.sites {
+		if !siteIsLive(site.LiveState) {
+			continue
+		}
 		settings, _ := db.LoadUploadSettings(ctx, site.SiteSHA, site.CurrentVersion)
 		out = append(out, domain.CurrentSiteManifest{Site: site.Site, SiteSHA: site.SiteSHA, Version: site.CurrentVersion, Settings: settings})
 	}
 	return out, nil
+}
+
+func siteIsLive(liveState string) bool {
+	return liveState == "" || liveState == "live"
 }
 
 func (db *fakeDatabase) ListPolicyViolations(ctx context.Context, siteSHA string, version int64) ([]domain.PolicyViolation, error) {

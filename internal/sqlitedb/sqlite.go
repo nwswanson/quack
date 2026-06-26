@@ -1861,7 +1861,7 @@ func (d *Database) ListCurrentSiteManifests(ctx context.Context) ([]domain.Curre
 	rows, err := d.readDB.QueryContext(ctx, `
 		SELECT site, site_sha, current_version
 		FROM sites
-		WHERE current_version > 0
+		WHERE current_version > 0 AND live_state = 'live'
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("list current sites: %w", err)

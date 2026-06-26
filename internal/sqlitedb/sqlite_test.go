@@ -687,6 +687,13 @@ func TestPublishStateControlsServing(t *testing.T) {
 	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || ok {
 		t.Fatalf("FindCurrentFile after unpublish = (_, %v, %v), want no file", ok, err)
 	}
+	manifests, err := db.ListCurrentSiteManifests(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 0 {
+		t.Fatalf("ListCurrentSiteManifests after unpublish = %#v, want none", manifests)
+	}
 	sites, err := db.ListPublishedSites(ctx, alice.User.ID, false)
 	if err != nil {
 		t.Fatal(err)
@@ -706,6 +713,13 @@ func TestPublishStateControlsServing(t *testing.T) {
 	}
 	if _, ok, err := db.FindCurrentFile(ctx, "example", "index.html"); err != nil || !ok {
 		t.Fatalf("FindCurrentFile after publish = (_, %v, %v), want file", ok, err)
+	}
+	manifests, err = db.ListCurrentSiteManifests(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || manifests[0].Site != "example" || manifests[0].Version != 1 {
+		t.Fatalf("ListCurrentSiteManifests after publish = %#v, want example v1", manifests)
 	}
 	if _, err := db.UnpublishSite(ctx, alice.User, "example", "site-sha"); err != nil {
 		t.Fatal(err)
