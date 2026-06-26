@@ -70,7 +70,12 @@ still exists and follows the same interface, but is not wired by default.
 ## Host To Site
 
 The public mux sends every public path to `publichttp.Handler.handlePublicRequest`.
-The first routing step is `sites.NameFromHost(r.Host)`.
+In production, the first routing step is the settings-backed host resolver. It
+normalizes `r.Host`, checks it against the configured `allowed_hosts` setting,
+and rejects unconfigured hosts with `421 Misdirected Request`. An empty
+`allowed_hosts` setting fails closed.
+
+After a host is allowed, `sites.NameFromHost(r.Host)` derives the site name.
 
 `NameFromHost` does this:
 
@@ -99,6 +104,11 @@ Important consequence: routing is host-centric. The path does not normally
 contain the site name. `/serve/...` is not a public escape hatch for picking a
 site; on the public surface it is just another path for whatever site the host
 resolved to.
+
+Only configure host patterns for trusted tenant domains, such as
+`*.example.com` or exact custom hostnames. Do not point a permissive proxy at the
+public listener without a matching `allowed_hosts` suffix, because arbitrary
+hostnames must not be allowed to choose a site by first DNS label.
 
 ## Upload-Time Manifest Parsing
 

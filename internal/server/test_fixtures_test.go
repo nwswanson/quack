@@ -391,6 +391,19 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSet
 	return db.settings, nil
 }
 
+func testServerSettings(allowedHosts ...string) domain.ServerSettings {
+	return domain.ServerSettings{
+		MaxUploadBytes:           DefaultMaxUploadBytes,
+		MaxUploadFiles:           DefaultMaxUploadFiles,
+		MaxRuntimeDurationMillis: appsettings.DefaultRuntimeMaxDurationMillis,
+		HTTPCacheMode:            "revalidate",
+		HTTPCacheMaxAgeSeconds:   3600,
+		LogBufferCount:           appsettings.DefaultLogBufferCount,
+		LogLevel:                 "warn",
+		AllowedHosts:             append([]string(nil), allowedHosts...),
+	}
+}
+
 func (db *fakeDatabase) SaveServerSettings(ctx context.Context, settings domain.ServerSettings) error {
 	db.settings = settings
 	return nil

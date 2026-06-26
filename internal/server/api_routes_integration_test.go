@@ -64,7 +64,7 @@ func TestLogsEndpointIncludesPublicSiteAccess(t *testing.T) {
 		usersByToken: map[string]domain.AdminUser{
 			"admin-token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
 		},
-		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn", LogBufferCount: 20},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn", LogBufferCount: 20, AllowedHosts: []string{"*.example.com"}},
 	}
 	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 

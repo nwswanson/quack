@@ -162,6 +162,7 @@ func TestPublicSurfaceServesSiteRoot(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "index", "site index")
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
@@ -180,5 +181,27 @@ func TestPublicSurfaceServesSiteRoot(t *testing.T) {
 	}
 	if rec.Body.String() != "site index" {
 		t.Fatalf("body = %q, want site index", rec.Body.String())
+	}
+}
+
+func TestPublicSurfaceRejectsUnconfiguredHost(t *testing.T) {
+	root := t.TempDir()
+	writeTestBlob(t, root, "index", "site index")
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		files: map[string]domain.UploadFileRecord{
+			fileKey("foo", "index.html"): {
+				RelativePath: "index.html",
+				BlobPath:     "index",
+			},
+		},
+	}, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "foo.example.com"
+	rec := httptest.NewRecorder()
+	srv.Public.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusMisdirectedRequest, rec.Body.String())
 	}
 }

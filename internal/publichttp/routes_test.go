@@ -119,6 +119,27 @@ func TestHandlerBlocksConfiguredHostMismatchBeforeStaticServing(t *testing.T) {
 	}
 }
 
+func TestHandlerBlocksEmptyAllowedHostsBeforeStaticServing(t *testing.T) {
+	static := &recordingStaticHandler{}
+	h := New(static, WithHostResolver(sites.SettingsHostResolver{Settings: fakeSettingsReader{
+		settings: domain.ServerSettings{AllowedHosts: nil},
+	}}))
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "mysite.example.com"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusMisdirectedRequest, rec.Body.String())
+	}
+	if static.called {
+		t.Fatal("static handler called for unconfigured host")
+	}
+}
+
 func TestHandlerAllowsConfiguredWildcardHost(t *testing.T) {
 	static := &recordingStaticHandler{}
 	h := New(static, WithHostResolver(sites.SettingsHostResolver{Settings: fakeSettingsReader{

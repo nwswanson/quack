@@ -16,6 +16,7 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	writeTestBlob(t, root, "file-js", "file js")
 
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
@@ -85,6 +86,7 @@ func TestConfiguredStaticRootServesSubtreeAsURLRoot(t *testing.T) {
 	writeTestBlob(t, root, "public-docs", "public docs")
 
 	db := &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
@@ -168,6 +170,7 @@ func TestStaticRouteRootServesSubtreeAsURLRoot(t *testing.T) {
 	writeTestBlob(t, root, "public-asset", "public asset")
 
 	db := &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
@@ -256,6 +259,7 @@ func TestStaticRouteFileServesExactArchiveFile(t *testing.T) {
 	writeTestBlob(t, root, "fallback-details", "fallback details")
 
 	db := &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "public/index.html"): {
 				RelativePath: "public/index.html",
@@ -315,6 +319,7 @@ func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	writeTestBlob(t, root, "site-index", "site index")
 
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		settings: testServerSettings("www.nathanielswanson.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("nathanielswanson", "index.html"): {
 				RelativePath: "index.html",
@@ -340,7 +345,7 @@ func TestDefaultSiteFallbackForUnknownSite(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "default-index", "default index")
 	db := &fakeDatabase{
-		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn", AllowedHosts: []string{"*.example.com"}},
 		files: map[string]domain.UploadFileRecord{
 			fileKey("home", "index.html"): {
 				RelativePath: "index.html",
@@ -368,7 +373,7 @@ func TestDefaultSiteDoesNotHandleMissingPathForExistingSite(t *testing.T) {
 	writeTestBlob(t, root, "default-file", "default file")
 	writeTestBlob(t, root, "foo-index", "foo index")
 	db := &fakeDatabase{
-		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn"},
+		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, DefaultSite: "home", LogLevel: "warn", AllowedHosts: []string{"*.example.com"}},
 		files: map[string]domain.UploadFileRecord{
 			fileKey("home", "missing.html"): {
 				RelativePath: "missing.html",
@@ -397,6 +402,7 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 	writeTestBlob(t, root, "blog-index", "blog index")
 
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
@@ -419,6 +425,7 @@ func TestSiteHostRootStillServesSite(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "index", "site index")
 	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
@@ -453,6 +460,7 @@ def handle(req):
 `)
 	writeTestBlob(t, root, "index", "static index")
 	db := &fakeDatabase{
+		settings: testServerSettings("*.example.com"),
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {RelativePath: "index.html", BlobPath: "index"},
 		},

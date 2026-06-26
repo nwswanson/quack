@@ -143,6 +143,8 @@ The site is then served from the public listener using the request hostname. For
 mysite.example.com -> site name "mysite"
 ```
 
+Configure `allowed_hosts` before exposing the public listener. Public host routing fails closed by default, and only configured hosts such as `*.example.com` or exact hostnames are eligible to map to a site.
+
 The important deployment detail is that the CLI talks to the admin/control port, while browsers normally talk to the public port.
 
 ## CLI
@@ -2140,6 +2142,8 @@ With that setup:
 foo.example.com -> site foo
 bar.example.com -> site bar
 ```
+
+Set the server `allowed_hosts` setting to the same trusted tenant suffix, for example `*.example.com`. Requests for hosts outside that list are rejected with `421 Misdirected Request` instead of being interpreted as site names.
 
 ## Roadmap
 

@@ -29,12 +29,12 @@ func TestHostAllowed(t *testing.T) {
 		allowed []string
 		want    bool
 	}{
-		"empty list allows existing behavior": {host: "foo.badhost.com", want: true},
-		"exact match":                         {host: "example.com", allowed: []string{"example.com"}, want: true},
-		"wildcard subdomain":                  {host: "mysite.goodhost.com", allowed: []string{"*.goodhost.com"}, want: true},
-		"wildcard parent rejected":            {host: "goodhost.com", allowed: []string{"*.goodhost.com"}, want: false},
-		"wrong parent rejected":               {host: "mysite.badhost.com", allowed: []string{"*.goodhost.com"}, want: false},
-		"port normalized":                     {host: "MYSITE.GOODHOST.COM:443", allowed: []string{"*.goodhost.com"}, want: true},
+		"empty list blocks by default": {host: "foo.badhost.com", want: false},
+		"exact match":                  {host: "example.com", allowed: []string{"example.com"}, want: true},
+		"wildcard subdomain":           {host: "mysite.goodhost.com", allowed: []string{"*.goodhost.com"}, want: true},
+		"wildcard parent rejected":     {host: "goodhost.com", allowed: []string{"*.goodhost.com"}, want: false},
+		"wrong parent rejected":        {host: "mysite.badhost.com", allowed: []string{"*.goodhost.com"}, want: false},
+		"port normalized":              {host: "MYSITE.GOODHOST.COM:443", allowed: []string{"*.goodhost.com"}, want: true},
 	}
 
 	for name, tc := range tests {

@@ -76,7 +76,7 @@ func NormalizeHost(host string) string {
 func HostAllowed(host string, allowedHosts []string) bool {
 	host = NormalizeHost(host)
 	if host == "" || len(allowedHosts) == 0 {
-		return len(allowedHosts) == 0
+		return false
 	}
 	for _, allowed := range allowedHosts {
 		allowed = strings.Trim(strings.ToLower(strings.TrimSpace(allowed)), ".")
