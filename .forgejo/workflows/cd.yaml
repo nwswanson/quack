@@ -36,4 +36,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build, push, bump GitOps
-        uses: https://forge.nathanielswanson.com/nate/ci-templates/actions/build-push-bump@main
+        uses: https://forge.nathanielswanson.com/nate/ci-templates/actions/build-push-bump@build-push-bump-v2
