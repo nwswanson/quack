@@ -10,7 +10,12 @@ import (
 )
 
 func TestAdminSurfaceServesAPIAndUI(t *testing.T) {
-	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	apiReq := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
 	apiReq.Header.Set("Authorization", "Bearer token")
@@ -41,7 +46,7 @@ func TestAdminSurfaceServesPrometheusMetrics(t *testing.T) {
 			{Site: "alpha", SiteSHA: "sha-alpha", VersionCount: 2, FileCount: 3, ByteCount: 123, LiveState: "live"},
 		},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	rootRec := httptest.NewRecorder()
@@ -74,7 +79,7 @@ func TestAdminSurfaceServesPrometheusMetrics(t *testing.T) {
 }
 
 func TestServerAddressDefaultsAndOverrides(t *testing.T) {
-	defaults := New("", "", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	defaults := New("", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 	if defaults.Admin.Addr != ":8081" {
 		t.Fatalf("default admin addr = %q, want :8081", defaults.Admin.Addr)
 	}
@@ -82,7 +87,7 @@ func TestServerAddressDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("default public addr = %q, want :8080", defaults.Public.Addr)
 	}
 
-	overrides := New(":9000", ":9001", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	overrides := New(":9000", ":9001", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 	if overrides.Admin.Addr != ":9000" {
 		t.Fatalf("override admin addr = %q, want :9000", overrides.Admin.Addr)
 	}
@@ -92,7 +97,7 @@ func TestServerAddressDefaultsAndOverrides(t *testing.T) {
 }
 
 func TestPublicSurfaceDoesNotServeAPI(t *testing.T) {
-	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	srv := New("", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 
 	tests := map[string]struct {
 		method string
@@ -123,7 +128,12 @@ func TestPublicSurfaceDoesNotServeAPI(t *testing.T) {
 }
 
 func TestAdminControlRoutesDoNotDependOnPublicHostRouting(t *testing.T) {
-	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	tests := map[string]struct {
 		method string
@@ -151,7 +161,7 @@ func TestAdminControlRoutesDoNotDependOnPublicHostRouting(t *testing.T) {
 func TestPublicSurfaceServesSiteRoot(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "index", "site index")
-	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",

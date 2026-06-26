@@ -16,7 +16,7 @@ import (
 )
 
 func TestAdminRootShowsLoginPlaceholder(t *testing.T) {
-	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	srv := New("", "", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "quack.example.com"
@@ -49,7 +49,7 @@ func TestAdminLoginAndLogout(t *testing.T) {
 		settings: domain.ServerSettings{DefaultSite: "alpha", LogLevel: "warn"},
 		sessions: map[string]domain.AdminUser{},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	loginBody := strings.NewReader("username=admin&password=secret")
 	loginReq := httptest.NewRequest(http.MethodPost, "/login", loginBody)
@@ -153,7 +153,7 @@ func TestAdminSiteActions(t *testing.T) {
 		rollback:        domain.RollbackRecord{RolledBack: true, PreviousVersion: 3},
 		rollbackVersion: 0,
 	}
-	srv := New("", "", "token", fakeStorage{deletedSites: &deletedSites}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{deletedSites: &deletedSites}, db, DefaultOptions())
 
 	postAction := func(form string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/sites/action", strings.NewReader(form))
@@ -200,7 +200,7 @@ func TestAdminRollbackToCurrentVersionIsNoop(t *testing.T) {
 		sites:     []domain.PublishedSite{{Site: "alpha", CurrentVersion: 2}},
 		rollback:  domain.RollbackRecord{RolledBack: true, PreviousVersion: 3},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/sites/action", strings.NewReader("site=alpha&action=rollback&version=2"))
 	req.Host = "quack.example.com"
@@ -223,7 +223,7 @@ func TestAdminPolicyUpdateSavesDatabaseAndRuntimeHTTPPolicies(t *testing.T) {
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	form := "database_policy_mode=deny&database_policy_reason=db+off&runtime_http_policy_mode=allow&runtime_http_policy_reason=runtime+ok&runtime_http_client_policy_mode=deny&runtime_websocket_policy_mode=deny"
 	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(form))
@@ -254,7 +254,7 @@ func TestAdminCreateUserShowsGeneratedCredentials(t *testing.T) {
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
 	req.Host = "quack.example.com"
@@ -285,7 +285,7 @@ func TestAdminPostRejectsSiblingOrigin(t *testing.T) {
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader("username=alice&admin_priv=user"))
 	req.Host = "quack.example.com"
@@ -308,7 +308,7 @@ func TestAdminPostRejectsMissingOrigin(t *testing.T) {
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12"))
 	req.Host = "quack.example.com"
@@ -334,7 +334,7 @@ func TestAdminHardwareUnstuckCancelsConfiguredCapture(t *testing.T) {
 		}},
 	}
 	hw := &recordingHardwareService{cancelResp: hardware.CancelCaptureResponse{Cancelled: true}}
-	srv := New("", "", "token", fakeStorage{}, db, Options{HardwareService: hw})
+	srv := New("", "", fakeStorage{}, db, Options{HardwareService: hw})
 
 	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader("action=unstuck&id=cam_01"))
 	req.Host = "quack.example.com"
@@ -360,7 +360,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12&max_runtime_duration_millis=2500&http_cache_mode=anti_cache&http_cache_max_age_seconds=14400"))
 	req.Host = "quack.example.com"
@@ -434,7 +434,7 @@ func TestAdminSettingsUpdateAppliesLogLevelImmediately(t *testing.T) {
 		sessions:  map[string]domain.AdminUser{"session": {ID: 42, Username: "admin", AdminPriv: "admin:*"}},
 		settings:  domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	update := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=536870912&max_upload_files=10000&log_level=debug"))
 	update.Host = "quack.example.com"
@@ -465,7 +465,7 @@ func TestAdminLoginRejectsInvalidPassword(t *testing.T) {
 		adminUser: domain.AdminUser{ID: 42, Username: "admin", AdminPriv: "admin:*"},
 		sessions:  map[string]domain.AdminUser{},
 	}
-	srv := New("", "", "token", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=bad"))
 	req.Host = "quack.example.com"

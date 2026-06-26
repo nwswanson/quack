@@ -33,8 +33,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-database is required")
 		os.Exit(1)
 	}
-	uploadToken := os.Getenv("UPLOAD_TOKEN")
-
 	adminAddr := os.Getenv("ADMIN_ADDR")
 	if adminAddr == "" {
 		adminAddr = ":8081"
@@ -113,7 +111,7 @@ func main() {
 		opts.HardwareService = boundHardwareService
 	}
 
-	servers := server.New(adminAddr, publicAddr, uploadToken, store, db, opts)
+	servers := server.New(adminAddr, publicAddr, store, db, opts)
 	slog.Warn("starting quack server",
 		"admin_addr", adminAddr,
 		"public_addr", publicAddr,
@@ -125,7 +123,6 @@ func main() {
 		"max_retained_versions", settings.MaxRetainedVersions,
 		"default_site", settings.DefaultSite,
 		"log_level", settings.LogLevel,
-		"legacy_upload_token_enabled", uploadToken != "",
 		"allow_unauthenticated", *allowUnauthenticated,
 		"runtime_http_client_allow_self", *runtimeHTTPClientAllowSelf,
 		"hardware_plugin_enabled", *hardwarePluginPath != "",

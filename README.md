@@ -1176,7 +1176,6 @@ Environment variables:
 ```text
 PUBLIC_ADDR   public listener, default :8080
 ADMIN_ADDR    admin listener, default :8081
-UPLOAD_TOKEN  legacy upload token
 ```
 
 If `-memory-dir` is omitted, Quack stores memory snapshots beside the database under a `memory` directory.

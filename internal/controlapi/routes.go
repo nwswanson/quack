@@ -28,7 +28,6 @@ type UserRepository interface {
 }
 
 type Handler struct {
-	token                string
 	allowUnauthenticated bool
 
 	store      appstorage.Storage
@@ -42,7 +41,6 @@ type Handler struct {
 }
 
 type Options struct {
-	Token                string
 	AllowUnauthenticated bool
 	Store                appstorage.Storage
 	Publishing           publishing.Service
@@ -56,7 +54,6 @@ type Options struct {
 
 func New(opts Options) Handler {
 	return Handler{
-		token:                opts.Token,
 		allowUnauthenticated: opts.AllowUnauthenticated,
 		store:                opts.Store,
 		publishing:           opts.Publishing,
@@ -176,6 +173,8 @@ func (h Handler) writeUploadError(w http.ResponseWriter, err error) {
 		protocol.WriteError(w, http.StatusBadRequest, badRequest.Error())
 	case errors.As(err, &forbidden):
 		protocol.WriteError(w, http.StatusForbidden, forbidden.Error())
+	case errors.Is(err, domain.ErrAuthenticatedUserRequired):
+		protocol.WriteError(w, http.StatusUnauthorized, "authenticated user is required")
 	case errors.Is(err, domain.ErrSiteOwnership):
 		protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
 	default:
@@ -268,8 +267,7 @@ func (h Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSON(w, http.StatusOK, protocol.LogsResponse{OK: true})
 		return
 	}
-	legacyAdmin := h.requestUsesLegacyToken(r)
-	filter, err := h.logFilter(r, user, legacyAdmin)
+	filter, err := h.logFilter(r, user)
 	if err != nil {
 		if errors.Is(err, domain.ErrSiteOwnership) {
 			protocol.WriteError(w, http.StatusForbidden, "not allowed to view logs for this site")
@@ -383,12 +381,12 @@ func (h Handler) writeSecretError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (h Handler) logFilter(r *http.Request, user domain.AdminUser, legacyAdmin bool) (logbuffer.Filter, error) {
+func (h Handler) logFilter(r *http.Request, user domain.AdminUser) (logbuffer.Filter, error) {
 	query := r.URL.Query()
 	site := strings.TrimSpace(query.Get("site"))
 	includeAll := strings.EqualFold(strings.TrimSpace(query.Get("all")), "true")
 	includeSystem := strings.EqualFold(strings.TrimSpace(query.Get("system")), "true")
-	isAdmin := legacyAdmin || user.IsAdmin()
+	isAdmin := user.IsAdmin()
 	if includeAll || includeSystem {
 		if !isAdmin {
 			return logbuffer.Filter{}, domain.ErrSiteOwnership
@@ -424,11 +422,6 @@ func (h Handler) ensureUserOwnsSite(ctx context.Context, user domain.AdminUser, 
 		}
 	}
 	return domain.ErrSiteOwnership
-}
-
-func (h Handler) requestUsesLegacyToken(r *http.Request) bool {
-	requestToken, ok := bearerToken(r)
-	return ok && h.token != "" && requestToken == h.token
 }
 
 func (h Handler) streamLogs(w http.ResponseWriter, r *http.Request, filter logbuffer.Filter, limit int) {
@@ -730,19 +723,13 @@ func (h Handler) handlePublishSite(w http.ResponseWriter, r *http.Request, user 
 
 func (h Handler) authorizedAPIUser(r *http.Request) (domain.AdminUser, bool, error) {
 	requestToken, hasBearerToken := bearerToken(r)
-	if h.token != "" && hasBearerToken && requestToken == h.token {
-		return domain.AdminUser{}, true, nil
-	}
-	if hasBearerToken {
+	if hasBearerToken && h.users != nil {
 		user, ok, err := h.users.FindUserByToken(r.Context(), requestToken)
 		if err != nil || ok {
 			return user, ok, err
 		}
 	}
-	if h.token == "" && h.allowUnauthenticated {
-		return domain.AdminUser{}, true, nil
-	}
-	if authorized(r, h.token, h.allowUnauthenticated) {
+	if h.allowUnauthenticated {
 		return domain.AdminUser{}, true, nil
 	}
 	return domain.AdminUser{}, false, nil
@@ -751,14 +738,6 @@ func (h Handler) authorizedAPIUser(r *http.Request) (domain.AdminUser, bool, err
 func (h Handler) authorizedAPI(r *http.Request) (bool, error) {
 	_, ok, err := h.authorizedAPIUser(r)
 	return ok, err
-}
-
-func authorized(r *http.Request, token string, allowUnauthenticated bool) bool {
-	requestToken, ok := bearerToken(r)
-	if token != "" && ok && requestToken == token {
-		return true
-	}
-	return token == "" && allowUnauthenticated
 }
 
 func bearerToken(r *http.Request) (string, bool) {

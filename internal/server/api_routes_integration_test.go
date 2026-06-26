@@ -16,7 +16,12 @@ import (
 )
 
 func TestLoginCheck(t *testing.T) {
-	srv := New("", "", "token", fakeStorage{}, &fakeDatabase{}, DefaultOptions())
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"token": {ID: 1, Username: "admin", AdminPriv: "admin:*"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	t.Run("authorized", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
@@ -61,7 +66,7 @@ func TestLogsEndpointIncludesPublicSiteAccess(t *testing.T) {
 		},
 		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn", LogBufferCount: 20},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	publicReq := httptest.NewRequest(http.MethodGet, "/index.html", nil)
 	publicReq.Host = "foo.example.com"
@@ -90,7 +95,7 @@ func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.LoginCheckPath, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -106,18 +111,22 @@ func TestLoginCheckAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 }
 
 func TestUploadRejectsTooManyFiles(t *testing.T) {
-	db := &fakeDatabase{settings: domain.ServerSettings{
-		MaxUploadBytes: DefaultMaxUploadBytes,
-		MaxUploadFiles: 1,
-	}}
-	srv := New("", "", "", fakeStorage{}, db, Options{
-		AllowUnauthenticated: true,
-	})
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		settings: domain.ServerSettings{
+			MaxUploadBytes: DefaultMaxUploadBytes,
+			MaxUploadFiles: 1,
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{
 		"one.txt": "one",
 		"two.txt": "two",
 	}))
+	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
 	srv.Admin.Handler.ServeHTTP(rec, req)
 
@@ -127,17 +136,21 @@ func TestUploadRejectsTooManyFiles(t *testing.T) {
 }
 
 func TestUploadRejectsTooManyBytes(t *testing.T) {
-	db := &fakeDatabase{settings: domain.ServerSettings{
-		MaxUploadBytes: 128,
-		MaxUploadFiles: DefaultMaxUploadFiles,
-	}}
-	srv := New("", "", "", fakeStorage{}, db, Options{
-		AllowUnauthenticated: true,
-	})
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		settings: domain.ServerSettings{
+			MaxUploadBytes: 128,
+			MaxUploadFiles: DefaultMaxUploadFiles,
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{
 		"large.txt": "this content is intentionally long enough to push the tar request over the tiny test limit",
 	}))
+	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
 	srv.Admin.Handler.ServeHTTP(rec, req)
 
@@ -156,7 +169,7 @@ func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 			MaxUploadFiles: DefaultMaxUploadFiles,
 		},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -174,9 +187,33 @@ func TestUploadAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 	}
 }
 
+func TestUploadRejectsUnauthenticatedModePublisher(t *testing.T) {
+	db := &fakeDatabase{
+		settings: domain.ServerSettings{
+			MaxUploadBytes: DefaultMaxUploadBytes,
+			MaxUploadFiles: DefaultMaxUploadFiles,
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, Options{AllowUnauthenticated: true})
+
+	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	if db.lastPublisherUserID != 0 {
+		t.Fatalf("publisher user id = %d, want 0", db.lastPublisherUserID)
+	}
+}
+
 func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
 	deletedVersions := []int64{}
 	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
 		prunedVersions: []int64{1, 2},
 		settings: domain.ServerSettings{
 			MaxUploadBytes:      DefaultMaxUploadBytes,
@@ -185,9 +222,10 @@ func TestUploadPrunesVersionsWhenRetentionOverflows(t *testing.T) {
 			LogLevel:            "warn",
 		},
 	}
-	srv := New("", "", "", fakeStorage{deletedVersions: &deletedVersions}, db, Options{AllowUnauthenticated: true})
+	srv := New("", "", fakeStorage{deletedVersions: &deletedVersions}, db, DefaultOptions())
 
 	req := uploadRequest(t, tarArchive(t, map[string]string{"index.html": "hello"}))
+	req.Header.Set("Authorization", "Bearer user-token")
 	rec := httptest.NewRecorder()
 	srv.Admin.Handler.ServeHTTP(rec, req)
 
@@ -206,7 +244,7 @@ func TestRevisionListReturnsWarningWithoutOlderRevisions(t *testing.T) {
 		},
 		revisions: []domain.RevisionRecord{{Version: 3, Current: true, Files: 1, Bytes: 5}},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRevisionPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -228,7 +266,7 @@ func TestRollbackReturnsWarningWithoutOlderRevisions(t *testing.T) {
 		},
 		rollback: domain.RollbackRecord{CurrentVersion: 3, Warning: "no older revisions available"},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteRollbackPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -250,7 +288,7 @@ func TestUnpublishSite(t *testing.T) {
 		},
 		unpublish: domain.UnpublishRecord{Unpublished: true, LiveState: "unpublished"},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SiteUnpublishPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -272,7 +310,7 @@ func TestPublishSite(t *testing.T) {
 		},
 		publish: domain.PublishRecord{Published: true, LiveState: "live"},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, protocol.DeleteSitePathPrefix+"foo"+protocol.SitePublishPathSuffix, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -297,7 +335,7 @@ func TestListSitesReturnsSiteSummaries(t *testing.T) {
 			CurrentVersion: 2, VersionCount: 3, FileCount: 4, ByteCount: 512, UpdatedAt: "2026-06-16T12:00:00Z",
 		}},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath, nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -321,7 +359,7 @@ func TestListSitesAllRequiresAdmin(t *testing.T) {
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, protocol.SitesPath+"?all=true", nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -341,7 +379,7 @@ func TestSetDefaultSiteRequiresAdminAndSaves(t *testing.T) {
 		},
 		settings: domain.ServerSettings{MaxUploadBytes: DefaultMaxUploadBytes, MaxUploadFiles: DefaultMaxUploadFiles, LogLevel: "warn"},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	userReq := httptest.NewRequest(http.MethodPost, protocol.SettingsDefaultSitePath, strings.NewReader(`{"default_site":"home"}`))
 	userReq.Header.Set("Authorization", "Bearer user-token")
@@ -369,7 +407,7 @@ func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
 		},
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"foo", nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -389,7 +427,7 @@ func TestDeleteSiteRejectsCrossUserOwnership(t *testing.T) {
 		},
 		deleteErr: domain.ErrSiteOwnership,
 	}
-	srv := New("", "", "", fakeStorage{deletedSites: &deletedSites}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{deletedSites: &deletedSites}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"bob-site", nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -414,7 +452,7 @@ func TestDeleteSiteReportsNonOwnershipErrors(t *testing.T) {
 		},
 		deleteErr: errors.New("database unavailable"),
 	}
-	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"foo", nil)
 	req.Header.Set("Authorization", "Bearer user-token")

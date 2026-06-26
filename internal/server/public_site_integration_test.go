@@ -15,7 +15,7 @@ func TestNginxStyleStaticRouting(t *testing.T) {
 	writeTestBlob(t, root, "blog-index", "blog index")
 	writeTestBlob(t, root, "file-js", "file js")
 
-	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
@@ -108,7 +108,7 @@ func TestConfiguredStaticRootServesSubtreeAsURLRoot(t *testing.T) {
 			"foo-sha:2": {appsettings.SettingStaticRoot: "public"},
 		},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	tests := map[string]struct {
 		path     string
@@ -191,7 +191,7 @@ func TestStaticRouteRootServesSubtreeAsURLRoot(t *testing.T) {
 			"foo-sha:2": {appsettings.SettingRoutes: `[{"path":"/","kind":"static","root":"public"}]`},
 		},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	tests := map[string]struct {
 		path     string
@@ -279,7 +279,7 @@ func TestStaticRouteFileServesExactArchiveFile(t *testing.T) {
 			"foo-sha:2": {appsettings.SettingRoutes: `[{"path":"/","kind":"static","root":"public"},{"path":"/favicon.ico","kind":"static","file":"media/favicon.ico"}]`},
 		},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	tests := map[string]struct {
 		path string
@@ -314,7 +314,7 @@ func TestWwwHostServesSiteFromSecondLabel(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "site-index", "site index")
 
-	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("nathanielswanson", "index.html"): {
 				RelativePath: "index.html",
@@ -348,7 +348,7 @@ func TestDefaultSiteFallbackForUnknownSite(t *testing.T) {
 			},
 		},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Host = "missing.example.com"
@@ -380,7 +380,7 @@ func TestDefaultSiteDoesNotHandleMissingPathForExistingSite(t *testing.T) {
 			},
 		},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodGet, "/missing.html", nil)
 	req.Host = "foo.example.com"
@@ -396,7 +396,7 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "blog-index", "blog index")
 
-	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "blog/index.html"): {
 				RelativePath: "blog/index.html",
@@ -418,7 +418,7 @@ func TestExplicitServePathIsDisabled(t *testing.T) {
 func TestSiteHostRootStillServesSite(t *testing.T) {
 	root := t.TempDir()
 	writeTestBlob(t, root, "index", "site index")
-	srv := New("", "", "", fakeStorage{root: root}, &fakeDatabase{
+	srv := New("", "", fakeStorage{root: root}, &fakeDatabase{
 		files: map[string]domain.UploadFileRecord{
 			fileKey("foo", "index.html"): {
 				RelativePath: "index.html",
@@ -476,7 +476,7 @@ def handle(req):
 			Mode:      "allow",
 		}},
 	}
-	srv := New("", "", "", fakeStorage{root: root}, db, DefaultOptions())
+	srv := New("", "", fakeStorage{root: root}, db, DefaultOptions())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/echo?x=1", strings.NewReader("hello"))
 	req.Host = "foo.example.com"

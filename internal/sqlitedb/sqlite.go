@@ -2105,6 +2105,9 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 	if siteSHA == "" {
 		return domain.UploadRecord{}, fmt.Errorf("site sha is required")
 	}
+	if publisherUserID <= 0 {
+		return domain.UploadRecord{}, domain.ErrAuthenticatedUserRequired
+	}
 
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -2115,7 +2118,7 @@ func (d *Database) BeginUpload(ctx context.Context, site string, siteSHA string,
 	}
 	defer tx.Rollback()
 
-	if publisherUserID > 0 && !publisherIsAdmin {
+	if !publisherIsAdmin {
 		var siteExists int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE site_sha = ?`, siteSHA).Scan(&siteExists); err != nil {
 			return domain.UploadRecord{}, fmt.Errorf("check site ownership: %w", err)

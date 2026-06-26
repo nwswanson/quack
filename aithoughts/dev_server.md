@@ -477,7 +477,7 @@ QUACK_DEV_LOG_LEVEL
 QUACK_DEV_HOST_MATCH
 ```
 
-Do not reuse `UPLOAD_TOKEN`, `PUBLIC_ADDR`, or `ADMIN_ADDR` for CLI dev-server unless you intentionally want compatibility with `quack-server`. Keep the CLI dev-server namespace clear.
+Do not reuse `PUBLIC_ADDR` or `ADMIN_ADDR` for CLI dev-server unless you intentionally want compatibility with `quack-server`. Keep the CLI dev-server namespace clear.
 
 ## Host address and port allocation
 

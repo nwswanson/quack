@@ -117,4 +117,4 @@ Out of scope for the first version, but keep the design open for:
 
 ## Notes
 
-For now, login is only a convenience wrapper around the existing static token model. The server still uses `UPLOAD_TOKEN`; the client just saves and reuses it after verifying it works.
+Login uses per-user tokens. The client saves the verified token for later API requests.

@@ -88,6 +88,9 @@ type fakeDatabase struct {
 func (db *fakeDatabase) BeginUpload(ctx context.Context, site string, siteSHA string, publisherUserID int64, publisherIsAdmin bool) (domain.UploadRecord, error) {
 	db.lastPublisherUserID = publisherUserID
 	db.lastPublisherIsAdmin = publisherIsAdmin
+	if publisherUserID <= 0 {
+		return domain.UploadRecord{}, domain.ErrAuthenticatedUserRequired
+	}
 	return domain.UploadRecord{
 		Site:    site,
 		SiteSHA: siteSHA,

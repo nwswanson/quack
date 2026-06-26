@@ -6,6 +6,7 @@ import (
 )
 
 var ErrSiteOwnership = errors.New("site is owned by another user")
+var ErrAuthenticatedUserRequired = errors.New("authenticated user is required")
 var ErrSecretsLocked = errors.New("secrets are locked")
 
 type AdminUser struct {

@@ -46,7 +46,7 @@ type Servers struct {
 	Public *http.Server
 }
 
-func New(adminAddr string, publicAddr string, token string, store appstorage.Storage, db Database, opts Options) Servers {
+func New(adminAddr string, publicAddr string, store appstorage.Storage, db Database, opts Options) Servers {
 	if adminAddr == "" {
 		adminAddr = ":8081"
 	}
@@ -86,7 +86,6 @@ func New(adminAddr string, publicAddr string, token string, store appstorage.Sto
 	}
 
 	controlapi.New(controlapi.Options{
-		Token:                token,
 		AllowUnauthenticated: opts.AllowUnauthenticated,
 		Store:                store,
 		Publishing:           publishingService,
