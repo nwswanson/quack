@@ -46,6 +46,7 @@ Quack gives you:
 * Hostname-based site routing
 * `site.yml` route declarations
 * Versioned deployments
+* Webcam support on linux hosts
 * Rollback
 * Publish, unpublish, and delete controls
 * A browser admin panel
