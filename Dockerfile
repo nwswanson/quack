@@ -5,12 +5,17 @@ FROM golang:1.25-bookworm AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+	go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/quack-server ./cmd/quack-server \
+RUN --mount=type=cache,target=/go/pkg/mod \
+	--mount=type=cache,target=/root/.cache/go-build \
+	mkdir -p /out \
+	&& CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/quack-server ./cmd/quack-server \
 	&& CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/quack-hardware-plugin ./cmd/quack-hardware-plugin
 
 FROM debian:bookworm-slim AS runtime
@@ -30,6 +35,7 @@ USER quack
 
 ENV ADMIN_ADDR=:8081
 ENV PUBLIC_ADDR=:8080
+
 EXPOSE 8080 8081
 
 ENTRYPOINT ["/usr/local/bin/quack-server"]
