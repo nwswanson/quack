@@ -230,8 +230,8 @@ For `Capture`, it:
 5. Rejects capture if `permissions.capture` is false.
 6. Resolves the alias to the administrator-managed device path.
 7. Applies the effective width/height limits.
-8. Calls the upstream plugin.
-9. Rejects the returned frame if it exceeds `max_capture_bytes`.
+8. Passes the effective `max_capture_bytes` limit to the upstream plugin.
+9. Rejects any returned frame that still exceeds `max_capture_bytes`.
 10. Rewrites the response camera ID back to the site alias.
 
 This means Starlark code cannot escape its assigned cameras by guessing `/dev/video2` or another site’s alias.
@@ -282,20 +282,25 @@ Stable paths are discovered by checking:
 Capture:
 
 1. Resolves the requested camera ID.
-2. Defaults width to `640`.
-3. Defaults height to `480`.
-4. Defaults format to `MJPG`.
-5. Rejects formats other than `MJPG`/`MJPEG`.
-6. Sets V4L2 format to MJPEG.
-7. Requests mmap buffers.
-8. Queues buffers.
-9. Starts streaming.
-10. Polls until a frame is ready or the context is canceled.
-11. Dequeues one buffer.
-12. Copies the MJPEG bytes.
-13. Requeues the buffer.
-14. Stops streaming.
-15. Returns the frame as `image/jpeg`.
+2. Acquires a per-device capture lock so only one capture can touch a physical camera at a time.
+3. Defaults width to `640`.
+4. Defaults height to `480`.
+5. Defaults format to `MJPG`.
+6. Rejects formats other than `MJPG`/`MJPEG`.
+7. Sets V4L2 format to MJPEG.
+8. Rejects the capture before requesting buffers if the driver-reported frame buffer size exceeds `max_capture_bytes`.
+9. Requests mmap buffers.
+10. Rejects any mmap buffer larger than `max_capture_bytes` before mapping it.
+11. Queues buffers.
+12. Starts streaming.
+13. Polls until a frame is ready or the context is canceled.
+14. Dequeues one buffer.
+15. Rejects any dequeued frame larger than `max_capture_bytes` before copying it into Go memory.
+16. Copies the MJPEG bytes.
+17. Requeues the buffer.
+18. Stops streaming.
+19. Releases the per-device capture lock.
+20. Returns the frame as `image/jpeg`.
 
 On non-Linux platforms, the stub provider returns “unsupported platform.”
 

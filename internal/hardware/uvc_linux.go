@@ -41,6 +41,7 @@ type UVCProvider struct {
 	mu         sync.Mutex
 	byID       map[string]*captureOperation
 	byDevice   map[string]map[string]*captureOperation
+	locks      map[string]*deviceCaptureLock
 	operationN int64
 }
 
@@ -48,7 +49,12 @@ func NewUVCProvider() *UVCProvider {
 	return &UVCProvider{
 		byID:     make(map[string]*captureOperation),
 		byDevice: make(map[string]map[string]*captureOperation),
+		locks:    make(map[string]*deviceCaptureLock),
 	}
+}
+
+type deviceCaptureLock struct {
+	ch chan struct{}
 }
 
 type captureOperation struct {
@@ -204,6 +210,11 @@ func (p *UVCProvider) Capture(ctx context.Context, req CaptureRequest) (CaptureR
 		return CaptureResponse{}, err
 	}
 	defer finish()
+	release, err := p.acquireDeviceCapture(opCtx, device)
+	if err != nil {
+		return CaptureResponse{}, err
+	}
+	defer release()
 	width := req.Width
 	if width <= 0 {
 		width = 640
@@ -219,7 +230,7 @@ func (p *UVCProvider) Capture(ctx context.Context, req CaptureRequest) (CaptureR
 	if format != "MJPG" && format != "MJPEG" {
 		return CaptureResponse{}, fmt.Errorf("unsupported camera format %q; only MJPG is implemented", req.Format)
 	}
-	frame, err := captureMJPEG(opCtx, op, device, uint32(width), uint32(height))
+	frame, err := captureMJPEG(opCtx, op, device, uint32(width), uint32(height), req.MaxCaptureBytes)
 	if err != nil {
 		return CaptureResponse{}, err
 	}
@@ -297,11 +308,6 @@ func (p *UVCProvider) startCaptureOperation(parent context.Context, device strin
 	op := &captureOperation{id: operationID, device: device, cancel: cancel}
 
 	p.mu.Lock()
-	if len(p.byDevice[device]) > 0 {
-		p.mu.Unlock()
-		cancel()
-		return nil, nil, nil, fmt.Errorf("camera %q is already capturing", device)
-	}
 	if p.byID == nil {
 		p.byID = make(map[string]*captureOperation)
 	}
@@ -334,6 +340,31 @@ func (p *UVCProvider) startCaptureOperation(parent context.Context, device strin
 		p.mu.Unlock()
 	}
 	return op, ctx, finish, nil
+}
+
+func (p *UVCProvider) acquireDeviceCapture(ctx context.Context, device string) (func(), error) {
+	if p == nil {
+		return nil, ErrNotConfigured
+	}
+	p.mu.Lock()
+	if p.locks == nil {
+		p.locks = make(map[string]*deviceCaptureLock)
+	}
+	lock := p.locks[device]
+	if lock == nil {
+		lock = &deviceCaptureLock{ch: make(chan struct{}, 1)}
+		p.locks[device] = lock
+	}
+	p.mu.Unlock()
+
+	select {
+	case lock.ch <- struct{}{}:
+		return func() {
+			<-lock.ch
+		}, nil
+	case <-ctx.Done():
+		return nil, captureContextError(ctx)
+	}
 }
 
 func (op *captureOperation) setFD(fd int) {
@@ -371,7 +402,7 @@ func (op *captureOperation) closeFD() {
 	_ = unix.Close(op.fd)
 }
 
-func captureMJPEG(ctx context.Context, op *captureOperation, device string, width uint32, height uint32) ([]byte, error) {
+func captureMJPEG(ctx context.Context, op *captureOperation, device string, width uint32, height uint32, maxCaptureBytes int) ([]byte, error) {
 	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open camera device %q: %w", device, err)
@@ -403,6 +434,9 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 	if err := ioctl(fd, vidiocSFmt, unsafe.Pointer(&format)); err != nil {
 		return nil, captureFormatError(ctx, device, width, height, err)
 	}
+	if maxCaptureBytes > 0 && format.Pix.SizeImage > uint32(maxCaptureBytes) {
+		return nil, fmt.Errorf("camera device %q configured MJPG %dx%d frame buffer %d exceeds max_capture_bytes %d", device, width, height, format.Pix.SizeImage, maxCaptureBytes)
+	}
 
 	var req v4l2RequestBuffers
 	req.Count = 2
@@ -432,6 +466,9 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 		buf.Index = i
 		if err := ioctl(fd, vidiocQueryBuf, unsafe.Pointer(&buf)); err != nil {
 			return nil, captureDeviceStepError(ctx, device, "query camera buffer", err)
+		}
+		if maxCaptureBytes > 0 && buf.Length > uint32(maxCaptureBytes) {
+			return nil, fmt.Errorf("camera device %q buffer length %d exceeds max_capture_bytes %d", device, buf.Length, maxCaptureBytes)
 		}
 		data, err := unix.Mmap(fd, int64(nativeUint32(buf.M[:4])), int(buf.Length), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
 		if err != nil {
@@ -477,6 +514,9 @@ func captureMJPEG(ctx context.Context, op *captureOperation, device string, widt
 		}
 		if int(buf.Index) >= len(buffers) {
 			return nil, fmt.Errorf("camera device %q returned invalid buffer index %d", device, buf.Index)
+		}
+		if maxCaptureBytes > 0 && buf.BytesUsed > uint32(maxCaptureBytes) {
+			return nil, fmt.Errorf("camera device %q frame length %d exceeds max_capture_bytes %d", device, buf.BytesUsed, maxCaptureBytes)
 		}
 		data := append([]byte(nil), buffers[buf.Index].data[:buf.BytesUsed]...)
 		_ = ioctl(fd, vidiocQBuf, unsafe.Pointer(&buf))

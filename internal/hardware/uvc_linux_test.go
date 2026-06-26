@@ -70,3 +70,51 @@ func TestCaptureFormatErrorReportsTimeoutAfterContextDone(t *testing.T) {
 		t.Fatalf("error = %v, leaked EINVAL", err)
 	}
 }
+
+func TestUVCProviderSerializesCaptureByDevice(t *testing.T) {
+	provider := NewUVCProvider()
+	release, err := provider.acquireDeviceCapture(context.Background(), "/dev/video0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waiting := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		release, err := provider.acquireDeviceCapture(ctx, "/dev/video0")
+		if err == nil {
+			release()
+		}
+		waiting <- err
+	}()
+
+	err = <-waiting
+	if err == nil || !strings.Contains(err.Error(), "camera capture timed out") {
+		t.Fatalf("waiting acquire error = %v, want timeout while first capture holds device", err)
+	}
+
+	release()
+	release, err = provider.acquireDeviceCapture(context.Background(), "/dev/video0")
+	if err != nil {
+		t.Fatalf("acquire after release = %v", err)
+	}
+	release()
+}
+
+func TestUVCProviderAllowsDifferentDevicesConcurrently(t *testing.T) {
+	provider := NewUVCProvider()
+	releaseVideo0, err := provider.acquireDeviceCapture(context.Background(), "/dev/video0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseVideo0()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	releaseVideo1, err := provider.acquireDeviceCapture(ctx, "/dev/video1")
+	if err != nil {
+		t.Fatalf("acquire different device = %v", err)
+	}
+	releaseVideo1()
+}

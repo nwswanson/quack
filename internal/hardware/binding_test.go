@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -58,6 +59,9 @@ func TestBoundServiceResolvesAliasClampsLimitsAndHidesPhysicalID(t *testing.T) {
 	if upstream.captureReq.Width != 640 || upstream.captureReq.Height != 480 {
 		t.Fatalf("upstream size = %dx%d, want clamped 640x480", upstream.captureReq.Width, upstream.captureReq.Height)
 	}
+	if upstream.captureReq.MaxCaptureBytes != 4 {
+		t.Fatalf("upstream max capture bytes = %d, want 4", upstream.captureReq.MaxCaptureBytes)
+	}
 	if resp.CameraID != "front_door" {
 		t.Fatalf("response camera id = %q, want alias", resp.CameraID)
 	}
@@ -84,6 +88,18 @@ func TestBoundServiceRejectsOversizedCapture(t *testing.T) {
 	_, err := service.Capture(context.Background(), CaptureRequest{Site: "acme", CameraID: "front_door"})
 	if err == nil || !strings.Contains(err.Error(), "exceeded 4 bytes") {
 		t.Fatalf("Capture error = %v, want capture byte limit", err)
+	}
+}
+
+func TestBoundServiceReturnsUpstreamByteLimitRejectionWithoutLateFrame(t *testing.T) {
+	upstream := &recordingService{captureErr: errCaptureTooLargeBeforeFrame}
+	service := newTestBoundService(t, upstream)
+	_, err := service.Capture(context.Background(), CaptureRequest{Site: "acme", CameraID: "front_door"})
+	if err != errCaptureTooLargeBeforeFrame {
+		t.Fatalf("Capture error = %v, want upstream pre-capture byte limit error", err)
+	}
+	if upstream.captureReq.MaxCaptureBytes != 4 {
+		t.Fatalf("upstream max capture bytes = %d, want 4", upstream.captureReq.MaxCaptureBytes)
 	}
 }
 
@@ -146,6 +162,7 @@ type recordingService struct {
 	captureReq CaptureRequest
 	cancelReq  CancelCaptureRequest
 	frame      CaptureResponse
+	captureErr error
 }
 
 func (s *recordingService) ListDevices(context.Context, ListDevicesRequest) (ListDevicesResponse, error) {
@@ -154,6 +171,9 @@ func (s *recordingService) ListDevices(context.Context, ListDevicesRequest) (Lis
 
 func (s *recordingService) Capture(_ context.Context, req CaptureRequest) (CaptureResponse, error) {
 	s.captureReq = req
+	if s.captureErr != nil {
+		return CaptureResponse{}, s.captureErr
+	}
 	if s.frame.MimeType == "" {
 		s.frame = CaptureResponse{CameraID: req.CameraID, MimeType: MimeJPEG, Data: []byte{1}, Width: req.Width, Height: req.Height, Format: "MJPG"}
 	}
@@ -168,3 +188,5 @@ func (s *recordingService) CancelCapture(_ context.Context, req CancelCaptureReq
 func (s *recordingService) Close() error {
 	return nil
 }
+
+var errCaptureTooLargeBeforeFrame = errors.New("pre-capture max_capture_bytes rejection")

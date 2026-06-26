@@ -56,13 +56,14 @@ type CameraFormat struct {
 }
 
 type CaptureRequest struct {
-	CameraID      string
-	Site          string
-	Width         int
-	Height        int
-	Format        string
-	TimeoutMillis int64
-	OperationID   string
+	CameraID        string
+	Site            string
+	Width           int
+	Height          int
+	Format          string
+	MaxCaptureBytes int
+	TimeoutMillis   int64
+	OperationID     string
 }
 
 type CaptureResponse struct {
@@ -333,6 +334,7 @@ func (s *BoundService) Capture(ctx context.Context, req CaptureRequest) (Capture
 	upstreamReq.CameraID = device.Path
 	upstreamReq.Width = clampPositive(req.Width, limits.MaxWidth)
 	upstreamReq.Height = clampPositive(req.Height, limits.MaxHeight)
+	upstreamReq.MaxCaptureBytes = limits.MaxCaptureBytes
 	resp, err := s.upstream.Capture(ctx, upstreamReq)
 	if err != nil {
 		return CaptureResponse{}, err
