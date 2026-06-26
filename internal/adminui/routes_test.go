@@ -118,6 +118,83 @@ func TestAdminHardwareFormSavesDevice(t *testing.T) {
 	}
 }
 
+func TestAdminHardwareFormSavesSerialOptions(t *testing.T) {
+	repo := &adminHardwareRepo{}
+	handler := New(Options{
+		Sessions: adminSessionRepo{user: domain.AdminUser{ID: 1, Username: "admin", AdminPriv: "admin:*"}},
+		Releases: adminReleaseRepo{sites: []domain.PublishedSite{{
+			Site: "acme", SiteSHA: "site-sha", CurrentVersion: 1,
+		}}},
+		Hardware: repo,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
+		"id":                        {"serial_01"},
+		"kind":                      {hardware.AdminKindSerial},
+		"path":                      {"/dev/ttyUSB0"},
+		"site":                      {"acme"},
+		"alias":                     {"weather_station"},
+		"serial_baud":               {"115200"},
+		"serial_data_bits":          {"7"},
+		"serial_parity":             {"even"},
+		"serial_stop_bits":          {"2"},
+		"serial_read_timeout_ms":    {"250"},
+		"serial_request_timeout_ms": {"3000"},
+		"serial_write_queue_size":   {"32"},
+		"serial_recent_events":      {"128"},
+		"serial_reconnect_ms":       {"750"},
+	}.Encode()))
+	req.Host = "admin.example.com"
+	req.Header.Set("Origin", "https://admin.example.com")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "session"})
+	resp := httptest.NewRecorder()
+
+	handler.handleAdminHardware(resp, req)
+
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect", resp.Code)
+	}
+	if repo.saved.Kind != hardware.AdminKindSerial || repo.saved.Serial.BaudRate != 115200 || repo.saved.Serial.DataBits != 7 || repo.saved.Serial.Parity != "even" || repo.saved.Serial.StopBits != "2" {
+		t.Fatalf("saved device = %+v, want serial options", repo.saved)
+	}
+	if repo.saved.Serial.ReadTimeoutMillis != 250 || repo.saved.Serial.RequestTimeoutMillis != 3000 || repo.saved.Serial.WriteQueueSize != 32 || repo.saved.Serial.RecentEvents != 128 || repo.saved.Serial.ReconnectMillis != 750 {
+		t.Fatalf("saved serial options = %+v, want timeout and queue settings", repo.saved.Serial)
+	}
+}
+
+func TestAdminHardwareEditKeepsExistingKind(t *testing.T) {
+	repo := &adminHardwareRepo{devices: []hardware.AdminDevice{{
+		ID:   "serial_01",
+		Kind: hardware.AdminKindSerial,
+		Path: "/dev/ttyUSB0",
+	}}}
+	handler := New(Options{
+		Sessions: adminSessionRepo{user: domain.AdminUser{ID: 1, Username: "admin", AdminPriv: "admin:*"}},
+		Hardware: repo,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
+		"action":      {"save"},
+		"original_id": {"serial_01"},
+		"id":          {"serial_01"},
+		"kind":        {hardware.AdminKindUVCCamera},
+		"path":        {"/dev/ttyUSB1"},
+	}.Encode()))
+	req.Host = "admin.example.com"
+	req.Header.Set("Origin", "https://admin.example.com")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "session"})
+	resp := httptest.NewRecorder()
+
+	handler.handleAdminHardware(resp, req)
+
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect", resp.Code)
+	}
+	if repo.saved.Kind != hardware.AdminKindSerial {
+		t.Fatalf("saved kind = %q, want existing serial kind", repo.saved.Kind)
+	}
+}
+
 func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
 	repo := &adminHardwareRepo{}
 	handler := New(Options{
@@ -182,17 +259,19 @@ func TestAdminHardwarePageRendersEditableRows(t *testing.T) {
 	}
 	body := resp.Body.String()
 	for _, want := range []string{
-		`form="hardware-save-cam_01" type="hidden" name="original_id" value="cam_01"`,
-		`form="hardware-save-cam_01" name="id" value="cam_01"`,
-		`form="hardware-save-cam_01" name="path" value="/dev/video2"`,
-		`form="hardware-save-cam_01" name="label" value="Front desk"`,
-		`form="hardware-save-cam_01" name="alias" value="front_door"`,
-		`<option value="uvc-camera" selected>UVC camera</option>`,
-		`<option value="serial" >Serial</option>`,
-		`<option value="gpio" >GPIO</option>`,
+		`<article class="hardware-card">`,
+		`<input type="hidden" name="original_id" value="cam_01">`,
+		`<input type="hidden" name="kind" value="uvc-camera">`,
+		`<input name="id" value="cam_01" autocomplete="off" required>`,
+		`<input name="path" value="/dev/video2" required>`,
+		`<input name="label" value="Front desk">`,
+		`<input name="alias" value="front_door" placeholder="cam_01">`,
 		`<option value="acme" selected>acme</option>`,
 		`<option value="beta" >beta</option>`,
-		`form="hardware-save-cam_01" type="submit">Save</button>`,
+		`<button class="small-button" form="hardware-save-cam_01" type="submit">Save</button>`,
+		`<button class="small-button warning-button" type="submit">Close Active Request</button>`,
+		`<label class="tab-label" for="create-uvc">UVC Camera</label>`,
+		`<label class="tab-label" for="create-serial">Serial Port</label>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body = %q, want %q", body, want)

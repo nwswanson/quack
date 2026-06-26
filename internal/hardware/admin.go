@@ -39,6 +39,7 @@ func ConfigFromAdminDevices(devices []AdminDevice) Config {
 			Plugin: adminKind,
 			Path:   strings.TrimSpace(device.Path),
 			Label:  strings.TrimSpace(device.Label),
+			Serial: device.Serial,
 		})
 		site := strings.TrimSpace(device.Site)
 		if site == "" {

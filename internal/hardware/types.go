@@ -196,6 +196,7 @@ type AdminDevice struct {
 	Label      string
 	Site       string
 	Alias      string
+	Serial     SerialOptions
 	CreatedAt  string
 	UpdatedAt  string
 }

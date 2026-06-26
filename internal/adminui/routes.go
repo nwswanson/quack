@@ -714,14 +714,24 @@ func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request)
 			redirectAdminMessage(w, r, "/hardware", "message", "No active hardware read was found.")
 		}
 	default:
-		device := hardware.AdminDevice{
-			OriginalID: r.Form.Get("original_id"),
-			ID:         r.Form.Get("id"),
-			Kind:       r.Form.Get("kind"),
-			Path:       r.Form.Get("path"),
-			Label:      r.Form.Get("label"),
-			Site:       r.Form.Get("site"),
-			Alias:      r.Form.Get("alias"),
+		device, err := hardwareDeviceFromForm(r)
+		if err != nil {
+			redirectAdminMessage(w, r, "/hardware", "error", err.Error())
+			return
+		}
+		if strings.TrimSpace(device.OriginalID) != "" {
+			devices, err := h.hardware.ListHardwareDevices(r.Context())
+			if err != nil {
+				slog.ErrorContext(r.Context(), "load hardware devices for immutable kind failed", "username", user.Username, "device", device.OriginalID, "error", err)
+				protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
+				return
+			}
+			for _, existing := range devices {
+				if existing.ID == strings.TrimSpace(device.OriginalID) {
+					device.Kind = existing.Kind
+					break
+				}
+			}
 		}
 		if strings.TrimSpace(device.OriginalID) != "" && strings.TrimSpace(device.OriginalID) != strings.TrimSpace(device.ID) && strings.TrimSpace(device.Alias) == strings.TrimSpace(device.OriginalID) {
 			device.Alias = ""
@@ -751,6 +761,57 @@ func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request)
 		}
 		redirectAdminMessage(w, r, "/hardware", "message", "Hardware device saved.")
 	}
+}
+
+func hardwareDeviceFromForm(r *http.Request) (hardware.AdminDevice, error) {
+	baud, err := parseNonNegativeInt64(r.Form.Get("serial_baud"), "serial baud")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	dataBits, err := parseNonNegativeInt64(r.Form.Get("serial_data_bits"), "serial data bits")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	readTimeoutMillis, err := parseNonNegativeInt64(r.Form.Get("serial_read_timeout_ms"), "serial read timeout")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	requestTimeoutMillis, err := parseNonNegativeInt64(r.Form.Get("serial_request_timeout_ms"), "serial request timeout")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	writeQueueSize, err := parseNonNegativeInt64(r.Form.Get("serial_write_queue_size"), "serial write queue size")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	recentEvents, err := parseNonNegativeInt64(r.Form.Get("serial_recent_events"), "serial recent events")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	reconnectMillis, err := parseNonNegativeInt64(r.Form.Get("serial_reconnect_ms"), "serial reconnect")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	return hardware.AdminDevice{
+		OriginalID: r.Form.Get("original_id"),
+		ID:         r.Form.Get("id"),
+		Kind:       r.Form.Get("kind"),
+		Path:       r.Form.Get("path"),
+		Label:      r.Form.Get("label"),
+		Site:       r.Form.Get("site"),
+		Alias:      r.Form.Get("alias"),
+		Serial: hardware.SerialOptions{
+			BaudRate:             int(baud),
+			DataBits:             int(dataBits),
+			Parity:               r.Form.Get("serial_parity"),
+			StopBits:             r.Form.Get("serial_stop_bits"),
+			ReadTimeoutMillis:    int(readTimeoutMillis),
+			RequestTimeoutMillis: int(requestTimeoutMillis),
+			WriteQueueSize:       int(writeQueueSize),
+			RecentEvents:         int(recentEvents),
+			ReconnectMillis:      int(reconnectMillis),
+		},
+	}, nil
 }
 
 func publishedSiteExists(sites []domain.PublishedSite, site string) bool {

@@ -270,6 +270,10 @@
       background: #b42318;
       color: white;
     }
+    .warning-button {
+      background: #d97706;
+      color: white;
+    }
     .table-control {
       min-width: 130px;
       padding: 7px 8px;
@@ -295,6 +299,113 @@
       white-space: pre-wrap;
       font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
+    .hardware-list {
+      display: grid;
+      gap: 14px;
+    }
+    .hardware-card {
+      border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      border-radius: 8px;
+      padding: 16px;
+      background: Canvas;
+    }
+    .hardware-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .hardware-title {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .hardware-title strong {
+      overflow-wrap: anywhere;
+      font-size: 18px;
+    }
+    .hardware-kind {
+      color: color-mix(in srgb, CanvasText 62%, Canvas);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .hardware-form {
+      display: grid;
+      gap: 14px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 14px;
+    }
+    .field-hint {
+      color: color-mix(in srgb, CanvasText 58%, Canvas);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.35;
+    }
+    .field-control {
+      display: grid;
+      gap: 6px;
+    }
+    .field-control > span:first-child {
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .fieldset {
+      display: grid;
+      gap: 12px;
+      margin-top: 4px;
+      padding-top: 14px;
+      border-top: 1px solid color-mix(in srgb, CanvasText 10%, Canvas);
+    }
+    .fieldset-title {
+      margin: 0;
+      color: color-mix(in srgb, CanvasText 72%, Canvas);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .tabs {
+      display: grid;
+      gap: 16px;
+    }
+    .tab-input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .tab-list {
+      display: flex;
+      gap: 6px;
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+    }
+    .tab-label {
+      display: inline-flex;
+      width: auto;
+      padding: 9px 12px;
+      border: 1px solid transparent;
+      border-bottom: 0;
+      border-radius: 6px 6px 0 0;
+      color: color-mix(in srgb, CanvasText 70%, Canvas);
+      cursor: pointer;
+      font-weight: 800;
+    }
+    .tab-panel {
+      display: none;
+    }
+    #create-uvc:checked ~ .tab-list label[for="create-uvc"],
+    #create-serial:checked ~ .tab-list label[for="create-serial"] {
+      border-color: color-mix(in srgb, CanvasText 12%, Canvas);
+      background: color-mix(in srgb, #1677c8 12%, Canvas);
+      color: CanvasText;
+    }
+    #create-uvc:checked ~ .uvc-panel,
+    #create-serial:checked ~ .serial-panel {
+      display: block;
+    }
     @media (max-width: 640px) {
       .masthead {
         align-items: flex-start;
@@ -306,6 +417,9 @@
         gap: 8px;
       }
       .site-card-header {
+        flex-direction: column;
+      }
+      .hardware-card-header {
         flex-direction: column;
       }
       .site-status {
@@ -669,112 +783,296 @@
 
       {{if and .IsAdmin (.ActivePage "hardware")}}
         <section>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Kind</th>
-                  <th>Path</th>
-                  <th>Label</th>
-                  <th>Site</th>
-                  <th>Alias</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {{range .HardwareDevices}}
-                  {{$device := .}}
-                  <tr>
-                    <td>
-                      <input form="hardware-save-{{.ID}}" type="hidden" name="original_id" value="{{.ID}}">
-                      <input class="table-control" form="hardware-save-{{.ID}}" name="id" value="{{.ID}}" required>
-                    </td>
-                    <td>
-                      <select class="table-control" form="hardware-save-{{.ID}}" name="kind">
-                        {{range $.HardwareKinds}}
-                          <option value="{{.AdminKind}}" {{if eq $device.Kind .AdminKind}}selected{{end}}>{{.Label}}</option>
-                        {{end}}
-                      </select>
-                    </td>
-                    <td><input class="table-control path-control" form="hardware-save-{{.ID}}" name="path" value="{{.Path}}" required></td>
-                    <td><input class="table-control" form="hardware-save-{{.ID}}" name="label" value="{{.Label}}"></td>
-                    <td>
-                      <select class="table-control" form="hardware-save-{{.ID}}" name="site">
+          <div class="hardware-list">
+            {{range .HardwareDevices}}
+              {{$device := .}}
+              <article class="hardware-card">
+                <div class="hardware-card-header">
+                  <div class="hardware-title">
+                    <strong>{{.ID}}</strong>
+                    <span class="hardware-kind">
+                      {{if eq .Kind "serial"}}Serial port{{else if eq .Kind "uvc-camera"}}UVC camera{{else}}{{.Kind}}{{end}}
+                    </span>
+                  </div>
+                  <div class="row-actions">
+                    <button class="small-button" form="hardware-save-{{.ID}}" type="submit">Save</button>
+                    <form class="inline-form" method="post" action="/hardware">
+                      <input type="hidden" name="action" value="unstuck">
+                      <input type="hidden" name="id" value="{{.ID}}">
+                      <button class="small-button warning-button" type="submit">Close Active Request</button>
+                    </form>
+                    <form class="inline-form" method="post" action="/hardware">
+                      <input type="hidden" name="action" value="delete">
+                      <input type="hidden" name="id" value="{{.ID}}">
+                      <button class="small-button danger-button" type="submit">Delete</button>
+                    </form>
+                  </div>
+                </div>
+                <form id="hardware-save-{{.ID}}" class="hardware-form" method="post" action="/hardware">
+                  <input type="hidden" name="action" value="save">
+                  <input type="hidden" name="original_id" value="{{.ID}}">
+                  <input type="hidden" name="kind" value="{{.Kind}}">
+                  <div class="form-grid">
+                    <label class="field-control">
+                      <span>ID</span>
+                      <input name="id" value="{{.ID}}" autocomplete="off" required>
+                      <span class="field-hint">Stable admin identifier used by bindings.</span>
+                    </label>
+                    <label class="field-control">
+                      <span>Kind</span>
+                      <input value="{{if eq .Kind "serial"}}Serial port{{else if eq .Kind "uvc-camera"}}UVC camera{{else}}{{.Kind}}{{end}}" disabled>
+                      <span class="field-hint">Kind is fixed after creation; create a new device to change it.</span>
+                    </label>
+                    <label class="field-control">
+                      <span>Path</span>
+                      <input name="path" value="{{.Path}}" required>
+                      <span class="field-hint">{{if eq .Kind "serial"}}TTY path such as /dev/ttyUSB0, /dev/ttyACM0, or /dev/cu.usbserial-0001.{{else}}Video device path such as /dev/video2.{{end}}</span>
+                    </label>
+                    <label class="field-control">
+                      <span>Label</span>
+                      <input name="label" value="{{.Label}}">
+                      <span class="field-hint">Human-readable hardware name for operators.</span>
+                    </label>
+                    <label class="field-control">
+                      <span>Site</span>
+                      <select name="site">
                         <option value="" {{if not .Site}}selected{{end}}>Unbound</option>
                         {{range $.HardwareSites}}
                           <option value="{{.Site}}" {{if eq .Site $device.Site}}selected{{end}}>{{.Site}}</option>
                         {{end}}
                       </select>
-                    </td>
-                    <td><input class="table-control" form="hardware-save-{{.ID}}" name="alias" value="{{.Alias}}" placeholder="{{.ID}}"></td>
-                    <td>
-                      <div class="row-actions">
-                      <form id="hardware-save-{{.ID}}" class="inline-form" method="post" action="/hardware">
-                        <input type="hidden" name="action" value="save">
-                      </form>
-                      <button class="small-button" form="hardware-save-{{.ID}}" type="submit">Save</button>
-                      <form class="inline-form" method="post" action="/hardware">
-                        <input type="hidden" name="action" value="unstuck">
-                        <input type="hidden" name="id" value="{{.ID}}">
-                        <button class="small-button warning-button" type="submit">Close Active Request</button>
-                      </form>
-                      <form class="inline-form" method="post" action="/hardware">
-                        <input type="hidden" name="action" value="delete">
-                        <input type="hidden" name="id" value="{{.ID}}">
-                        <button class="small-button danger-button" type="submit">Delete</button>
-                      </form>
+                      <span class="field-hint">Only the selected site can use this device alias.</span>
+                    </label>
+                    <label class="field-control">
+                      <span>Alias</span>
+                      <input name="alias" value="{{.Alias}}" placeholder="{{.ID}}">
+                      <span class="field-hint">Name site code uses, for example front_door or weather_station.</span>
+                    </label>
+                  </div>
+                  {{if eq .Kind "serial"}}
+                    <div class="fieldset">
+                      <h2 class="fieldset-title">Serial Settings</h2>
+                      <div class="form-grid">
+                        <label class="field-control">
+                          <span>Baud</span>
+                          <input name="serial_baud" type="number" min="0" value="{{.Serial.BaudRate}}" placeholder="9600">
+                          <span class="field-hint">Bits per second. Leave 0 to use the runtime default of 9600.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Data bits</span>
+                          <select name="serial_data_bits">
+                            <option value="0" {{if eq .Serial.DataBits 0}}selected{{end}}>Default (8)</option>
+                            <option value="5" {{if eq .Serial.DataBits 5}}selected{{end}}>5</option>
+                            <option value="6" {{if eq .Serial.DataBits 6}}selected{{end}}>6</option>
+                            <option value="7" {{if eq .Serial.DataBits 7}}selected{{end}}>7</option>
+                            <option value="8" {{if eq .Serial.DataBits 8}}selected{{end}}>8</option>
+                          </select>
+                          <span class="field-hint">Number of data bits in each serial frame.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Parity</span>
+                          <select name="serial_parity">
+                            <option value="" {{if not .Serial.Parity}}selected{{end}}>Default (none)</option>
+                            <option value="none" {{if eq .Serial.Parity "none"}}selected{{end}}>None</option>
+                            <option value="odd" {{if eq .Serial.Parity "odd"}}selected{{end}}>Odd</option>
+                            <option value="even" {{if eq .Serial.Parity "even"}}selected{{end}}>Even</option>
+                            <option value="mark" {{if eq .Serial.Parity "mark"}}selected{{end}}>Mark</option>
+                            <option value="space" {{if eq .Serial.Parity "space"}}selected{{end}}>Space</option>
+                          </select>
+                          <span class="field-hint">Parity bit mode expected by the device.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Stop bits</span>
+                          <select name="serial_stop_bits">
+                            <option value="" {{if not .Serial.StopBits}}selected{{end}}>Default (1)</option>
+                            <option value="1" {{if eq .Serial.StopBits "1"}}selected{{end}}>1</option>
+                            <option value="1.5" {{if eq .Serial.StopBits "1.5"}}selected{{end}}>1.5</option>
+                            <option value="2" {{if eq .Serial.StopBits "2"}}selected{{end}}>2</option>
+                          </select>
+                          <span class="field-hint">Stop bits used to mark the end of each frame.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Read timeout ms</span>
+                          <input name="serial_read_timeout_ms" type="number" min="0" value="{{.Serial.ReadTimeoutMillis}}" placeholder="500">
+                          <span class="field-hint">Low-level read polling timeout. Default is 500 ms.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Request timeout ms</span>
+                          <input name="serial_request_timeout_ms" type="number" min="0" value="{{.Serial.RequestTimeoutMillis}}" placeholder="1000">
+                          <span class="field-hint">Default timeout for serial.request when site code does not pass one.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Write queue size</span>
+                          <input name="serial_write_queue_size" type="number" min="0" value="{{.Serial.WriteQueueSize}}" placeholder="64">
+                          <span class="field-hint">Buffered write commands per device actor. Default is 64.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Recent events</span>
+                          <input name="serial_recent_events" type="number" min="0" value="{{.Serial.RecentEvents}}" placeholder="64">
+                          <span class="field-hint">Recent serial events retained for status checks.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Reconnect ms</span>
+                          <input name="serial_reconnect_ms" type="number" min="0" value="{{.Serial.ReconnectMillis}}" placeholder="1000">
+                          <span class="field-hint">Delay before retrying after a configured open port disconnects.</span>
+                        </label>
                       </div>
-                    </td>
-                  </tr>
-                {{else}}
-                  <tr>
-                    <td colspan="7">No hardware devices yet.</td>
-                  </tr>
-                {{end}}
-              </tbody>
-            </table>
+                    </div>
+                  {{end}}
+                </form>
+              </article>
+            {{else}}
+              <p>No hardware devices yet.</p>
+            {{end}}
           </div>
         </section>
 
         <section class="panel">
           <h2>Create Hardware Device</h2>
-          <form method="post" action="/hardware">
-            <label>
-              ID
-              <input name="id" placeholder="cam_01" autocomplete="off" required>
-            </label>
-            <label>
-              Kind
-              <select name="kind">
-                {{range .HardwareKinds}}
-                  <option value="{{.AdminKind}}">{{.Label}}</option>
-                {{end}}
-              </select>
-            </label>
-            <label>
-              Path
-              <input name="path" placeholder="/dev/video2" required>
-            </label>
-            <label>
-              Label
-              <input name="label" placeholder="Front desk Logitech C270">
-            </label>
-            <label>
-              Site
-              <select name="site">
-                <option value="">Unbound</option>
-                {{range .HardwareSites}}
-                  <option value="{{.Site}}">{{.Site}}</option>
-                {{end}}
-              </select>
-            </label>
-            <label>
-              Alias
-              <input name="alias" placeholder="front_door">
-            </label>
-            <button type="submit">Save device</button>
-          </form>
+          <div class="tabs">
+            <input class="tab-input" type="radio" id="create-uvc" name="create-hardware-tab" checked>
+            <input class="tab-input" type="radio" id="create-serial" name="create-hardware-tab">
+            <div class="tab-list" role="tablist" aria-label="Create hardware type">
+              <label class="tab-label" for="create-uvc">UVC Camera</label>
+              <label class="tab-label" for="create-serial">Serial Port</label>
+            </div>
+            <div class="tab-panel uvc-panel">
+              <form method="post" action="/hardware">
+                <input type="hidden" name="kind" value="uvc-camera">
+                <div class="form-grid">
+                  <label class="field-control">
+                    <span>ID</span>
+                    <input name="id" placeholder="cam_01" autocomplete="off" required>
+                    <span class="field-hint">Stable admin identifier for this camera.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Path</span>
+                    <input name="path" placeholder="/dev/video2" required>
+                    <span class="field-hint">Linux UVC video device path exposed to the hardware plugin.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Label</span>
+                    <input name="label" placeholder="Front desk Logitech C270">
+                    <span class="field-hint">Operator-friendly name shown on this page.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Site</span>
+                    <select name="site">
+                      <option value="">Unbound</option>
+                      {{range .HardwareSites}}
+                        <option value="{{.Site}}">{{.Site}}</option>
+                      {{end}}
+                    </select>
+                    <span class="field-hint">Optional site binding for camera.capture.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Alias</span>
+                    <input name="alias" placeholder="front_door">
+                    <span class="field-hint">Camera name used by site code.</span>
+                  </label>
+                </div>
+                <button type="submit">Create UVC camera</button>
+              </form>
+            </div>
+            <div class="tab-panel serial-panel">
+              <form method="post" action="/hardware">
+                <input type="hidden" name="kind" value="serial">
+                <div class="form-grid">
+                  <label class="field-control">
+                    <span>ID</span>
+                    <input name="id" placeholder="serial_01" autocomplete="off" required>
+                    <span class="field-hint">Stable admin identifier for this physical serial port.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Path</span>
+                    <input name="path" placeholder="/dev/ttyUSB0" required>
+                    <span class="field-hint">TTY path, for example /dev/ttyUSB0, /dev/ttyACM0, or /dev/cu.usbserial-0001.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Label</span>
+                    <input name="label" placeholder="Weather station USB serial">
+                    <span class="field-hint">Operator-friendly name shown on this page.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Site</span>
+                    <select name="site">
+                      <option value="">Unbound</option>
+                      {{range .HardwareSites}}
+                        <option value="{{.Site}}">{{.Site}}</option>
+                      {{end}}
+                    </select>
+                    <span class="field-hint">Optional site binding for the serial module.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Alias</span>
+                    <input name="alias" placeholder="weather_station">
+                    <span class="field-hint">Serial name used by site code.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Baud</span>
+                    <input name="serial_baud" type="number" min="0" value="9600">
+                    <span class="field-hint">Bits per second. Common values include 9600, 57600, and 115200.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Data bits</span>
+                    <select name="serial_data_bits">
+                      <option value="8" selected>8</option>
+                      <option value="7">7</option>
+                      <option value="6">6</option>
+                      <option value="5">5</option>
+                    </select>
+                    <span class="field-hint">Number of data bits in each serial frame.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Parity</span>
+                    <select name="serial_parity">
+                      <option value="none" selected>None</option>
+                      <option value="odd">Odd</option>
+                      <option value="even">Even</option>
+                      <option value="mark">Mark</option>
+                      <option value="space">Space</option>
+                    </select>
+                    <span class="field-hint">Parity bit mode expected by the device.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Stop bits</span>
+                    <select name="serial_stop_bits">
+                      <option value="1" selected>1</option>
+                      <option value="1.5">1.5</option>
+                      <option value="2">2</option>
+                    </select>
+                    <span class="field-hint">Stop bits used to mark the end of each frame.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Read timeout ms</span>
+                    <input name="serial_read_timeout_ms" type="number" min="0" value="500">
+                    <span class="field-hint">Low-level read polling timeout.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Request timeout ms</span>
+                    <input name="serial_request_timeout_ms" type="number" min="0" value="1000">
+                    <span class="field-hint">Default timeout for serial.request.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Write queue size</span>
+                    <input name="serial_write_queue_size" type="number" min="0" value="64">
+                    <span class="field-hint">Buffered write commands per device actor.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Recent events</span>
+                    <input name="serial_recent_events" type="number" min="0" value="64">
+                    <span class="field-hint">Recent serial events retained for status checks.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Reconnect ms</span>
+                    <input name="serial_reconnect_ms" type="number" min="0" value="1000">
+                    <span class="field-hint">Delay before retrying after a configured open port disconnects.</span>
+                  </label>
+                </div>
+                <button type="submit">Create serial port</button>
+              </form>
+            </div>
+          </div>
         </section>
       {{end}}
 

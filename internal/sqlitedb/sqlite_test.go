@@ -304,13 +304,34 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:    "serial_01",
+		Kind:  hardware.AdminKindSerial,
+		Path:  "/dev/ttyUSB0",
+		Label: "Weather station",
+		Site:  "acme",
+		Alias: "weather_station",
+		Serial: hardware.SerialOptions{
+			BaudRate:             115200,
+			DataBits:             7,
+			Parity:               "even",
+			StopBits:             "2",
+			ReadTimeoutMillis:    250,
+			RequestTimeoutMillis: 3000,
+			WriteQueueSize:       32,
+			RecentEvents:         128,
+			ReconnectMillis:      750,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	devices, err := db.ListHardwareDevices(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(devices) != 2 {
-		t.Fatalf("devices = %#v, want two", devices)
+	if len(devices) != 3 {
+		t.Fatalf("devices = %#v, want three", devices)
 	}
 	if devices[0].ID != "cam_01" || devices[0].Site != "acme" || devices[0].Alias != "cam_01" {
 		t.Fatalf("bound device = %+v, want cam_01 bound to acme as cam_01", devices[0])
@@ -318,19 +339,28 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	if devices[1].ID != "cam_02" || devices[1].Site != "" {
 		t.Fatalf("unbound device = %+v, want no site", devices[1])
 	}
+	if devices[2].ID != "serial_01" || devices[2].Serial.BaudRate != 115200 || devices[2].Serial.Parity != "even" {
+		t.Fatalf("serial device = %+v, want serial settings", devices[2])
+	}
 
 	config, err := db.HardwareConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(config.Devices) != 2 || len(config.SiteDeviceBindings) != 1 {
-		t.Fatalf("config = %+v, want two devices and one binding", config)
+	if len(config.Devices) != 3 || len(config.SiteDeviceBindings) != 2 {
+		t.Fatalf("config = %+v, want three devices and two bindings", config)
 	}
 	if got := config.Devices[0]; got.Kind != hardware.DeviceKindCameraUVC || got.Plugin != hardware.AdminKindUVCCamera || got.Path != "/dev/video2" {
 		t.Fatalf("device config = %+v, want normalized UVC device", got)
 	}
 	if got := config.SiteDeviceBindings[0]; got.Site != "acme" || got.Alias != "cam_01" || !got.Permissions.Capture {
 		t.Fatalf("binding config = %+v, want acme/cam_01 capture", got)
+	}
+	if got := config.Devices[2]; got.Kind != hardware.DeviceKindSerial || got.Serial.BaudRate != 115200 || got.Serial.RequestTimeoutMillis != 3000 {
+		t.Fatalf("serial config = %+v, want normalized serial device with options", got)
+	}
+	if got := config.SiteDeviceBindings[1]; got.Site != "acme" || got.Alias != "weather_station" || !got.Permissions.SerialRead || !got.Permissions.SerialWrite {
+		t.Fatalf("serial binding config = %+v, want serial permissions", got)
 	}
 }
 
@@ -420,6 +450,39 @@ func TestSaveHardwareDeviceRenamesDeviceAndBinding(t *testing.T) {
 	}
 	if len(config.SiteDeviceBindings) != 1 || config.SiteDeviceBindings[0].DeviceID != "video0" || config.SiteDeviceBindings[0].Alias != "video0" {
 		t.Fatalf("config bindings = %+v, want binding moved to video0", config.SiteDeviceBindings)
+	}
+}
+
+func TestSaveHardwareDeviceRenamePreservesKind(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		ID:   "serial_01",
+		Kind: hardware.AdminKindSerial,
+		Path: "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		OriginalID: "serial_01",
+		ID:         "serial_renamed",
+		Kind:       hardware.AdminKindUVCCamera,
+		Path:       "/dev/ttyUSB1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	devices, err := db.ListHardwareDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].Kind != hardware.AdminKindSerial {
+		t.Fatalf("devices = %+v, want renamed serial device to keep kind", devices)
 	}
 }
 
