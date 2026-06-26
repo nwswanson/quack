@@ -95,7 +95,6 @@ func TestAdminHardwareFormSavesDevice(t *testing.T) {
 		Hardware: repo,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
-		"id":    {"cam_01"},
 		"kind":  {hardware.AdminKindUVCCamera},
 		"path":  {"/dev/video2"},
 		"label": {"Front desk Logitech C270"},
@@ -113,7 +112,7 @@ func TestAdminHardwareFormSavesDevice(t *testing.T) {
 	if resp.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want redirect", resp.Code)
 	}
-	if repo.saved.ID != "cam_01" || repo.saved.Kind != hardware.AdminKindUVCCamera || repo.saved.Path != "/dev/video2" || repo.saved.Label != "Front desk Logitech C270" || repo.saved.Site != "acme" || repo.saved.Alias != "front_door" {
+	if repo.saved.ID != "" || repo.saved.Kind != hardware.AdminKindUVCCamera || repo.saved.Path != "/dev/video2" || repo.saved.Label != "Front desk Logitech C270" || repo.saved.Site != "acme" || repo.saved.Alias != "front_door" {
 		t.Fatalf("saved device = %+v, want form fields", repo.saved)
 	}
 }
@@ -128,7 +127,6 @@ func TestAdminHardwareFormSavesSerialOptions(t *testing.T) {
 		Hardware: repo,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
-		"id":                        {"serial_01"},
 		"kind":                      {hardware.AdminKindSerial},
 		"path":                      {"/dev/ttyUSB0"},
 		"site":                      {"acme"},
@@ -175,7 +173,6 @@ func TestAdminHardwareEditKeepsExistingKind(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
 		"action":      {"save"},
 		"original_id": {"serial_01"},
-		"id":          {"serial_01"},
 		"kind":        {hardware.AdminKindUVCCamera},
 		"path":        {"/dev/ttyUSB1"},
 	}.Encode()))
@@ -193,6 +190,9 @@ func TestAdminHardwareEditKeepsExistingKind(t *testing.T) {
 	if repo.saved.Kind != hardware.AdminKindSerial {
 		t.Fatalf("saved kind = %q, want existing serial kind", repo.saved.Kind)
 	}
+	if repo.saved.ID != "serial_01" {
+		t.Fatalf("saved id = %q, want original id fallback", repo.saved.ID)
+	}
 }
 
 func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
@@ -207,7 +207,6 @@ func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/hardware", strings.NewReader(url.Values{
 		"action":      {"save"},
 		"original_id": {"cam_01"},
-		"id":          {"video0"},
 		"kind":        {hardware.AdminKindUVCCamera},
 		"path":        {"/dev/video4"},
 		"label":       {"Moved camera"},
@@ -225,8 +224,8 @@ func TestAdminHardwareFormCanUnbindAndEditDevice(t *testing.T) {
 	if resp.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want redirect", resp.Code)
 	}
-	if repo.saved.OriginalID != "cam_01" || repo.saved.ID != "video0" || repo.saved.Path != "/dev/video4" || repo.saved.Label != "Moved camera" || repo.saved.Site != "" || repo.saved.Alias != "" {
-		t.Fatalf("saved device = %+v, want renamed unbound device with default alias", repo.saved)
+	if repo.saved.OriginalID != "cam_01" || repo.saved.ID != "cam_01" || repo.saved.Path != "/dev/video4" || repo.saved.Label != "Moved camera" || repo.saved.Site != "" || repo.saved.Alias != "cam_01" {
+		t.Fatalf("saved device = %+v, want edited unbound device with original id", repo.saved)
 	}
 }
 
@@ -261,11 +260,11 @@ func TestAdminHardwarePageRendersEditableRows(t *testing.T) {
 	for _, want := range []string{
 		`<article class="hardware-card">`,
 		`<input type="hidden" name="original_id" value="cam_01">`,
+		`<input type="hidden" name="id" value="cam_01">`,
 		`<input type="hidden" name="kind" value="uvc-camera">`,
-		`<input name="id" value="cam_01" autocomplete="off" required>`,
 		`<input name="path" value="/dev/video2" required>`,
 		`<input name="label" value="Front desk">`,
-		`<input name="alias" value="front_door" placeholder="cam_01">`,
+		`<input name="alias" value="front_door" placeholder="front_door">`,
 		`<option value="acme" selected>acme</option>`,
 		`<option value="beta" >beta</option>`,
 		`<button class="small-button" form="hardware-save-cam_01" type="submit">Save</button>`,

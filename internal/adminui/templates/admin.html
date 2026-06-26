@@ -789,7 +789,7 @@
               <article class="hardware-card">
                 <div class="hardware-card-header">
                   <div class="hardware-title">
-                    <strong>{{.ID}}</strong>
+                    <strong>{{if .Label}}{{.Label}}{{else if .Alias}}{{.Alias}}{{else}}{{.Path}}{{end}}</strong>
                     <span class="hardware-kind">
                       {{if eq .Kind "serial"}}Serial port{{else if eq .Kind "uvc-camera"}}UVC camera{{else}}{{.Kind}}{{end}}
                     </span>
@@ -811,13 +811,9 @@
                 <form id="hardware-save-{{.ID}}" class="hardware-form" method="post" action="/hardware">
                   <input type="hidden" name="action" value="save">
                   <input type="hidden" name="original_id" value="{{.ID}}">
+                  <input type="hidden" name="id" value="{{.ID}}">
                   <input type="hidden" name="kind" value="{{.Kind}}">
                   <div class="form-grid">
-                    <label class="field-control">
-                      <span>ID</span>
-                      <input name="id" value="{{.ID}}" autocomplete="off" required>
-                      <span class="field-hint">Stable admin identifier used by bindings.</span>
-                    </label>
                     <label class="field-control">
                       <span>Kind</span>
                       <input value="{{if eq .Kind "serial"}}Serial port{{else if eq .Kind "uvc-camera"}}UVC camera{{else}}{{.Kind}}{{end}}" disabled>
@@ -845,7 +841,7 @@
                     </label>
                     <label class="field-control">
                       <span>Alias</span>
-                      <input name="alias" value="{{.Alias}}" placeholder="{{.ID}}">
+                      <input name="alias" value="{{.Alias}}" placeholder="{{if eq .Kind "serial"}}weather_station{{else}}front_door{{end}}">
                       <span class="field-hint">Name site code uses, for example front_door or weather_station.</span>
                     </label>
                   </div>
@@ -941,11 +937,6 @@
                 <input type="hidden" name="kind" value="uvc-camera">
                 <div class="form-grid">
                   <label class="field-control">
-                    <span>ID</span>
-                    <input name="id" placeholder="cam_01" autocomplete="off" required>
-                    <span class="field-hint">Stable admin identifier for this camera.</span>
-                  </label>
-                  <label class="field-control">
                     <span>Path</span>
                     <input name="path" placeholder="/dev/video2" required>
                     <span class="field-hint">Linux UVC video device path exposed to the hardware plugin.</span>
@@ -978,11 +969,6 @@
               <form method="post" action="/hardware">
                 <input type="hidden" name="kind" value="serial">
                 <div class="form-grid">
-                  <label class="field-control">
-                    <span>ID</span>
-                    <input name="id" placeholder="serial_01" autocomplete="off" required>
-                    <span class="field-hint">Stable admin identifier for this physical serial port.</span>
-                  </label>
                   <label class="field-control">
                     <span>Path</span>
                     <input name="path" placeholder="/dev/ttyUSB0" required>

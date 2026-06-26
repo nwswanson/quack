@@ -47,7 +47,7 @@ func ConfigFromAdminDevices(devices []AdminDevice) Config {
 		}
 		alias := strings.TrimSpace(device.Alias)
 		if alias == "" {
-			alias = id
+			continue
 		}
 		permissions := DevicePermissions{Capture: true}
 		if deviceKindFromAdminKind(adminKind) == DeviceKindSerial {

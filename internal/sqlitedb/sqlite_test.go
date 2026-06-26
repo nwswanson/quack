@@ -293,6 +293,7 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 		Path:  "/dev/video2",
 		Label: "Front desk Logitech C270",
 		Site:  "acme",
+		Alias: "front_door",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -333,8 +334,8 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	if len(devices) != 3 {
 		t.Fatalf("devices = %#v, want three", devices)
 	}
-	if devices[0].ID != "cam_01" || devices[0].Site != "acme" || devices[0].Alias != "cam_01" {
-		t.Fatalf("bound device = %+v, want cam_01 bound to acme as cam_01", devices[0])
+	if devices[0].ID != "cam_01" || devices[0].Site != "acme" || devices[0].Alias != "front_door" {
+		t.Fatalf("bound device = %+v, want cam_01 bound to acme as front_door", devices[0])
 	}
 	if devices[1].ID != "cam_02" || devices[1].Site != "" {
 		t.Fatalf("unbound device = %+v, want no site", devices[1])
@@ -353,8 +354,8 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	if got := config.Devices[0]; got.Kind != hardware.DeviceKindCameraUVC || got.Plugin != hardware.AdminKindUVCCamera || got.Path != "/dev/video2" {
 		t.Fatalf("device config = %+v, want normalized UVC device", got)
 	}
-	if got := config.SiteDeviceBindings[0]; got.Site != "acme" || got.Alias != "cam_01" || !got.Permissions.Capture {
-		t.Fatalf("binding config = %+v, want acme/cam_01 capture", got)
+	if got := config.SiteDeviceBindings[0]; got.Site != "acme" || got.Alias != "front_door" || !got.Permissions.Capture {
+		t.Fatalf("binding config = %+v, want acme/front_door capture", got)
 	}
 	if got := config.Devices[2]; got.Kind != hardware.DeviceKindSerial || got.Serial.BaudRate != 115200 || got.Serial.RequestTimeoutMillis != 3000 {
 		t.Fatalf("serial config = %+v, want normalized serial device with options", got)
@@ -373,10 +374,11 @@ func TestSaveHardwareDeviceRejectsDuplicatePath(t *testing.T) {
 	defer db.Close()
 
 	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
-		ID:   "cam_01",
-		Kind: hardware.AdminKindUVCCamera,
-		Path: "/dev/video2",
-		Site: "acme",
+		ID:    "cam_01",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video2",
+		Site:  "acme",
+		Alias: "front_door",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -386,15 +388,17 @@ func TestSaveHardwareDeviceRejectsDuplicatePath(t *testing.T) {
 		Path:  "/dev/video2",
 		Label: "Updated label",
 		Site:  "beta",
+		Alias: "back_door",
 	}); err != nil {
 		t.Fatalf("updating existing device path failed: %v", err)
 	}
 
 	err = db.SaveHardwareDevice(ctx, hardware.AdminDevice{
-		ID:   "cam_02",
-		Kind: hardware.AdminKindUVCCamera,
-		Path: "/dev/video2",
-		Site: "gamma",
+		ID:    "cam_02",
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video2",
+		Site:  "gamma",
+		Alias: "side_door",
 	})
 	if err == nil || !strings.Contains(err.Error(), `path "/dev/video2" is already used by device "cam_01"`) {
 		t.Fatalf("SaveHardwareDevice error = %v, want duplicate path rejection", err)
@@ -425,6 +429,7 @@ func TestSaveHardwareDeviceRenamesDeviceAndBinding(t *testing.T) {
 		Path:       "/dev/video0",
 		Label:      "Renamed camera",
 		Site:       "acme",
+		Alias:      "front_door",
 	}); err != nil {
 		t.Fatalf("rename hardware device failed: %v", err)
 	}
@@ -437,8 +442,8 @@ func TestSaveHardwareDeviceRenamesDeviceAndBinding(t *testing.T) {
 		t.Fatalf("devices = %#v, want one renamed device", devices)
 	}
 	got := devices[0]
-	if got.ID != "video0" || got.Path != "/dev/video0" || got.Label != "Renamed camera" || got.Site != "acme" || got.Alias != "video0" {
-		t.Fatalf("renamed device = %+v, want video0 bound as video0", got)
+	if got.ID != "video0" || got.Path != "/dev/video0" || got.Label != "Renamed camera" || got.Site != "acme" || got.Alias != "front_door" {
+		t.Fatalf("renamed device = %+v, want video0 bound as front_door", got)
 	}
 
 	config, err := db.HardwareConfig(ctx)
@@ -448,8 +453,42 @@ func TestSaveHardwareDeviceRenamesDeviceAndBinding(t *testing.T) {
 	if len(config.Devices) != 1 || config.Devices[0].ID != "video0" || config.Devices[0].Path != "/dev/video0" {
 		t.Fatalf("config devices = %+v, want renamed video0", config.Devices)
 	}
-	if len(config.SiteDeviceBindings) != 1 || config.SiteDeviceBindings[0].DeviceID != "video0" || config.SiteDeviceBindings[0].Alias != "video0" {
+	if len(config.SiteDeviceBindings) != 1 || config.SiteDeviceBindings[0].DeviceID != "video0" || config.SiteDeviceBindings[0].Alias != "front_door" {
 		t.Fatalf("config bindings = %+v, want binding moved to video0", config.SiteDeviceBindings)
+	}
+}
+
+func TestSaveHardwareDeviceGeneratesID(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.SaveHardwareDevice(ctx, hardware.AdminDevice{
+		Kind:  hardware.AdminKindUVCCamera,
+		Path:  "/dev/video2",
+		Label: "Front desk",
+		Site:  "acme",
+		Alias: "front_door",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	devices, err := db.ListHardwareDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || !strings.HasPrefix(devices[0].ID, "hw_") {
+		t.Fatalf("devices = %+v, want generated hardware id", devices)
+	}
+	config, err := db.HardwareConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.SiteDeviceBindings) != 1 || config.SiteDeviceBindings[0].Alias != "front_door" || config.SiteDeviceBindings[0].DeviceID != devices[0].ID {
+		t.Fatalf("config bindings = %+v, want binding to generated id with explicit alias", config.SiteDeviceBindings)
 	}
 }
 

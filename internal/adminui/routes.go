@@ -720,6 +720,9 @@ func (h Handler) handleAdminHardwareSave(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if strings.TrimSpace(device.OriginalID) != "" {
+			if strings.TrimSpace(device.ID) == "" {
+				device.ID = device.OriginalID
+			}
 			devices, err := h.hardware.ListHardwareDevices(r.Context())
 			if err != nil {
 				slog.ErrorContext(r.Context(), "load hardware devices for immutable kind failed", "username", user.Username, "device", device.OriginalID, "error", err)

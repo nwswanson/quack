@@ -1483,11 +1483,17 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 	device.Alias = strings.TrimSpace(device.Alias)
 	device.Serial.Parity = strings.TrimSpace(device.Serial.Parity)
 	device.Serial.StopBits = strings.TrimSpace(device.Serial.StopBits)
-	if device.ID == "" {
-		return fmt.Errorf("device id is required")
-	}
 	if device.OriginalID == "" {
+		if device.ID == "" {
+			id, err := randomHardwareDeviceID()
+			if err != nil {
+				return fmt.Errorf("generate hardware device id: %w", err)
+			}
+			device.ID = id
+		}
 		device.OriginalID = device.ID
+	} else if device.ID == "" {
+		device.ID = device.OriginalID
 	}
 	if device.Kind == "" {
 		device.Kind = hardware.DefaultAdminKind()
@@ -1496,7 +1502,7 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 		return fmt.Errorf("device path is required")
 	}
 	if device.Site != "" && device.Alias == "" {
-		device.Alias = device.ID
+		return fmt.Errorf("device alias is required when binding to a site")
 	}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
@@ -2735,6 +2741,14 @@ func randomSecret(n int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func randomHardwareDeviceID() (string, error) {
+	secret, err := randomSecret(16)
+	if err != nil {
+		return "", err
+	}
+	return "hw_" + secret, nil
 }
 
 func hashPassword(password string) (string, error) {
