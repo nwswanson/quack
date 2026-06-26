@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"quack/internal/domain"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
+	"quack/internal/sites"
 )
 
 const (
@@ -36,6 +38,10 @@ func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req
 	}
 	if err := validateWebSocketUpgrade(r); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateWebSocketOrigin(r, req.SiteHost); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	settings, err := h.websocketSettings(r.Context())
@@ -561,6 +567,31 @@ func validateWebSocketUpgrade(r *http.Request) error {
 	}
 	if version := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Version")); version != "13" {
 		return fmt.Errorf("unsupported websocket version")
+	}
+	return nil
+}
+
+func validateWebSocketOrigin(r *http.Request, siteHost string) error {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return fmt.Errorf("websocket origin is required")
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("websocket origin is invalid")
+	}
+	originHost := sites.NormalizeHost(u.Host)
+	if originHost == "" {
+		return fmt.Errorf("websocket origin is invalid")
+	}
+	expectedHost := sites.NormalizeHost(siteHost)
+	if expectedHost == "" {
+		expectedHost = sites.NormalizeHost(r.Host)
+	}
+	// TODO: Replace this same-host check with a shared origin/CORS policy
+	// resolver when Quack supports explicit cross-host hotlinking.
+	if expectedHost == "" || originHost != expectedHost {
+		return fmt.Errorf("websocket origin is not allowed")
 	}
 	return nil
 }

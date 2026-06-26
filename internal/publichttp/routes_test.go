@@ -171,7 +171,7 @@ func TestHandlerIntroducesStaticRouteDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !reflect.DeepEqual(decision, PublicRouteDecision{Site: "foo", Kind: RouteStatic, Path: "/assets/app.css"}) {
+	if !reflect.DeepEqual(decision, PublicRouteDecision{Site: "foo", SiteHost: "foo.example.com", Kind: RouteStatic, Path: "/assets/app.css"}) {
 		t.Fatalf("decision = %+v, want static route for foo", decision)
 	}
 }

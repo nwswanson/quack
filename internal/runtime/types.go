@@ -178,6 +178,7 @@ const (
 
 type WebSocketInvocationRequest struct {
 	Site      string
+	SiteHost  string
 	Version   int64
 	Route     string
 	Query     string

@@ -25,6 +25,7 @@ const (
 
 type PublicRouteDecision struct {
 	Site                string
+	SiteHost            string
 	Version             int64
 	Kind                RouteKind
 	Path                string
@@ -143,7 +144,7 @@ func (h Handler) handlePublicRequest(w http.ResponseWriter, r *http.Request) {
 		})
 	case RouteWebSocket:
 		h.runtime.ServeWebSocketRoute(w, r, appruntime.WebSocketInvocationRequest{
-			Site: decision.Site, Version: decision.Version, Route: decision.Path, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
+			Site: decision.Site, SiteHost: decision.SiteHost, Version: decision.Version, Route: decision.Path, Query: r.URL.RawQuery, Limits: decision.ResourceLimits,
 		})
 	default:
 		http.NotFound(w, r)
@@ -164,7 +165,7 @@ func (h Handler) decide(r *http.Request) (PublicRouteDecision, error) {
 	}
 	site := resolution.Site
 	if isQuackPath(r.URL.Path) {
-		return PublicRouteDecision{Site: site}, nil
+		return PublicRouteDecision{Site: site, SiteHost: resolution.Host}, nil
 	}
 	if h.routes != nil {
 		decision, ok, err := h.routes.LookupRoute(r, site, r.URL.Path)
@@ -172,13 +173,15 @@ func (h Handler) decide(r *http.Request) (PublicRouteDecision, error) {
 			return PublicRouteDecision{}, err
 		}
 		if ok {
+			decision.SiteHost = resolution.Host
 			return decision, nil
 		}
 	}
 	return PublicRouteDecision{
-		Site: site,
-		Kind: RouteStatic,
-		Path: r.URL.Path,
+		Site:     site,
+		SiteHost: resolution.Host,
+		Kind:     RouteStatic,
+		Path:     r.URL.Path,
 	}, nil
 }
 

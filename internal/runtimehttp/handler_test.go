@@ -166,6 +166,71 @@ func TestHandlerWebSocketUpgradeAppliesConnectEffects(t *testing.T) {
 	}
 }
 
+func TestHandlerWebSocketRejectsMissingOriginBeforeRuntime(t *testing.T) {
+	runtime := &recordingRuntime{}
+	handler := New(runtime)
+	req := httptest.NewRequest(http.MethodGet, "/socket", nil)
+	req.Host = "foo.example.com"
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rec := httptest.NewRecorder()
+
+	handler.ServeWebSocketRoute(rec, req, appruntime.WebSocketInvocationRequest{Site: "foo", SiteHost: "foo.example.com", Version: 1, Route: "/socket"})
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if len(runtime.websocketRequests) != 0 {
+		t.Fatalf("websocket requests = %#v, want none", runtime.websocketRequests)
+	}
+}
+
+func TestHandlerWebSocketRejectsCrossOriginBeforeRuntime(t *testing.T) {
+	runtime := &recordingRuntime{}
+	handler := New(runtime)
+	req := httptest.NewRequest(http.MethodGet, "/socket", nil)
+	req.Host = "foo.example.com"
+	req.Header.Set("Origin", "https://evil.example.com")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rec := httptest.NewRecorder()
+
+	handler.ServeWebSocketRoute(rec, req, appruntime.WebSocketInvocationRequest{Site: "foo", SiteHost: "foo.example.com", Version: 1, Route: "/socket"})
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if len(runtime.websocketRequests) != 0 {
+		t.Fatalf("websocket requests = %#v, want none", runtime.websocketRequests)
+	}
+}
+
+func TestHandlerWebSocketAllowsSameOriginWithPort(t *testing.T) {
+	runtime := &recordingRuntime{err: appruntime.ErrDisabled}
+	handler := New(runtime)
+	req := httptest.NewRequest(http.MethodGet, "/socket", nil)
+	req.Host = "foo.example.com:8443"
+	req.Header.Set("Origin", "https://foo.example.com:8443")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rec := httptest.NewRecorder()
+
+	handler.ServeWebSocketRoute(rec, req, appruntime.WebSocketInvocationRequest{Site: "foo", SiteHost: "foo.example.com", Version: 1, Route: "/socket"})
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want runtime disabled after origin passes; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(runtime.websocketRequests) != 1 {
+		t.Fatalf("websocket requests = %#v, want one runtime invocation", runtime.websocketRequests)
+	}
+}
+
 func TestSocketManagerEnforcesConnectionLimits(t *testing.T) {
 	manager := newSocketManager()
 	first, reserved, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 1, maxPerSite: 10})
@@ -344,6 +409,7 @@ func websocketPipe(t *testing.T, handler Handler, req appruntime.WebSocketInvoca
 	key := "dGhlIHNhbXBsZSBub25jZQ=="
 	httpReq.Header.Set("Connection", "Upgrade")
 	httpReq.Header.Set("Upgrade", "websocket")
+	httpReq.Header.Set("Origin", "https://foo.example.com")
 	httpReq.Header.Set("Sec-WebSocket-Version", "13")
 	httpReq.Header.Set("Sec-WebSocket-Key", key)
 	done := make(chan struct{})
