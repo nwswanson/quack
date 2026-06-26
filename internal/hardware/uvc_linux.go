@@ -53,6 +53,10 @@ func NewUVCProvider() *UVCProvider {
 	}
 }
 
+func (p *UVCProvider) DeviceKinds() []string {
+	return []string{DeviceKindCameraUVC}
+}
+
 type deviceCaptureLock struct {
 	ch chan struct{}
 }

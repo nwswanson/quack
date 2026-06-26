@@ -692,7 +692,9 @@
                     </td>
                     <td>
                       <select class="table-control" form="hardware-save-{{.ID}}" name="kind">
-                        <option value="uvc-camera" {{if eq .Kind "uvc-camera"}}selected{{end}}>uvc-camera</option>
+                        {{range $.HardwareKinds}}
+                          <option value="{{.AdminKind}}" {{if eq $device.Kind .AdminKind}}selected{{end}}>{{.Label}}</option>
+                        {{end}}
                       </select>
                     </td>
                     <td><input class="table-control path-control" form="hardware-save-{{.ID}}" name="path" value="{{.Path}}" required></td>
@@ -736,7 +738,7 @@
         </section>
 
         <section class="panel">
-          <h2>Create USB Device</h2>
+          <h2>Create Hardware Device</h2>
           <form method="post" action="/hardware">
             <label>
               ID
@@ -745,7 +747,9 @@
             <label>
               Kind
               <select name="kind">
-                <option value="uvc-camera">uvc-camera</option>
+                {{range .HardwareKinds}}
+                  <option value="{{.AdminKind}}">{{.Label}}</option>
+                {{end}}
               </select>
             </label>
             <label>

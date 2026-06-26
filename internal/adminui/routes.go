@@ -864,6 +864,7 @@ type adminPageData struct {
 	SecretsUnlocked         bool
 	HardwareDevices         []hardware.AdminDevice
 	HardwareSites           []domain.PublishedSite
+	HardwareKinds           []hardware.AdminKindInfo
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -892,10 +893,11 @@ func (d adminPageData) HTTPClientAllowedCIDRsValue() string {
 
 func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page string) (adminPageData, error) {
 	data := adminPageData{
-		User:  user,
-		Page:  page,
-		Title: adminPageTitle(page),
-		Nav:   adminNav(user),
+		User:          user,
+		Page:          page,
+		Title:         adminPageTitle(page),
+		Nav:           adminNav(user),
+		HardwareKinds: hardware.AdminKinds,
 	}
 	switch page {
 	case adminPageSites:

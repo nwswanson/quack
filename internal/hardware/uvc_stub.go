@@ -10,6 +10,10 @@ func NewUVCProvider() *UVCProvider {
 	return &UVCProvider{}
 }
 
+func (p *UVCProvider) DeviceKinds() []string {
+	return []string{DeviceKindCameraUVC}
+}
+
 func (p *UVCProvider) ListDevices(context.Context, ListDevicesRequest) ([]DeviceInfo, error) {
 	return nil, ErrUnsupportedPlatform
 }

@@ -1451,7 +1451,7 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 		device.OriginalID = device.ID
 	}
 	if device.Kind == "" {
-		device.Kind = hardware.AdminKindUVCCamera
+		device.Kind = hardware.DefaultAdminKind()
 	}
 	if device.Path == "" {
 		return fmt.Errorf("device path is required")

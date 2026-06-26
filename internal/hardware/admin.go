@@ -4,7 +4,23 @@ import "strings"
 
 const (
 	AdminKindUVCCamera = "uvc-camera"
+	AdminKindSerial    = "serial"
+	AdminKindGPIO      = "gpio"
 )
+
+const DefaultCameraDeviceKind = DeviceKindCameraUVC
+
+type AdminKindInfo struct {
+	AdminKind  string
+	DeviceKind string
+	Label      string
+}
+
+var AdminKinds = []AdminKindInfo{
+	{AdminKind: AdminKindUVCCamera, DeviceKind: DeviceKindCameraUVC, Label: "UVC camera"},
+	{AdminKind: AdminKindSerial, DeviceKind: DeviceKindSerial, Label: "Serial"},
+	{AdminKind: AdminKindGPIO, DeviceKind: DeviceKindGPIO, Label: "GPIO"},
+}
 
 func ConfigFromAdminDevices(devices []AdminDevice) Config {
 	out := Config{
@@ -42,11 +58,27 @@ func ConfigFromAdminDevices(devices []AdminDevice) Config {
 	return out
 }
 
-func deviceKindFromAdminKind(kind string) string {
+func NormalizeDeviceKind(kind string) string {
 	switch strings.TrimSpace(kind) {
-	case "", AdminKindUVCCamera, DeviceKindCameraUVC:
+	case AdminKindUVCCamera, DeviceKindCameraUVC:
 		return DeviceKindCameraUVC
+	case DeviceKindSerial:
+		return DeviceKindSerial
+	case DeviceKindGPIO:
+		return DeviceKindGPIO
 	default:
-		return kind
+		return strings.TrimSpace(kind)
 	}
+}
+
+func DefaultAdminKind() string {
+	return AdminKindUVCCamera
+}
+
+func deviceKindFromAdminKind(kind string) string {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return DeviceKindCameraUVC
+	}
+	return NormalizeDeviceKind(kind)
 }

@@ -7,7 +7,11 @@ import (
 )
 
 func main() {
-	service := hardware.NewLocalService(hardware.NewUVCProvider())
+	service := hardware.NewLocalService(
+		hardware.NewUVCProvider(),
+		hardware.NewSerialProvider(),
+		hardware.NewGPIOProvider(),
+	)
 	goplugin.Serve(&goplugin.ServeConfig{
 		HandshakeConfig: hardware.Handshake,
 		Plugins:         hardware.PluginMap(service),

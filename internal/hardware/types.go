@@ -9,11 +9,15 @@ import (
 
 const (
 	DeviceKindCameraUVC = "camera.uvc"
+	DeviceKindSerial    = "serial"
+	DeviceKindGPIO      = "gpio"
 	MimeJPEG            = "image/jpeg"
 )
 
 var (
 	ErrNotConfigured       = errors.New("hardware is not configured")
+	ErrKindNotSupported    = errors.New("hardware device kind is not supported")
+	ErrNotImplemented      = errors.New("hardware device kind is not implemented")
 	ErrUnsupportedPlatform = errors.New("hardware device access is not supported on this platform")
 )
 
@@ -145,45 +149,93 @@ type Provider interface {
 	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
 }
 
+type DeviceProvider interface {
+	Provider
+	DeviceKinds() []string
+}
+
 type ConfigProvider interface {
 	HardwareConfig(ctx context.Context) (Config, error)
 }
 
 type LocalService struct {
-	provider Provider
+	providers map[string]Provider
 }
 
-func NewLocalService(provider Provider) *LocalService {
-	return &LocalService{provider: provider}
+func NewLocalService(providers ...DeviceProvider) *LocalService {
+	service := &LocalService{providers: make(map[string]Provider)}
+	for _, provider := range providers {
+		if provider == nil {
+			continue
+		}
+		for _, kind := range provider.DeviceKinds() {
+			kind = NormalizeDeviceKind(kind)
+			if kind == "" {
+				continue
+			}
+			service.providers[kind] = provider
+		}
+	}
+	return service
 }
 
 func (s *LocalService) ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error) {
-	if s == nil || s.provider == nil {
+	if s == nil || len(s.providers) == 0 {
 		return ListDevicesResponse{}, ErrNotConfigured
 	}
-	devices, err := s.provider.ListDevices(ctx, req)
-	if err != nil {
-		return ListDevicesResponse{}, err
+	kind := NormalizeDeviceKind(req.Kind)
+	if kind != "" {
+		provider, ok := s.providers[kind]
+		if !ok {
+			return ListDevicesResponse{}, fmt.Errorf("%w: %s", ErrKindNotSupported, kind)
+		}
+		devices, err := provider.ListDevices(ctx, ListDevicesRequest{Kind: kind, Site: req.Site})
+		if err != nil {
+			return ListDevicesResponse{}, err
+		}
+		return ListDevicesResponse{Devices: devices}, nil
 	}
-	return ListDevicesResponse{Devices: devices}, nil
+	out := make([]DeviceInfo, 0)
+	for providerKind, provider := range s.providers {
+		devices, err := provider.ListDevices(ctx, ListDevicesRequest{Kind: providerKind, Site: req.Site})
+		if err != nil {
+			return ListDevicesResponse{}, err
+		}
+		out = append(out, devices...)
+	}
+	return ListDevicesResponse{Devices: out}, nil
 }
 
 func (s *LocalService) Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error) {
-	if s == nil || s.provider == nil {
-		return CaptureResponse{}, ErrNotConfigured
+	provider, err := s.providerForKind(DefaultCameraDeviceKind)
+	if err != nil {
+		return CaptureResponse{}, err
 	}
-	return s.provider.Capture(ctx, req)
+	return provider.Capture(ctx, req)
 }
 
 func (s *LocalService) CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
-	if s == nil || s.provider == nil {
-		return CancelCaptureResponse{}, ErrNotConfigured
+	provider, err := s.providerForKind(DefaultCameraDeviceKind)
+	if err != nil {
+		return CancelCaptureResponse{}, err
 	}
-	return s.provider.CancelCapture(ctx, req)
+	return provider.CancelCapture(ctx, req)
 }
 
 func (s *LocalService) Close() error {
 	return nil
+}
+
+func (s *LocalService) providerForKind(kind string) (Provider, error) {
+	if s == nil || len(s.providers) == 0 {
+		return nil, ErrNotConfigured
+	}
+	kind = NormalizeDeviceKind(kind)
+	provider, ok := s.providers[kind]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrKindNotSupported, kind)
+	}
+	return provider, nil
 }
 
 type BoundService struct {
@@ -235,8 +287,9 @@ func ValidateConfig(config Config) error {
 		if device.ID == "" {
 			return fmt.Errorf("hardware device id is required")
 		}
+		device.Kind = NormalizeDeviceKind(device.Kind)
 		if device.Kind == "" {
-			device.Kind = DeviceKindCameraUVC
+			return fmt.Errorf("hardware device %q kind is required", device.ID)
 		}
 		if device.Path == "" {
 			return fmt.Errorf("hardware device %q path is required", device.ID)
@@ -378,10 +431,7 @@ func (s *BoundService) resolvedConfig(ctx context.Context) (map[string]DeviceDes
 	devices := make(map[string]DeviceDescriptor, len(config.Devices))
 	for _, device := range config.Devices {
 		device.ID = strings.TrimSpace(device.ID)
-		device.Kind = strings.TrimSpace(device.Kind)
-		if device.Kind == "" {
-			device.Kind = DeviceKindCameraUVC
-		}
+		device.Kind = NormalizeDeviceKind(device.Kind)
 		devices[device.ID] = device
 	}
 	bindings := make(map[string]SiteDeviceBinding, len(config.SiteDeviceBindings))

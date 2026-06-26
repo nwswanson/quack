@@ -40,7 +40,7 @@ func (m *cameraModule) list(thread *starlark.Thread, fn *starlark.Builtin, args 
 		return nil, err
 	}
 	if strings.TrimSpace(kind) == "" {
-		kind = hardware.DeviceKindCameraUVC
+		kind = hardware.DefaultCameraDeviceKind
 	}
 	resp, err := m.hardware.ListDevices(m.ctx, hardware.ListDevicesRequest{Kind: kind, Site: m.site})
 	if err != nil {
@@ -91,7 +91,7 @@ func (m *cameraModule) capture(thread *starlark.Thread, fn *starlark.Builtin, ar
 		"width":       starlark.MakeInt(resp.Width),
 		"height":      starlark.MakeInt(resp.Height),
 		"format":      starlark.String(resp.Format),
-		"device_kind": starlark.String(hardware.DeviceKindCameraUVC),
+		"device_kind": starlark.String(hardware.DefaultCameraDeviceKind),
 	}), nil
 }
 
