@@ -25,6 +25,7 @@ func NewSerialModule(ctx context.Context, site string, hardware HardwareService)
 		Name: "serial",
 		Members: starlark.StringDict{
 			"list":    starlark.NewBuiltin("serial.list", m.list),
+			"open":    starlark.NewBuiltin("serial.open", m.open),
 			"write":   starlark.NewBuiltin("serial.write", m.write),
 			"request": starlark.NewBuiltin("serial.request", m.request),
 			"status":  starlark.NewBuiltin("serial.status", m.status),
@@ -46,6 +47,21 @@ func (m *serialModule) list(thread *starlark.Thread, fn *starlark.Builtin, args 
 		values = append(values, deviceDict(device))
 	}
 	return starlark.NewList(values), nil
+}
+
+func (m *serialModule) open(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id string
+	if err := starlark.UnpackArgs(fn.Name(), args, kwargs, "id", &id); err != nil {
+		return nil, err
+	}
+	resp, err := m.hardware.OpenSerial(m.ctx, hardware.SerialOpenRequest{DeviceID: id, Site: m.site})
+	if err != nil {
+		return nil, err
+	}
+	return stringDict(map[string]starlark.Value{
+		"id":   starlark.String(resp.DeviceID),
+		"open": starlark.Bool(resp.Open),
+	}), nil
 }
 
 func (m *serialModule) write(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {

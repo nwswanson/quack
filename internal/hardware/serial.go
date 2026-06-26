@@ -71,6 +71,14 @@ func (p *SerialDeviceProvider) CancelCapture(context.Context, CancelCaptureReque
 	return CancelCaptureResponse{}, fmt.Errorf("%w: %s", ErrNotImplemented, DeviceKindSerial)
 }
 
+func (p *SerialDeviceProvider) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
+	actor, err := p.actor(req.DeviceID, req.Path, req.Options)
+	if err != nil {
+		return SerialOpenResponse{}, err
+	}
+	return actor.openDevice(ctx)
+}
+
 func (p *SerialDeviceProvider) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
 	actor, err := p.actor(req.DeviceID, req.Path, req.Options)
 	if err != nil {
@@ -180,6 +188,7 @@ type serialCommandResult struct {
 	data    []byte
 	timeout bool
 	status  SerialStatusResponse
+	open    bool
 	closed  bool
 	err     error
 }
@@ -224,6 +233,22 @@ func (a *serialActor) write(ctx context.Context, data []byte) (SerialWriteRespon
 		return SerialWriteResponse{DeviceID: a.deviceID, Bytes: result.bytes}, nil
 	case <-ctx.Done():
 		return SerialWriteResponse{}, ctx.Err()
+	}
+}
+
+func (a *serialActor) openDevice(ctx context.Context) (SerialOpenResponse, error) {
+	reply := make(chan serialCommandResult, 1)
+	if err := a.send(ctx, serialCommand{kind: "open", reply: reply}); err != nil {
+		return SerialOpenResponse{}, err
+	}
+	select {
+	case result := <-reply:
+		if result.err != nil {
+			return SerialOpenResponse{}, result.err
+		}
+		return SerialOpenResponse{DeviceID: a.deviceID, Open: result.open}, nil
+	case <-ctx.Done():
+		return SerialOpenResponse{}, ctx.Err()
 	}
 }
 
@@ -295,8 +320,11 @@ func (a *serialActor) run() {
 	var port serial.Port
 	var readCh chan serialReadResult
 	var active *pendingSerialRequest
-	paused := false
-	reconnect := time.NewTimer(0)
+	opened := false
+	reconnect := time.NewTimer(a.reconnectDelay())
+	if !reconnect.Stop() {
+		<-reconnect.C
+	}
 	defer reconnect.Stop()
 	defer func() {
 		if port != nil {
@@ -315,7 +343,7 @@ func (a *serialActor) run() {
 		case <-a.done:
 			return
 		case <-reconnect.C:
-			if port == nil && !paused {
+			if port == nil && opened {
 				var err error
 				port, readCh, err = a.open()
 				if err != nil {
@@ -325,17 +353,25 @@ func (a *serialActor) run() {
 			}
 		case command := <-a.commands:
 			switch command.kind {
+			case "open":
+				opened = true
+				if port != nil {
+					command.reply <- serialCommandResult{open: true}
+					break
+				}
+				var err error
+				port, readCh, err = a.open()
+				if err != nil {
+					opened = false
+					a.recordError(err)
+					command.reply <- serialCommandResult{err: err}
+					break
+				}
+				command.reply <- serialCommandResult{open: true}
 			case "write":
-				paused = false
 				if port == nil {
-					var err error
-					port, readCh, err = a.open()
-					if err != nil {
-						a.recordError(err)
-						reconnect.Reset(a.reconnectDelay())
-						command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open: %w", a.deviceID, err)}
-						break
-					}
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open", a.deviceID)}
+					break
 				}
 				n, err := port.Write(command.data)
 				if err != nil {
@@ -343,23 +379,18 @@ func (a *serialActor) run() {
 					_ = port.Close()
 					port = nil
 					readCh = nil
-					reconnect.Reset(a.reconnectDelay())
+					if opened {
+						reconnect.Reset(a.reconnectDelay())
+					}
 					command.reply <- serialCommandResult{err: err}
 					break
 				}
 				a.recordEvent("write", command.data, nil)
 				command.reply <- serialCommandResult{bytes: n}
 			case "request":
-				paused = false
 				if port == nil {
-					var err error
-					port, readCh, err = a.open()
-					if err != nil {
-						a.recordError(err)
-						reconnect.Reset(a.reconnectDelay())
-						command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open: %w", a.deviceID, err)}
-						break
-					}
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open", a.deviceID)}
+					break
 				}
 				if active != nil {
 					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q already has a pending request", a.deviceID)}
@@ -378,7 +409,9 @@ func (a *serialActor) run() {
 					_ = port.Close()
 					port = nil
 					readCh = nil
-					reconnect.Reset(a.reconnectDelay())
+					if opened {
+						reconnect.Reset(a.reconnectDelay())
+					}
 					command.reply <- serialCommandResult{err: err}
 					break
 				}
@@ -401,7 +434,7 @@ func (a *serialActor) run() {
 			case "status":
 				command.reply <- serialCommandResult{status: a.snapshotStatus()}
 			case "close":
-				paused = true
+				opened = false
 				if active != nil {
 					active.finish(serialCommandResult{err: io.ErrClosedPipe})
 					active = nil
@@ -410,6 +443,12 @@ func (a *serialActor) run() {
 					_ = port.Close()
 					port = nil
 					readCh = nil
+				}
+				if !reconnect.Stop() {
+					select {
+					case <-reconnect.C:
+					default:
+					}
 				}
 				a.setClosed()
 				command.reply <- serialCommandResult{closed: true}
@@ -426,7 +465,9 @@ func (a *serialActor) run() {
 					active.finish(serialCommandResult{err: result.err})
 					active = nil
 				}
-				reconnect.Reset(a.reconnectDelay())
+				if opened {
+					reconnect.Reset(a.reconnectDelay())
+				}
 				break
 			}
 			if len(result.data) == 0 {

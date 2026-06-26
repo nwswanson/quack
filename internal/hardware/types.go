@@ -25,6 +25,7 @@ type Service interface {
 	ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error)
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
 	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
+	OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
 	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
 	SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error)
@@ -103,6 +104,18 @@ type SerialOptions struct {
 	WriteQueueSize       int    `json:"write_queue_size" yaml:"write_queue_size"`
 	RecentEvents         int    `json:"recent_events" yaml:"recent_events"`
 	ReconnectMillis      int    `json:"reconnect_ms" yaml:"reconnect_ms"`
+}
+
+type SerialOpenRequest struct {
+	DeviceID string
+	Site     string
+	Path     string
+	Options  SerialOptions
+}
+
+type SerialOpenResponse struct {
+	DeviceID string
+	Open     bool
 }
 
 type SerialWriteRequest struct {
@@ -234,6 +247,7 @@ type Provider interface {
 }
 
 type SerialProvider interface {
+	OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
 	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
 	SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error)
@@ -311,6 +325,14 @@ func (s *LocalService) CancelCapture(ctx context.Context, req CancelCaptureReque
 		return CancelCaptureResponse{}, err
 	}
 	return provider.CancelCapture(ctx, req)
+}
+
+func (s *LocalService) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
+	provider, err := s.serialProvider()
+	if err != nil {
+		return SerialOpenResponse{}, err
+	}
+	return provider.OpenSerial(ctx, req)
 }
 
 func (s *LocalService) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
@@ -562,6 +584,26 @@ func (s *BoundService) CancelCapture(ctx context.Context, req CancelCaptureReque
 		upstreamReq.CameraID = device.Path
 	}
 	return s.upstream.CancelCapture(ctx, upstreamReq)
+}
+
+func (s *BoundService) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
+	device, binding, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, false, false)
+	if err != nil {
+		return SerialOpenResponse{}, err
+	}
+	if !binding.Permissions.SerialRead && !binding.Permissions.SerialWrite {
+		return SerialOpenResponse{}, fmt.Errorf("serial device %q open is not permitted for site %q", strings.TrimSpace(req.DeviceID), strings.TrimSpace(req.Site))
+	}
+	upstreamReq := req
+	upstreamReq.Path = device.Path
+	upstreamReq.DeviceID = device.ID
+	upstreamReq.Options = effectiveSerialOptions(device.Serial, req.Options)
+	resp, err := s.upstream.OpenSerial(ctx, upstreamReq)
+	if err != nil {
+		return SerialOpenResponse{}, err
+	}
+	resp.DeviceID = strings.TrimSpace(req.DeviceID)
+	return resp, nil
 }
 
 func (s *BoundService) WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {

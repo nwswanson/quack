@@ -15,6 +15,7 @@ import (
 type HardwareService interface {
 	ListDevices(ctx context.Context, req hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error)
 	Capture(ctx context.Context, req hardware.CaptureRequest) (hardware.CaptureResponse, error)
+	OpenSerial(ctx context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error)
 	RequestSerial(ctx context.Context, req hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error)
 	SerialStatus(ctx context.Context, req hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error)

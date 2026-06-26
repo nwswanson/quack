@@ -98,6 +98,7 @@ func TestSerialModuleUsesHardwareService(t *testing.T) {
 
 	globals, err := starlark.ExecFile(&starlark.Thread{Name: "test"}, "test.star", `
 devices = serial.list()
+opened = serial.open("meter")
 written = serial.write("meter", b"READ\n")
 resp = serial.request("meter", "MEASURE?\n", until="\n", timeout_ms=250, max_bytes=64)
 status = serial.status("meter")
@@ -108,6 +109,11 @@ closed = serial.close("meter")
 	}
 	if service.listReq.Kind != hardware.DeviceKindSerial || service.listReq.Site != "acme" {
 		t.Fatalf("list req = %+v, want serial/acme", service.listReq)
+	}
+	opened := globals["opened"].(*starlark.Dict)
+	openValue, _, _ := opened.Get(starlark.String("open"))
+	if openValue != starlark.True {
+		t.Fatalf("opened = %v, want true", openValue)
 	}
 	if string(service.serialWriteReq.Data) != "READ\n" {
 		t.Fatalf("write data = %q, want READ newline", string(service.serialWriteReq.Data))
@@ -142,6 +148,7 @@ type fakeHardwareService struct {
 	status         hardware.SerialStatusResponse
 	listReq        hardware.ListDevicesRequest
 	capReq         hardware.CaptureRequest
+	serialOpenReq  hardware.SerialOpenRequest
 	serialWriteReq hardware.SerialWriteRequest
 	serialReq      hardware.SerialRequestRequest
 }
@@ -154,6 +161,11 @@ func (s *fakeHardwareService) ListDevices(_ context.Context, req hardware.ListDe
 func (s *fakeHardwareService) Capture(_ context.Context, req hardware.CaptureRequest) (hardware.CaptureResponse, error) {
 	s.capReq = req
 	return s.frame, nil
+}
+
+func (s *fakeHardwareService) OpenSerial(_ context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error) {
+	s.serialOpenReq = req
+	return hardware.SerialOpenResponse{DeviceID: req.DeviceID, Open: true}, nil
 }
 
 func (s *fakeHardwareService) WriteSerial(_ context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error) {

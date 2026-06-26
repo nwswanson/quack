@@ -146,6 +146,17 @@ func TestBoundServiceResolvesSerialAliasAndPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	openResp, err := service.OpenSerial(context.Background(), SerialOpenRequest{Site: "acme", DeviceID: "meter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upstream.serialOpenReq.Path != "/dev/ttyUSB0" || upstream.serialOpenReq.DeviceID != "meter_01" {
+		t.Fatalf("upstream serial open req = %+v, want physical path/id", upstream.serialOpenReq)
+	}
+	if openResp.DeviceID != "meter" || !openResp.Open {
+		t.Fatalf("open response = %+v, want alias/open", openResp)
+	}
+
 	writeResp, err := service.WriteSerial(context.Background(), SerialWriteRequest{Site: "acme", DeviceID: "meter", Data: []byte("MEASURE?\n")})
 	if err != nil {
 		t.Fatal(err)
@@ -239,6 +250,7 @@ func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 type recordingService struct {
 	captureReq       CaptureRequest
 	cancelReq        CancelCaptureRequest
+	serialOpenReq    SerialOpenRequest
 	serialWriteReq   SerialWriteRequest
 	serialRequestReq SerialRequestRequest
 	serialStatusReq  SerialStatusRequest
@@ -264,6 +276,11 @@ func (s *recordingService) Capture(_ context.Context, req CaptureRequest) (Captu
 func (s *recordingService) CancelCapture(_ context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
 	s.cancelReq = req
 	return CancelCaptureResponse{Cancelled: true}, nil
+}
+
+func (s *recordingService) OpenSerial(_ context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
+	s.serialOpenReq = req
+	return SerialOpenResponse{DeviceID: req.DeviceID, Open: true}, nil
 }
 
 func (s *recordingService) WriteSerial(_ context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
