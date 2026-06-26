@@ -15,7 +15,7 @@ type Repository interface {
 	RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error)
 	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
 	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
-	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
+	DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error)
 }
 
 type Invalidator interface {
@@ -31,7 +31,7 @@ type Service interface {
 	RollbackSiteToVersion(ctx context.Context, user domain.AdminUser, site string, siteSHA string, version int64) (domain.RollbackRecord, error)
 	UnpublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.UnpublishRecord, error)
 	PublishSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (domain.PublishRecord, error)
-	DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error)
+	DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error)
 	LookupRoute(ctx context.Context, site string, urlPath string) (RouteDecision, bool, error)
 }
 
@@ -102,8 +102,8 @@ func (s service) PublishSite(ctx context.Context, user domain.AdminUser, site st
 	return record, nil
 }
 
-func (s service) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
-	deleted, err := s.repo.DeleteSite(ctx, site, siteSHA)
+func (s service) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
+	deleted, err := s.repo.DeleteSite(ctx, user, site, siteSHA)
 	if err != nil {
 		return false, err
 	}

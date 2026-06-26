@@ -263,7 +263,7 @@ func (r adminReleaseRepo) PublishSite(context.Context, domain.AdminUser, string,
 	return domain.PublishRecord{}, nil
 }
 
-func (r adminReleaseRepo) DeleteSite(context.Context, string, string) (bool, error) {
+func (r adminReleaseRepo) DeleteSite(context.Context, domain.AdminUser, string, string) (bool, error) {
 	return true, nil
 }
 

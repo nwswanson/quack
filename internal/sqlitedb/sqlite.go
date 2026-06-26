@@ -2583,7 +2583,7 @@ func (d *Database) setSiteLiveState(ctx context.Context, user domain.AdminUser, 
 	return affected > 0, nil
 }
 
-func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+func (d *Database) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
@@ -2595,6 +2595,23 @@ func (d *Database) DeleteSite(ctx context.Context, site string, siteSHA string) 
 
 	if _, err := tx.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
 		return false, fmt.Errorf("enable sqlite foreign keys: %w", err)
+	}
+
+	if !user.IsAdmin() {
+		allowed, err := d.userCanAccessSite(ctx, tx, user.ID, siteSHA)
+		if err != nil {
+			return false, err
+		}
+		if !allowed {
+			exists, err := d.siteExists(ctx, tx, siteSHA)
+			if err != nil {
+				return false, err
+			}
+			if exists {
+				return false, domain.ErrSiteOwnership
+			}
+			return false, nil
+		}
 	}
 
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM uploads WHERE site_sha = ?`, siteSHA)

@@ -307,7 +307,7 @@ func (db *siteUpdateCacheDatabase) PublishSite(ctx context.Context, user domain.
 	return domain.PublishRecord{}, nil
 }
 
-func (db *siteUpdateCacheDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+func (db *siteUpdateCacheDatabase) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
 	return true, nil
 }
 

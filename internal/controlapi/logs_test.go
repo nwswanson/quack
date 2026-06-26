@@ -112,7 +112,7 @@ func (r logReleases) PublishSite(ctx context.Context, user domain.AdminUser, sit
 	return domain.PublishRecord{}, nil
 }
 
-func (r logReleases) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+func (r logReleases) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
 	return false, nil
 }
 

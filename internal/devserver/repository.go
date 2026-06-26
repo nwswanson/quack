@@ -245,7 +245,7 @@ func (r *Repository) PublishSite(ctx context.Context, user domain.AdminUser, sit
 	return domain.PublishRecord{}, fmt.Errorf("publish is unsupported in dev mode")
 }
 
-func (r *Repository) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+func (r *Repository) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
 	return false, fmt.Errorf("delete site is unsupported in dev mode")
 }
 

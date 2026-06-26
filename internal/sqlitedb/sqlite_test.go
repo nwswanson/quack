@@ -1480,7 +1480,7 @@ func TestDeleteSiteRemovesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deleted, err := db.DeleteSite(ctx, "foo", "foo-sha")
+	deleted, err := db.DeleteSite(ctx, domain.AdminUser{AdminPriv: "admin:*"}, "foo", "foo-sha")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1502,5 +1502,49 @@ func TestDeleteSiteRemovesMetadata(t *testing.T) {
 	}
 	if siteCount != 0 {
 		t.Fatalf("site count = %d, want 0", siteCount)
+	}
+}
+
+func TestDeleteSiteEnforcesOwnership(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "quack.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	alice, err := db.CreateUser(ctx, "alice", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := db.CreateUser(ctx, "bob", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upload, err := db.BeginUpload(ctx, "foo", "foo-sha", alice.User.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload.Files = []domain.UploadFileRecord{
+		{RelativePath: "index.html", BlobPath: "blobs/site:foo-sha/1/file:v1", FileSHA: "v1", Bytes: 1},
+	}
+	if err := db.FinishUpload(ctx, upload); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.DeleteSite(ctx, bob.User, "foo", "foo-sha"); !errors.Is(err, domain.ErrSiteOwnership) {
+		t.Fatalf("bob delete error = %v, want ErrSiteOwnership", err)
+	}
+	if _, ok, err := db.FindCurrentFile(ctx, "foo", "index.html"); err != nil || !ok {
+		t.Fatalf("current file after unauthorized delete = (_, %v, %v), want file", ok, err)
+	}
+
+	deleted, err := db.DeleteSite(ctx, alice.User, "foo", "foo-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("alice deleted = false, want true")
 	}
 }

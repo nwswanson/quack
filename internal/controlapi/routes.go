@@ -527,7 +527,7 @@ func (h Handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	ok, err := h.authorizedAPI(r)
+	user, ok, err := h.authorizedAPIUser(r)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "delete authorization lookup failed", "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -544,9 +544,13 @@ func (h Handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	siteSHA := sites.HashName(site)
-	deleted, err := h.releases.DeleteSite(r.Context(), site, siteSHA)
+	deleted, err := h.releases.DeleteSite(r.Context(), user, site, siteSHA)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "error", err)
+		if errors.Is(err, domain.ErrSiteOwnership) {
+			protocol.WriteError(w, http.StatusForbidden, "site is owned by another user")
+			return
+		}
+		slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "username", user.Username, "error", err)
 		protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -558,7 +562,7 @@ func (h Handler) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slog.WarnContext(r.Context(), "site delete completed", "site", site, "deleted", deleted)
+	slog.WarnContext(r.Context(), "site delete completed", "site", site, "username", user.Username, "deleted", deleted)
 	protocol.WriteJSON(w, http.StatusOK, protocol.DeleteSiteResponse{
 		OK:      true,
 		Site:    site,

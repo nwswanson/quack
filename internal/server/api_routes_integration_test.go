@@ -3,6 +3,7 @@ package server
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -377,6 +378,51 @@ func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestDeleteSiteRejectsCrossUserOwnership(t *testing.T) {
+	deletedSites := []string{}
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		deleteErr: domain.ErrSiteOwnership,
+	}
+	srv := New("", "", "", fakeStorage{deletedSites: &deletedSites}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"bob-site", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "site is owned by another user") {
+		t.Fatalf("body = %s, want ownership error", rec.Body.String())
+	}
+	if len(deletedSites) != 0 {
+		t.Fatalf("deleted sites = %#v, want none", deletedSites)
+	}
+}
+
+func TestDeleteSiteReportsNonOwnershipErrors(t *testing.T) {
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+		deleteErr: errors.New("database unavailable"),
+	}
+	srv := New("", "", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+"foo", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
 }
 

@@ -255,7 +255,7 @@ func (h Handler) handleAdminSiteAction(w http.ResponseWriter, r *http.Request) {
 	siteSHA := sites.HashName(site)
 	switch strings.TrimSpace(r.Form.Get("action")) {
 	case "delete":
-		deleted, err := h.releases.DeleteSite(r.Context(), site, siteSHA)
+		deleted, err := h.releases.DeleteSite(r.Context(), user, site, siteSHA)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "delete site metadata failed", "site", site, "username", user.Username, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")

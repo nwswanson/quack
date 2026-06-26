@@ -74,6 +74,7 @@ type fakeDatabase struct {
 	rollbackVersion      int64
 	unpublish            domain.UnpublishRecord
 	publish              domain.PublishRecord
+	deleteErr            error
 	sites                []domain.PublishedSite
 	lastPublisherUserID  int64
 	lastPublisherIsAdmin bool
@@ -160,7 +161,10 @@ func (db *fakeDatabase) PublishSite(ctx context.Context, user domain.AdminUser, 
 	return db.publish, nil
 }
 
-func (fakeDatabase) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+func (db *fakeDatabase) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
+	if db.deleteErr != nil {
+		return false, db.deleteErr
+	}
 	return true, nil
 }
 

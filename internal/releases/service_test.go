@@ -40,7 +40,7 @@ func TestServiceInvalidatesAfterReleaseWrites(t *testing.T) {
 	if _, err := service.UnpublishSite(ctx, domain.AdminUser{}, "foo", "foo-sha"); err != nil {
 		t.Fatalf("UnpublishSite error = %v", err)
 	}
-	if _, err := service.DeleteSite(ctx, "foo", "foo-sha"); err != nil {
+	if _, err := service.DeleteSite(ctx, domain.AdminUser{}, "foo", "foo-sha"); err != nil {
 		t.Fatalf("DeleteSite error = %v", err)
 	}
 
@@ -205,7 +205,7 @@ func (r *releaseRepo) PublishSite(ctx context.Context, user domain.AdminUser, si
 	return domain.PublishRecord{Published: true}, r.err
 }
 
-func (r *releaseRepo) DeleteSite(ctx context.Context, site string, siteSHA string) (bool, error) {
+func (r *releaseRepo) DeleteSite(ctx context.Context, user domain.AdminUser, site string, siteSHA string) (bool, error) {
 	return true, r.err
 }
 
