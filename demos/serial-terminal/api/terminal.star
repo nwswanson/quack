@@ -226,6 +226,11 @@ def _last_event_at(status):
             last = at
     return last
 
+def _max_event_at(a, b):
+    if a > b:
+        return a
+    return b
+
 def _drain_status(alias):
     state = _state()
     was_connected = state.get("connected", False)
@@ -308,6 +313,8 @@ def on_message(ctx, msg):
         alias = state.get("selected", "")
         if alias == "":
             return ws.send(ctx.conn_id, {"type": "error", "message": "select a device first"})
+        before = _serial_status(serial.status(alias))
+        cutoff = _max_event_at(state.get("last_event_at", ""), _last_event_at(before))
         serial.open(alias)
         opened_status = _serial_status(serial.status(alias))
         state = _state()
@@ -317,11 +324,12 @@ def on_message(ctx, msg):
         state["status"] = opened_status.get("status", "open")
         state["error"] = opened_status.get("error", "")
         state["last_error"] = opened_status.get("error", "")
-        state["last_event_at"] = _last_event_at(opened_status)
+        state["last_event_at"] = cutoff
         _save_state(state)
         effects = [_state_changed()]
-        effects += _append_debug_and_publish("open", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": state["last_event_at"]})
+        effects += _append_debug_and_publish("open", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": cutoff})
         effects += _append_terminal_and_publish(_terminal("system", "connected to " + alias, ctx.conn_id))
+        effects += _drain_status(alias)
         return effects
 
     if msg_type == "close":

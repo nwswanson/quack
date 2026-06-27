@@ -1,5 +1,5 @@
 # Serial Terminal Demo
-
+![image](terminal-screenshot.png)
 This demo exposes a small web terminal for serial devices bound to the site.
 It discovers available aliases with `serial.list()`, lets the user choose one,
 opens it explicitly, sends line-oriented `serial.request()` commands, and closes

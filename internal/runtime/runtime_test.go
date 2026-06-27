@@ -887,10 +887,17 @@ func TestDemoSerialTerminalWebSocketExecutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundBootPublish := false
 	for _, effect := range effects {
 		if strings.Contains(string(effect.Payload), `42`) {
 			t.Fatalf("reopen effects = %+v, replayed stale serial output", effects)
 		}
+		if strings.Contains(string(effect.Payload), `BOOT`) {
+			foundBootPublish = true
+		}
+	}
+	if !foundBootPublish {
+		t.Fatalf("reopen effects = %+v, want fresh boot output", effects)
 	}
 	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
 		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
@@ -1402,11 +1409,13 @@ func newTestStarlarkExecutor(t *testing.T, scripts map[string]string) *StarlarkE
 }
 
 type serialTerminalHardware struct {
-	devices  []hardware.DeviceInfo
-	openReq  hardware.SerialOpenRequest
-	writeReq hardware.SerialWriteRequest
-	closed   bool
-	seq      int64
+	devices   []hardware.DeviceInfo
+	openReq   hardware.SerialOpenRequest
+	writeReq  hardware.SerialWriteRequest
+	closed    bool
+	seq       int64
+	openCount int
+	recent    []hardware.SerialEvent
 }
 
 func (h *serialTerminalHardware) ListDevices(_ context.Context, req hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error) {
@@ -1420,12 +1429,20 @@ func (h *serialTerminalHardware) Capture(context.Context, hardware.CaptureReques
 func (h *serialTerminalHardware) OpenSerial(_ context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error) {
 	h.openReq = req
 	h.closed = false
+	h.openCount++
+	if h.writeReq.DeviceID != "" {
+		h.seq++
+		h.recent = append(h.recent, hardware.SerialEvent{UnixNano: h.seq, Type: "read", Data: []byte("BOOT\n")})
+	}
 	return hardware.SerialOpenResponse{DeviceID: req.DeviceID, Open: true}, nil
 }
 
 func (h *serialTerminalHardware) WriteSerial(_ context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error) {
 	h.writeReq = req
-	h.seq += 2
+	h.seq++
+	h.recent = append(h.recent, hardware.SerialEvent{UnixNano: h.seq, Type: "write", Data: req.Data})
+	h.seq++
+	h.recent = append(h.recent, hardware.SerialEvent{UnixNano: h.seq, Type: "read", Data: []byte("42\n")})
 	return hardware.SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
 }
 
@@ -1435,14 +1452,7 @@ func (h *serialTerminalHardware) RequestSerial(context.Context, hardware.SerialR
 
 func (h *serialTerminalHardware) SerialStatus(context.Context, hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error) {
 	open := !h.closed && h.openReq.DeviceID != ""
-	recent := []hardware.SerialEvent{}
-	if h.writeReq.DeviceID != "" {
-		recent = append(recent,
-			hardware.SerialEvent{UnixNano: h.seq - 1, Type: "write", Data: h.writeReq.Data},
-			hardware.SerialEvent{UnixNano: h.seq, Type: "read", Data: []byte("42\n")},
-		)
-	}
-	return hardware.SerialStatusResponse{DeviceID: "meter", Open: open, Status: map[bool]string{true: "open", false: "closed"}[open], Recent: recent}, nil
+	return hardware.SerialStatusResponse{DeviceID: "meter", Open: open, Status: map[bool]string{true: "open", false: "closed"}[open], Recent: append([]hardware.SerialEvent(nil), h.recent...)}, nil
 }
 
 func (h *serialTerminalHardware) CloseSerial(context.Context, hardware.SerialCloseRequest) (hardware.SerialCloseResponse, error) {
