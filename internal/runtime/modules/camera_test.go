@@ -163,6 +163,15 @@ func (s *fakeHardwareService) Capture(_ context.Context, req hardware.CaptureReq
 	return s.frame, nil
 }
 
+func (s *fakeHardwareService) WatchHardwareEvents(ctx context.Context, req hardware.WatchHardwareEventsRequest) (<-chan hardware.HardwareEvent, error) {
+	out := make(chan hardware.HardwareEvent)
+	go func() {
+		defer close(out)
+		<-ctx.Done()
+	}()
+	return out, nil
+}
+
 func (s *fakeHardwareService) OpenSerial(_ context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error) {
 	s.serialOpenReq = req
 	return hardware.SerialOpenResponse{DeviceID: req.DeviceID, Open: true}, nil

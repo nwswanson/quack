@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBoundServiceListsOnlySiteAliases(t *testing.T) {
@@ -208,6 +209,49 @@ func TestBoundServiceRejectsSerialReadWithoutPermission(t *testing.T) {
 	}
 }
 
+func TestBoundServiceMapsSerialReadEventsToSiteAliasTopics(t *testing.T) {
+	upstream := &recordingService{
+		events: make(chan HardwareEvent, 1),
+	}
+	service, err := NewBoundService(upstream, Config{
+		Devices: []DeviceDescriptor{{ID: "meter_01", Kind: DeviceKindSerial, Path: "/dev/ttyUSB0"}},
+		SiteDeviceBindings: []SiteDeviceBinding{{
+			Site:        "acme",
+			Alias:       "meter",
+			DeviceID:    "meter_01",
+			Permissions: DevicePermissions{SerialRead: true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := service.WatchHardwareEvents(ctx, WatchHardwareEventsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream.events <- HardwareEvent{
+		DeviceID:   "meter_01",
+		Type:       "serial.read",
+		Generation: "gen-1",
+		Seq:        7,
+		Bytes:      []byte("42\n"),
+	}
+
+	select {
+	case event := <-events:
+		if event.Site != "acme" || event.DeviceAlias != "meter" || event.RuntimeTopic != "hardware.serial.meter.read" {
+			t.Fatalf("mapped event = %+v, want acme meter read topic", event)
+		}
+		if string(event.Bytes) != "42\n" || event.Generation != "gen-1" || event.Seq != 7 {
+			t.Fatalf("mapped event payload/meta = %+v, want preserved bytes/meta", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mapped hardware event")
+	}
+}
+
 func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 	t.Helper()
 	service, err := NewBoundService(upstream, Config{
@@ -256,6 +300,7 @@ type recordingService struct {
 	serialStatusReq  SerialStatusRequest
 	frame            CaptureResponse
 	captureErr       error
+	events           chan HardwareEvent
 }
 
 func (s *recordingService) ListDevices(context.Context, ListDevicesRequest) (ListDevicesResponse, error) {
@@ -276,6 +321,18 @@ func (s *recordingService) Capture(_ context.Context, req CaptureRequest) (Captu
 func (s *recordingService) CancelCapture(_ context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error) {
 	s.cancelReq = req
 	return CancelCaptureResponse{Cancelled: true}, nil
+}
+
+func (s *recordingService) WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error) {
+	if s.events != nil {
+		return s.events, nil
+	}
+	out := make(chan HardwareEvent)
+	go func() {
+		defer close(out)
+		<-ctx.Done()
+	}()
+	return out, nil
 }
 
 func (s *recordingService) OpenSerial(_ context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {

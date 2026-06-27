@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/rpc"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +39,10 @@ func (p *RPCPlugin) Client(_ *goplugin.MuxBroker, c *rpc.Client) (interface{}, e
 }
 
 type rpcServer struct {
-	impl Service
+	impl      Service
+	eventsMu  sync.Mutex
+	eventsCh  <-chan HardwareEvent
+	eventsErr error
 }
 
 func (s *rpcServer) ListDevices(req ListDevicesRequest, resp *ListDevicesResponse) error {
@@ -71,6 +75,25 @@ func (s *rpcServer) CancelCapture(req CancelCaptureRequest, resp *CancelCaptureR
 		return err
 	}
 	*resp = out
+	return nil
+}
+
+func (s *rpcServer) NextHardwareEvent(req WatchHardwareEventsRequest, resp *HardwareEvent) error {
+	s.eventsMu.Lock()
+	if s.eventsCh == nil && s.eventsErr == nil {
+		s.eventsCh, s.eventsErr = s.impl.WatchHardwareEvents(context.Background(), req)
+	}
+	events := s.eventsCh
+	err := s.eventsErr
+	s.eventsMu.Unlock()
+	if err != nil {
+		return err
+	}
+	event, ok := <-events
+	if !ok {
+		return context.Canceled
+	}
+	*resp = event
 	return nil
 }
 
@@ -161,6 +184,28 @@ func (c *rpcClient) CancelCapture(ctx context.Context, req CancelCaptureRequest)
 		return c.client.Call("Plugin.CancelCapture", req, &resp)
 	}, nil)
 	return resp, err
+}
+
+func (c *rpcClient) WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error) {
+	out := make(chan HardwareEvent)
+	go func() {
+		defer close(out)
+		for {
+			var event HardwareEvent
+			err := callRPC(ctx, func() error {
+				return c.client.Call("Plugin.NextHardwareEvent", req, &event)
+			}, nil)
+			if err != nil {
+				return
+			}
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
 }
 
 func (c *rpcClient) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
@@ -285,6 +330,13 @@ func (s *ClientService) CancelCapture(ctx context.Context, req CancelCaptureRequ
 		return CancelCaptureResponse{}, ErrNotConfigured
 	}
 	return s.impl.CancelCapture(ctx, req)
+}
+
+func (s *ClientService) WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error) {
+	if s == nil || s.impl == nil {
+		return nil, ErrNotConfigured
+	}
+	return s.impl.WatchHardwareEvents(ctx, req)
 }
 
 func (s *ClientService) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {

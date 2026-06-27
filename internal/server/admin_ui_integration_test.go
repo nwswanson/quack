@@ -417,6 +417,15 @@ func (s *recordingHardwareService) CancelCapture(_ context.Context, req hardware
 	return s.cancelResp, nil
 }
 
+func (s *recordingHardwareService) WatchHardwareEvents(ctx context.Context, req hardware.WatchHardwareEventsRequest) (<-chan hardware.HardwareEvent, error) {
+	out := make(chan hardware.HardwareEvent)
+	go func() {
+		defer close(out)
+		<-ctx.Done()
+	}()
+	return out, nil
+}
+
 func (s *recordingHardwareService) OpenSerial(context.Context, hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error) {
 	return hardware.SerialOpenResponse{}, nil
 }

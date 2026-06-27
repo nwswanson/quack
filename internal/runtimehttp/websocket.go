@@ -218,6 +218,10 @@ func (h Handler) applyEffects(ctx context.Context, site string, effects []apprun
 }
 
 func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, payload []byte) error {
+	return h.dispatchEventWithSource(ctx, site, topic, payload, "runtime", "events.publish", nil)
+}
+
+func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string) error {
 	settings, err := h.siteEventSettings(ctx, site)
 	if err != nil {
 		return err
@@ -225,7 +229,7 @@ func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, p
 	pipeName := strings.TrimSpace(topic)
 	config := settings.pipe(pipeName)
 	event, accepted := h.pipes.Publish(config, eventpipe.Event{
-		Site: site, Pipe: pipeName, Topic: topic, SourceKind: "runtime", SourceName: "events.publish", Payload: payload,
+		Site: site, Pipe: pipeName, Topic: topic, SourceKind: sourceKind, SourceName: sourceName, Payload: payload, Headers: headers,
 	})
 	if !accepted {
 		return nil

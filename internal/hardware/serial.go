@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -23,6 +24,7 @@ type SerialDeviceProvider struct {
 	actors    map[string]*serialActor
 	openPort  func(path string, mode *serial.Mode) (serial.Port, error)
 	listPorts func() ([]string, error)
+	emit      func(HardwareEvent)
 }
 
 func NewSerialProvider() *SerialDeviceProvider {
@@ -69,6 +71,10 @@ func (p *SerialDeviceProvider) Capture(context.Context, CaptureRequest) (Capture
 
 func (p *SerialDeviceProvider) CancelCapture(context.Context, CancelCaptureRequest) (CancelCaptureResponse, error) {
 	return CancelCaptureResponse{}, fmt.Errorf("%w: %s", ErrNotImplemented, DeviceKindSerial)
+}
+
+func (p *SerialDeviceProvider) WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error) {
+	return nil, ErrNotConfigured
 }
 
 func (p *SerialDeviceProvider) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
@@ -133,6 +139,18 @@ func (p *SerialDeviceProvider) Close() error {
 	return nil
 }
 
+func (p *SerialDeviceProvider) setHardwareEventSink(emit func(HardwareEvent)) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.emit = emit
+	for _, actor := range p.actors {
+		actor.emit = emit
+	}
+	p.mu.Unlock()
+}
+
 func (p *SerialDeviceProvider) actor(deviceID string, path string, options SerialOptions) (*serialActor, error) {
 	if p == nil || p.openPort == nil {
 		return nil, ErrNotConfigured
@@ -147,7 +165,7 @@ func (p *SerialDeviceProvider) actor(deviceID string, path string, options Seria
 	defer p.mu.Unlock()
 	actor := p.actors[key]
 	if actor == nil {
-		actor = newSerialActor(strings.TrimSpace(deviceID), path, options, p.openPort)
+		actor = newSerialActor(strings.TrimSpace(deviceID), path, options, p.openPort, p.emit)
 		p.actors[key] = actor
 	}
 	return actor, nil
@@ -158,15 +176,18 @@ type serialActor struct {
 	path     string
 	options  SerialOptions
 	openPort func(path string, mode *serial.Mode) (serial.Port, error)
+	emit     func(HardwareEvent)
 	commands chan serialCommand
 	done     chan struct{}
 	once     sync.Once
 
-	mu     sync.Mutex
-	isOpen bool
-	state  string
-	err    string
-	recent []SerialEvent
+	mu         sync.Mutex
+	isOpen     bool
+	state      string
+	err        string
+	recent     []SerialEvent
+	generation string
+	seq        uint64
 }
 
 type serialCommand struct {
@@ -206,12 +227,15 @@ type pendingSerialRequest struct {
 	timer    *time.Timer
 }
 
-func newSerialActor(deviceID string, path string, options SerialOptions, openPort func(string, *serial.Mode) (serial.Port, error)) *serialActor {
+var serialGenerationSeq uint64
+
+func newSerialActor(deviceID string, path string, options SerialOptions, openPort func(string, *serial.Mode) (serial.Port, error), emit func(HardwareEvent)) *serialActor {
 	actor := &serialActor{
 		deviceID: deviceID,
 		path:     path,
 		options:  options,
 		openPort: openPort,
+		emit:     emit,
 		commands: make(chan serialCommand, options.WriteQueueSize),
 		done:     make(chan struct{}),
 		state:    serialStatusClosed,
@@ -375,7 +399,8 @@ func (a *serialActor) run() {
 				}
 				n, err := port.Write(command.data)
 				if err != nil {
-					a.recordError(err)
+					a.setError(err)
+					a.recordEvent("write_error", nil, err)
 					_ = port.Close()
 					port = nil
 					readCh = nil
@@ -405,7 +430,8 @@ func (a *serialActor) run() {
 				}
 				n, err := port.Write(command.request.data)
 				if err != nil {
-					a.recordError(err)
+					a.setError(err)
+					a.recordEvent("write_error", nil, err)
 					_ = port.Close()
 					port = nil
 					readCh = nil
@@ -563,8 +589,10 @@ func (a *serialActor) setOpen() {
 	a.isOpen = true
 	a.state = serialStatusOpen
 	a.err = ""
+	a.generation = fmt.Sprintf("%d-%d", time.Now().UnixNano(), atomic.AddUint64(&serialGenerationSeq, 1))
+	a.seq = 0
 	a.mu.Unlock()
-	a.recordEvent("open", nil, nil)
+	a.recordEvent("opened", nil, nil)
 }
 
 func (a *serialActor) setClosed() {
@@ -573,16 +601,20 @@ func (a *serialActor) setClosed() {
 	a.state = serialStatusClosed
 	a.err = ""
 	a.mu.Unlock()
-	a.recordEvent("close", nil, nil)
+	a.recordEvent("closed", nil, nil)
 }
 
 func (a *serialActor) recordError(err error) {
+	a.setError(err)
+	a.recordEvent("read_error", nil, err)
+}
+
+func (a *serialActor) setError(err error) {
 	a.mu.Lock()
 	a.isOpen = false
 	a.state = serialStatusError
 	a.err = err.Error()
 	a.mu.Unlock()
-	a.recordEvent("error", nil, err)
 }
 
 func (a *serialActor) currentError() string {
@@ -592,16 +624,38 @@ func (a *serialActor) currentError() string {
 }
 
 func (a *serialActor) recordEvent(kind string, data []byte, err error) {
-	event := SerialEvent{UnixNano: time.Now().UnixNano(), Type: kind, Data: append([]byte(nil), data...)}
+	now := time.Now()
+	event := SerialEvent{UnixNano: now.UnixNano(), Type: kind, Data: append([]byte(nil), data...)}
 	if err != nil {
 		event.Error = err.Error()
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.seq++
+	seq := a.seq
+	generation := a.generation
 	a.recent = append(a.recent, event)
 	if max := a.options.RecentEvents; max > 0 && len(a.recent) > max {
 		a.recent = append([]SerialEvent(nil), a.recent[len(a.recent)-max:]...)
 	}
+	a.mu.Unlock()
+	if a.emit == nil {
+		return
+	}
+	hardwareType := "serial." + kind
+	hardwareEvent := HardwareEvent{
+		ID:         fmt.Sprintf("%s:%s:%d", a.deviceID, generation, seq),
+		DeviceID:   a.deviceID,
+		Type:       hardwareType,
+		Generation: generation,
+		Seq:        seq,
+		UnixNano:   now.UTC().UnixNano(),
+		Bytes:      append([]byte(nil), data...),
+		Origin:     "hardware.serial",
+	}
+	if err != nil {
+		hardwareEvent.Error = err.Error()
+	}
+	a.emit(hardwareEvent)
 }
 
 func (a *serialActor) reconnectDelay() time.Duration {

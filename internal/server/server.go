@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"quack/internal/adminui"
 	"quack/internal/cache"
@@ -123,6 +124,9 @@ func New(adminAddr string, publicAddr string, store appstorage.Storage, db Datab
 	})
 	runtimeHandler := runtimehttp.New(runtimeService, runtimehttp.WithSettings(hot), runtimehttp.WithLogBuffer(logs))
 	metrics.runtime = prometheusRuntimeStats{runtime: runtimeHandler}
+	if opts.HardwareService != nil {
+		go runHardwareEventStream(context.Background(), opts.HardwareService, runtimeHandler)
+	}
 
 	adminui.New(adminui.Options{
 		Users:       db,
@@ -160,5 +164,37 @@ func New(adminAddr string, publicAddr string, store appstorage.Storage, db Datab
 			Addr:    publicAddr,
 			Handler: requestLoggerWithMetricsAndLogs(publicMux, "public", metrics, logs),
 		},
+	}
+}
+
+func runHardwareEventStream(ctx context.Context, service hardware.Service, runtimeHandler runtimehttp.Handler) {
+	for {
+		events, err := service.WatchHardwareEvents(ctx, hardware.WatchHardwareEventsRequest{})
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Warn("hardware event stream failed", "error", err)
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
+		for event := range events {
+			if err := runtimeHandler.DispatchHardwareEvent(ctx, event); err != nil {
+				slog.Warn("dispatch hardware event failed", "site", event.Site, "topic", event.RuntimeTopic, "error", err)
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Warn("hardware event stream closed")
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return
+		}
 	}
 }

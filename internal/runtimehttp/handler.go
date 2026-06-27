@@ -10,6 +10,7 @@ import (
 
 	"quack/internal/domain"
 	"quack/internal/eventpipe"
+	"quack/internal/hardware"
 	"quack/internal/logbuffer"
 	appruntime "quack/internal/runtime"
 )
@@ -81,6 +82,26 @@ func (h Handler) ActiveWebSocketsBySite() map[string]int64 {
 		return nil
 	}
 	return h.sockets.activeBySiteSnapshot()
+}
+
+func (h Handler) DispatchHardwareEvent(ctx context.Context, event hardware.HardwareEvent) error {
+	site := strings.TrimSpace(event.Site)
+	topic := strings.TrimSpace(event.RuntimeTopic)
+	if site == "" || topic == "" {
+		return nil
+	}
+	headers := map[string]string{
+		"hardware.type":       event.Type,
+		"hardware.device_id":  event.DeviceID,
+		"hardware.generation": event.Generation,
+	}
+	if event.DeviceAlias != "" {
+		headers["hardware.device_alias"] = event.DeviceAlias
+	}
+	if event.Error != "" {
+		headers["hardware.error"] = event.Error
+	}
+	return h.dispatchEventWithSource(ctx, site, topic, event.Bytes, "hardware", event.DeviceID, headers)
 }
 
 func (h Handler) ServeHTTPRoute(w http.ResponseWriter, r *http.Request, req appruntime.InvocationRequest) {

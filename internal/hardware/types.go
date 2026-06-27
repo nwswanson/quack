@@ -25,6 +25,7 @@ type Service interface {
 	ListDevices(ctx context.Context, req ListDevicesRequest) (ListDevicesResponse, error)
 	Capture(ctx context.Context, req CaptureRequest) (CaptureResponse, error)
 	CancelCapture(ctx context.Context, req CancelCaptureRequest) (CancelCaptureResponse, error)
+	WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error)
 	OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
 	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
@@ -92,6 +93,28 @@ type CancelCaptureRequest struct {
 
 type CancelCaptureResponse struct {
 	Cancelled bool
+}
+
+type WatchHardwareEventsRequest struct{}
+
+type HardwareEvent struct {
+	ID            string
+	PluginID      string
+	DeviceID      string
+	DeviceAlias   string
+	Site          string
+	RuntimeTopic  string
+	Type          string
+	Generation    string
+	Seq           uint64
+	UnixNano      int64
+	Bytes         []byte
+	Error         string
+	DroppedEvents int64
+	DroppedBytes  int64
+	Origin        string
+	CausationID   string
+	CorrelationID string
 }
 
 type SerialOptions struct {
@@ -248,6 +271,7 @@ type Provider interface {
 }
 
 type SerialProvider interface {
+	WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error)
 	OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
 	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
@@ -266,13 +290,17 @@ type ConfigProvider interface {
 
 type LocalService struct {
 	providers map[string]Provider
+	events    *hardwareEventQueue
 }
 
 func NewLocalService(providers ...DeviceProvider) *LocalService {
-	service := &LocalService{providers: make(map[string]Provider)}
+	service := &LocalService{providers: make(map[string]Provider), events: newHardwareEventQueue(1024)}
 	for _, provider := range providers {
 		if provider == nil {
 			continue
+		}
+		if sink, ok := provider.(interface{ setHardwareEventSink(func(HardwareEvent)) }); ok {
+			sink.setHardwareEventSink(service.events.publish)
 		}
 		for _, kind := range provider.DeviceKinds() {
 			kind = NormalizeDeviceKind(kind)
@@ -328,6 +356,13 @@ func (s *LocalService) CancelCapture(ctx context.Context, req CancelCaptureReque
 	return provider.CancelCapture(ctx, req)
 }
 
+func (s *LocalService) WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error) {
+	if s == nil || s.events == nil {
+		return nil, ErrNotConfigured
+	}
+	return s.events.watch(ctx), nil
+}
+
 func (s *LocalService) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
 	provider, err := s.serialProvider()
 	if err != nil {
@@ -371,6 +406,9 @@ func (s *LocalService) CloseSerial(ctx context.Context, req SerialCloseRequest) 
 func (s *LocalService) Close() error {
 	if s == nil {
 		return nil
+	}
+	if s.events != nil {
+		s.events.close()
 	}
 	var out error
 	for _, provider := range s.providers {
@@ -587,6 +625,38 @@ func (s *BoundService) CancelCapture(ctx context.Context, req CancelCaptureReque
 	return s.upstream.CancelCapture(ctx, upstreamReq)
 }
 
+func (s *BoundService) WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error) {
+	if s == nil || s.upstream == nil {
+		return nil, ErrNotConfigured
+	}
+	upstreamEvents, err := s.upstream.WatchHardwareEvents(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan HardwareEvent)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-upstreamEvents:
+				if !ok {
+					return
+				}
+				for _, mapped := range s.mapHardwareEvent(ctx, event) {
+					select {
+					case out <- mapped:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
 func (s *BoundService) OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error) {
 	device, binding, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, false, false)
 	if err != nil {
@@ -674,6 +744,35 @@ func (s *BoundService) CloseSerial(ctx context.Context, req SerialCloseRequest) 
 	}
 	resp.DeviceID = strings.TrimSpace(req.DeviceID)
 	return resp, nil
+}
+
+func (s *BoundService) mapHardwareEvent(ctx context.Context, event HardwareEvent) []HardwareEvent {
+	deviceID := strings.TrimSpace(event.DeviceID)
+	eventType := strings.TrimSpace(event.Type)
+	if deviceID == "" || eventType == "" {
+		return nil
+	}
+	devices, bindings, err := s.resolvedConfig(ctx)
+	if err != nil {
+		return nil
+	}
+	device, ok := devices[deviceID]
+	if !ok || device.Kind != DeviceKindSerial || !strings.HasPrefix(eventType, "serial.") {
+		return nil
+	}
+	suffix := strings.TrimPrefix(eventType, "serial.")
+	out := make([]HardwareEvent, 0, 1)
+	for _, binding := range bindings {
+		if binding.DeviceID != deviceID || !binding.Permissions.SerialRead {
+			continue
+		}
+		mapped := cloneHardwareEvent(event)
+		mapped.Site = binding.Site
+		mapped.DeviceAlias = binding.Alias
+		mapped.RuntimeTopic = "hardware.serial." + binding.Alias + "." + suffix
+		out = append(out, mapped)
+	}
+	return out
 }
 
 func (s *BoundService) resolveSerialAlias(ctx context.Context, site string, alias string, write bool, read bool) (DeviceDescriptor, SiteDeviceBinding, error) {

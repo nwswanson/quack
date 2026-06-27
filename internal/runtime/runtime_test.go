@@ -1426,6 +1426,15 @@ func (h *serialTerminalHardware) Capture(context.Context, hardware.CaptureReques
 	return hardware.CaptureResponse{}, nil
 }
 
+func (h *serialTerminalHardware) WatchHardwareEvents(ctx context.Context, req hardware.WatchHardwareEventsRequest) (<-chan hardware.HardwareEvent, error) {
+	out := make(chan hardware.HardwareEvent)
+	go func() {
+		defer close(out)
+		<-ctx.Done()
+	}()
+	return out, nil
+}
+
 func (h *serialTerminalHardware) OpenSerial(_ context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error) {
 	h.openReq = req
 	h.closed = false
