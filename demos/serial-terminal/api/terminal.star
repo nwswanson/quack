@@ -65,6 +65,7 @@ def _default_state():
         "status": "idle",
         "error": "",
         "last_event_at": "",
+        "last_error": "",
         "settings": {
             "line_ending": "lf",
             "until": "\n",
@@ -231,10 +232,14 @@ def _drain_status(alias):
     old_status = state.get("status", "")
     old_error = state.get("error", "")
     status = _serial_status(serial.status(alias))
+    status_error = status.get("error", "")
+    previous_error_line = state.get("last_error", "")
     state["connected"] = status.get("open", False)
     state["locked"] = status.get("open", False)
     state["status"] = status.get("status", "")
-    state["error"] = status.get("error", "")
+    state["error"] = status_error
+    if status_error != "":
+        state["last_error"] = status_error
 
     events, last = _events_after(status, state.get("last_event_at", ""))
     state["last_event_at"] = last
@@ -243,8 +248,8 @@ def _drain_status(alias):
     effects = []
     if was_connected != state.get("connected", False) or old_status != state.get("status", "") or old_error != state.get("error", ""):
         effects.append(_state_changed())
-    if status.get("error", "") != "":
-        effects += _append_terminal_and_publish(_terminal("error", "! " + status.get("error", "")))
+    if status_error != "" and status_error != previous_error_line:
+        effects += _append_terminal_and_publish(_terminal("error", "! " + status_error))
 
     for event in events:
         effects += _append_debug_and_publish("serial_event", event)
@@ -303,20 +308,20 @@ def on_message(ctx, msg):
         alias = state.get("selected", "")
         if alias == "":
             return ws.send(ctx.conn_id, {"type": "error", "message": "select a device first"})
-        before = _serial_status(serial.status(alias))
         serial.open(alias)
+        opened_status = _serial_status(serial.status(alias))
         state = _state()
         state["selected"] = alias
-        state["connected"] = True
-        state["locked"] = True
-        state["status"] = "open"
-        state["error"] = ""
-        state["last_event_at"] = _last_event_at(before)
+        state["connected"] = opened_status.get("open", True)
+        state["locked"] = opened_status.get("open", True)
+        state["status"] = opened_status.get("status", "open")
+        state["error"] = opened_status.get("error", "")
+        state["last_error"] = opened_status.get("error", "")
+        state["last_event_at"] = _last_event_at(opened_status)
         _save_state(state)
         effects = [_state_changed()]
-        effects += _append_debug_and_publish("open", {"device": alias, "by": ctx.conn_id})
+        effects += _append_debug_and_publish("open", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": state["last_event_at"]})
         effects += _append_terminal_and_publish(_terminal("system", "connected to " + alias, ctx.conn_id))
-        effects += _drain_status(alias)
         return effects
 
     if msg_type == "close":
@@ -324,14 +329,17 @@ def on_message(ctx, msg):
         if alias == "":
             return ws.send(ctx.conn_id, {"type": "error", "message": "no device selected"})
         serial.close(alias)
+        closed_status = _serial_status(serial.status(alias))
         state = _state()
         state["connected"] = False
         state["locked"] = False
-        state["status"] = "closed"
-        state["error"] = ""
+        state["status"] = closed_status.get("status", "closed")
+        state["error"] = closed_status.get("error", "")
+        state["last_error"] = closed_status.get("error", "")
+        state["last_event_at"] = _last_event_at(closed_status)
         _save_state(state)
         effects = [_state_changed()]
-        effects += _append_debug_and_publish("close", {"device": alias, "by": ctx.conn_id})
+        effects += _append_debug_and_publish("close", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": state["last_event_at"]})
         effects += _append_terminal_and_publish(_terminal("system", "closed " + alias, ctx.conn_id))
         return effects
 

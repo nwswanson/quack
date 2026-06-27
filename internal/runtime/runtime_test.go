@@ -872,6 +872,38 @@ func TestDemoSerialTerminalWebSocketExecutes(t *testing.T) {
 	if !foundReadPublish {
 		t.Fatalf("write effects = %+v, want terminal read publish", effects)
 	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"close"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"open"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, effect := range effects {
+		if strings.Contains(string(effect.Payload), `42`) {
+			t.Fatalf("reopen effects = %+v, replayed stale serial output", effects)
+		}
+	}
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"poll"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, effect := range effects {
+		if strings.Contains(string(effect.Payload), `42`) {
+			t.Fatalf("post-reopen poll effects = %+v, replayed stale serial output", effects)
+		}
+	}
 }
 
 func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
