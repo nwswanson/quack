@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"quack/internal/domain"
 	appruntime "quack/internal/runtime"
+	appsettings "quack/internal/settings"
 )
 
 func TestHandlerReturnsDisabledWhenRuntimeIsNotConfigured(t *testing.T) {
@@ -400,6 +402,36 @@ func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
 	}
 }
 
+func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
+	runtime := &recordingRuntime{}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"name":"hardware.serial.rpi.read","retain":2}]`,
+			appsettings.SettingRuntimeEvents: `[{"selector":"hardware.serial.*","on_event":"api/serial.star:on_serial"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "hardware.serial.rpi.read",
+		Payload: []byte(`{"text":"BOOT\n"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.eventRequests) != 1 {
+		t.Fatalf("event requests = %#v, want one selector handler", runtime.eventRequests)
+	}
+	got := runtime.eventRequests[0]
+	if got.Site != "foo" || got.Version != 3 || got.Entrypoint != "api/serial.star" || got.Handler != "on_serial" || got.Topic != "hardware.serial.rpi.read" {
+		t.Fatalf("event request = %#v, want selector event invocation", got)
+	}
+}
+
 func websocketPipe(t *testing.T, handler Handler, req appruntime.WebSocketInvocationRequest) (net.Conn, *bufio.Reader, <-chan struct{}) {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
@@ -501,7 +533,21 @@ type recordingRuntime struct {
 	resp              appruntime.InvocationResponse
 	err               error
 	websocket         func(appruntime.WebSocketInvocationRequest) ([]appruntime.WebSocketEffect, error)
+	event             func(appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error)
 	websocketRequests []appruntime.WebSocketInvocationRequest
+	eventRequests     []appruntime.EventInvocationRequest
+}
+
+type eventSettingsFixture struct {
+	manifests []domain.CurrentSiteManifest
+}
+
+func (f eventSettingsFixture) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
+	return domain.ServerSettings{}, nil
+}
+
+func (f eventSettingsFixture) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {
+	return append([]domain.CurrentSiteManifest(nil), f.manifests...), nil
 }
 
 func (r *recordingRuntime) InvokeHTTP(ctx context.Context, req appruntime.InvocationRequest) (appruntime.InvocationResponse, error) {
@@ -514,6 +560,14 @@ func (r *recordingRuntime) InvokeWebSocket(ctx context.Context, req appruntime.W
 	r.websocketRequests = append(r.websocketRequests, req)
 	if r.websocket != nil {
 		return r.websocket(req)
+	}
+	return nil, r.err
+}
+
+func (r *recordingRuntime) InvokeEvent(ctx context.Context, req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+	r.eventRequests = append(r.eventRequests, req)
+	if r.event != nil {
+		return r.event(req)
 	}
 	return nil, r.err
 }

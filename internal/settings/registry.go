@@ -82,6 +82,8 @@ const (
 	SettingRuntimeMemoryShutdownFlushTimeoutMS   = "runtime.memory.shutdown_flush_timeout_ms"
 	SettingRuntimeWebSocketMaxConnections        = "runtime.websocket.max_connections"
 	SettingRuntimeWebSocketMaxConnectionsPerSite = "runtime.websocket.max_connections_per_site"
+	SettingRuntimePipes                          = "runtime.pipes"
+	SettingRuntimeEvents                         = "runtime.events"
 	// Deprecated: static.root is kept only for current releases uploaded before
 	// static route roots existed. New manifests must use routes[].root.
 	SettingStaticRoot = "static.root"
@@ -221,6 +223,14 @@ var registry = map[string]SettingDefinition{
 	},
 	SettingRuntimeHTTPClientAPIProxies: {
 		Key: SettingRuntimeHTTPClientAPIProxies, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
+	},
+	SettingRuntimePipes: {
+		Key: SettingRuntimePipes, Type: SettingTypeString, DefaultValue: "",
+		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
+	},
+	SettingRuntimeEvents: {
+		Key: SettingRuntimeEvents, Type: SettingTypeString, DefaultValue: "",
 		AllowedScopes: []domain.ScopeType{domain.ScopeUpload}, SiteEditable: true,
 	},
 }

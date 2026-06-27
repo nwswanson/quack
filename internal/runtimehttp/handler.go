@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"quack/internal/domain"
+	"quack/internal/eventpipe"
 	"quack/internal/logbuffer"
 	appruntime "quack/internal/runtime"
 )
@@ -16,6 +17,8 @@ import (
 type Handler struct {
 	runtime  appruntime.Service
 	settings SettingsReader
+	events   EventSettingsReader
+	pipes    *eventpipe.Store
 	sockets  *socketManager
 	logs     *logbuffer.Service
 }
@@ -24,11 +27,18 @@ type SettingsReader interface {
 	GetServerSettings(ctx context.Context) (domain.ServerSettings, error)
 }
 
+type EventSettingsReader interface {
+	ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error)
+}
+
 type Option func(*Handler)
 
 func WithSettings(settings SettingsReader) Option {
 	return func(h *Handler) {
 		h.settings = settings
+		if events, ok := settings.(EventSettingsReader); ok {
+			h.events = events
+		}
 	}
 }
 
@@ -45,7 +55,7 @@ func New(runtime appruntime.Service, opts ...Option) Handler {
 		// a runtime service.
 		runtime = appruntime.NewDisabledService()
 	}
-	h := Handler{runtime: runtime, sockets: newSocketManager()}
+	h := Handler{runtime: runtime, pipes: eventpipe.NewStore(), sockets: newSocketManager()}
 	for _, opt := range opts {
 		opt(&h)
 	}

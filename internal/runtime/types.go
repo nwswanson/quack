@@ -113,6 +113,9 @@ type Executor interface {
 type WebSocketExecutor interface {
 	InvokeWebSocket(ctx context.Context, bundle Bundle, event WebSocketEvent) ([]WebSocketEffect, error)
 }
+type EventExecutor interface {
+	InvokeEvent(ctx context.Context, bundle Bundle, event EventInvocation) ([]WebSocketEffect, error)
+}
 type Repository interface {
 	ListRuntimeRoutes(ctx context.Context, siteSHA string, version int64) ([]RouteMetadata, error)
 	ListCurrentRuntimeRoutes(ctx context.Context) ([]RouteMetadata, error)
@@ -153,6 +156,7 @@ type ServiceOptions struct {
 	Policies            policy.Loader
 	Executor            Executor
 	WebSocketExecutor   WebSocketExecutor
+	EventExecutor       EventExecutor
 	MaxConcurrency      int64
 	DefaultLimits       ResourceLimits
 	Settings            SettingsReader
@@ -163,7 +167,27 @@ type ServiceOptions struct {
 type Service interface {
 	InvokeHTTP(ctx context.Context, req InvocationRequest) (InvocationResponse, error)
 	InvokeWebSocket(ctx context.Context, req WebSocketInvocationRequest) ([]WebSocketEffect, error)
+	InvokeEvent(ctx context.Context, req EventInvocationRequest) ([]WebSocketEffect, error)
 	PumpWebSockets(ctx context.Context) error
+}
+
+type EventInvocationRequest struct {
+	Site       string
+	Version    int64
+	Entrypoint string
+	Handler    string
+	Topic      string
+	Payload    []byte
+	Limits     ResourceLimits
+}
+
+type EventInvocation struct {
+	Site       string
+	Version    int64
+	Entrypoint string
+	Handler    string
+	Topic      string
+	Payload    []byte
 }
 
 type WebSocketEventType string

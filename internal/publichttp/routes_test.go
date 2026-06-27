@@ -555,6 +555,10 @@ func (s *recordingRuntimeService) InvokeWebSocket(ctx context.Context, req appru
 	return nil, nil
 }
 
+func (s *recordingRuntimeService) InvokeEvent(ctx context.Context, req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+	return nil, nil
+}
+
 func (s *recordingRuntimeService) PumpWebSockets(ctx context.Context) error {
 	return nil
 }

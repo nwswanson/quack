@@ -259,6 +259,14 @@ func ManifestSettings(manifest manifest.Manifest) map[string]string {
 		data, _ := json.Marshal(manifest.APIProxies)
 		settings[appsettings.SettingRuntimeHTTPClientAPIProxies] = string(data)
 	}
+	if len(manifest.Pipes) > 0 {
+		data, _ := json.Marshal(manifest.Pipes)
+		settings[appsettings.SettingRuntimePipes] = string(data)
+	}
+	if len(manifest.Events) > 0 {
+		data, _ := json.Marshal(manifest.Events)
+		settings[appsettings.SettingRuntimeEvents] = string(data)
+	}
 	return settings
 }
 

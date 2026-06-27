@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"quack/internal/domain"
@@ -16,6 +17,7 @@ type service struct {
 	policies            policy.Loader
 	executor            Executor
 	wsExecutor          WebSocketExecutor
+	eventExecutor       EventExecutor
 	metrics             Metrics
 	sem                 chan struct{}
 	defaults            ResourceLimits
@@ -36,11 +38,16 @@ func NewService(opts ServiceOptions) Service {
 	if wsExecutor == nil {
 		wsExecutor, _ = opts.Executor.(WebSocketExecutor)
 	}
+	eventExecutor := opts.EventExecutor
+	if eventExecutor == nil {
+		eventExecutor, _ = opts.Executor.(EventExecutor)
+	}
 	return &service{
 		repo:                opts.Repository,
 		policies:            opts.Policies,
 		executor:            opts.Executor,
 		wsExecutor:          wsExecutor,
+		eventExecutor:       eventExecutor,
 		metrics:             metrics,
 		sem:                 make(chan struct{}, positiveOr(opts.MaxConcurrency, DefaultMaxConcurrentInvocations)),
 		defaults:            opts.DefaultLimits.withDefaults(),
@@ -118,6 +125,50 @@ func (s *service) InvokeWebSocket(ctx context.Context, req WebSocketInvocationRe
 		Site: req.Site, Version: req.Version, Route: req.Route, Query: req.Query,
 		Headers: req.Headers, ConnID: req.ConnID, EventType: req.EventType,
 		Message: req.Message, Event: req.Event,
+	})
+	if err != nil {
+		return nil, invocationError(invokeCtx, err)
+	}
+	return validateWebSocketEffects(effects, limits)
+}
+
+func (s *service) InvokeEvent(ctx context.Context, req EventInvocationRequest) (effects []WebSocketEffect, err error) {
+	if !s.executionOn || s.eventExecutor == nil {
+		return nil, ErrDisabled
+	}
+	event, start := InvocationEvent{Site: req.Site, Version: req.Version, Route: req.Entrypoint, RuntimeKind: RuntimeStarlark}, time.Now()
+	defer func() {
+		event.Duration = time.Since(start)
+		if err != nil {
+			event.Error = err.Error()
+			event.ErrorKind = invocationErrorKind(err)
+		}
+		s.metrics.RecordInvocation(ctx, event)
+	}()
+	limits := req.Limits.withFallback(s.defaults)
+	if err := s.applyServerRuntimeSettings(ctx, &limits); err != nil {
+		return nil, err
+	}
+	if int64(len(req.Payload)) > limits.MaxRequestBytes {
+		return nil, ErrRequestTooLarge
+	}
+	if !s.acquire(ctx) {
+		return nil, ErrConcurrencyLimit
+	}
+	defer s.release()
+	invokeCtx, cancel := context.WithTimeout(ctx, time.Duration(limits.MaxDurationMillis)*time.Millisecond)
+	defer cancel()
+	route, err := s.eventRoute(invokeCtx, req)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := s.runtimeBundle(invokeCtx, route, limits)
+	if err != nil {
+		return nil, err
+	}
+	effects, err = s.eventExecutor.InvokeEvent(invokeCtx, bundle, EventInvocation{
+		Site: req.Site, Version: req.Version, Entrypoint: req.Entrypoint, Handler: req.Handler,
+		Topic: req.Topic, Payload: req.Payload,
 	})
 	if err != nil {
 		return nil, invocationError(invokeCtx, err)
@@ -307,6 +358,51 @@ func (r RouteMetadata) bundle(limits ResourceLimits, files []domain.UploadFileRe
 		Limits: limits,
 	}
 }
+
+func (s *service) eventRoute(ctx context.Context, req EventInvocationRequest) (RouteMetadata, error) {
+	if strings.TrimSpace(req.Entrypoint) == "" || strings.TrimSpace(req.Handler) == "" {
+		return RouteMetadata{}, fmt.Errorf("%w: event entrypoint and handler are required", ErrInvalidRuntime)
+	}
+	routes, err := s.repo.ListCurrentRuntimeRoutes(ctx)
+	if err != nil {
+		return RouteMetadata{}, err
+	}
+	var siteSHA string
+	for _, route := range routes {
+		if route.Site == req.Site && route.Version == req.Version {
+			siteSHA = route.SiteSHA
+			break
+		}
+	}
+	if siteSHA == "" {
+		return RouteMetadata{}, ErrRouteNotFound
+	}
+	files, _, err := s.repo.ListRuntimeBundleFiles(ctx, siteSHA, req.Version)
+	if err != nil {
+		return RouteMetadata{}, err
+	}
+	entrypoint := strings.Trim(req.Entrypoint, "/")
+	for _, file := range files {
+		if file.RelativePath == entrypoint {
+			return RouteMetadata{
+				Site: req.Site, SiteSHA: siteSHA, Version: req.Version,
+				RuntimeKind: RuntimeStarlark, RouteKind: RouteWebSocket,
+				RoutePath: "event:" + entrypoint, Entrypoint: entrypoint,
+				BundleObjectKey: file.BlobPath,
+				ResourceLimits: ResourceLimits{
+					MaxRequestBytes:   DefaultMaxRequestBytes,
+					MaxResponseBytes:  DefaultMaxResponseBytes,
+					MaxDurationMillis: DefaultMaxDuration.Milliseconds(),
+					MaxMemoryBytes:    DefaultMaxMemoryBytes,
+					MaxConcurrency:    DefaultMaxConcurrentInvocations,
+					MaxExecutionSteps: DefaultMaxExecutionSteps,
+					MaxScriptBytes:    DefaultMaxScriptBytes,
+				},
+			}, nil
+		}
+	}
+	return RouteMetadata{}, ErrRouteNotFound
+}
 func bundleFiles(files []domain.UploadFileRecord) []BundleFile {
 	out := make([]BundleFile, 0, len(files))
 	for _, file := range files {
@@ -333,6 +429,9 @@ func (DisabledService) InvokeHTTP(context.Context, InvocationRequest) (Invocatio
 	return InvocationResponse{}, ErrDisabled
 }
 func (DisabledService) InvokeWebSocket(context.Context, WebSocketInvocationRequest) ([]WebSocketEffect, error) {
+	return nil, ErrDisabled
+}
+func (DisabledService) InvokeEvent(context.Context, EventInvocationRequest) ([]WebSocketEffect, error) {
 	return nil, ErrDisabled
 }
 func (DisabledService) PumpWebSockets(context.Context) error { return ErrDisabled }

@@ -38,6 +38,17 @@ func (s *service) lookupWebSocketRoute(ctx context.Context, req WebSocketInvocat
 	}
 	return best, nil
 }
+
+func singleEventRoute(bundle Bundle) (Route, error) {
+	if len(bundle.Routes) != 1 {
+		return Route{}, ErrRouteNotFound
+	}
+	route := bundle.Routes[0]
+	if route.Kind != RouteWebSocket {
+		return Route{}, ErrRouteNotFound
+	}
+	return route, nil
+}
 func httpRouteMatches(route RouteMetadata, req InvocationRequest) bool {
 	return route.Site == req.Site && route.Version == req.Version && route.RouteKind == RouteHTTP && routeMatches(req.Route, route.RoutePath)
 }

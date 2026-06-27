@@ -8,6 +8,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/eventpipe"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 	"quack/internal/sites"
@@ -215,6 +218,34 @@ func (h Handler) applyEffects(ctx context.Context, site string, effects []apprun
 }
 
 func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, payload []byte) error {
+	settings, err := h.siteEventSettings(ctx, site)
+	if err != nil {
+		return err
+	}
+	pipeName := strings.TrimSpace(topic)
+	config := settings.pipe(pipeName)
+	event, accepted := h.pipes.Publish(config, eventpipe.Event{
+		Site: site, Pipe: pipeName, Topic: topic, SourceKind: "runtime", SourceName: "events.publish", Payload: payload,
+	})
+	if !accepted {
+		return nil
+	}
+	for _, route := range settings.matchingRoutes(event.Topic) {
+		entrypoint, handler, err := manifest.SplitEventHandler(route.OnEvent)
+		if err != nil {
+			return err
+		}
+		effects, err := h.runtime.InvokeEvent(ctx, appruntime.EventInvocationRequest{
+			Site: site, Version: settings.version, Entrypoint: entrypoint, Handler: handler,
+			Topic: event.Topic, Payload: event.Payload,
+		})
+		if err != nil {
+			continue
+		}
+		if err := h.applyEffects(ctx, site, effects); err != nil {
+			return err
+		}
+	}
 	for _, snapshot := range h.sockets.subscriberSnapshots(site, topic) {
 		effects, err := h.runtime.InvokeWebSocket(ctx, appruntime.WebSocketInvocationRequest{
 			Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Query: snapshot.query,
@@ -231,6 +262,70 @@ func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, p
 		}
 	}
 	return nil
+}
+
+type eventSettings struct {
+	version int64
+	pipes   []manifest.Pipe
+	events  []manifest.EventRoute
+}
+
+func (h Handler) siteEventSettings(ctx context.Context, site string) (eventSettings, error) {
+	if h.events == nil {
+		return eventSettings{}, nil
+	}
+	manifests, err := h.events.ListCurrentSiteManifests(ctx)
+	if err != nil {
+		return eventSettings{}, err
+	}
+	for _, current := range manifests {
+		if current.Site != site {
+			continue
+		}
+		settings := eventSettings{version: current.Version}
+		if raw := strings.TrimSpace(current.Settings[appsettings.SettingRuntimePipes]); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &settings.pipes); err != nil {
+				return eventSettings{}, err
+			}
+		}
+		if raw := strings.TrimSpace(current.Settings[appsettings.SettingRuntimeEvents]); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &settings.events); err != nil {
+				return eventSettings{}, err
+			}
+		}
+		return settings, nil
+	}
+	return eventSettings{}, nil
+}
+
+func (s eventSettings) pipe(name string) eventpipe.Config {
+	for _, pipe := range s.pipes {
+		if pipe.Name == name {
+			return eventpipe.Config{Name: pipe.Name, Retain: pipe.Retain, Unlimited: pipe.Unlimited, Overflow: pipe.Overflow}
+		}
+	}
+	return eventpipe.Config{Name: name}
+}
+
+func (s eventSettings) matchingRoutes(topic string) []manifest.EventRoute {
+	var out []manifest.EventRoute
+	for _, route := range s.events {
+		selector := strings.TrimSpace(route.Selector)
+		if selector == "" {
+			continue
+		}
+		if strings.HasSuffix(selector, "*") {
+			prefix := strings.TrimSuffix(selector, "*")
+			if strings.HasPrefix(topic, prefix) {
+				out = append(out, route)
+			}
+			continue
+		}
+		if selector == topic {
+			out = append(out, route)
+		}
+	}
+	return out
 }
 
 func (h Handler) websocketSettings(ctx context.Context) (domain.ServerSettings, error) {

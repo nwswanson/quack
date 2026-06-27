@@ -48,6 +48,45 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 	return websocketEffectsFromValue(result)
 }
 
+func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event EventInvocation) ([]WebSocketEffect, error) {
+	route, err := singleEventRoute(bundle)
+	if err != nil {
+		return nil, err
+	}
+	limits := bundle.Limits.withFallback(e.limits)
+	scriptKey := route.ScriptKey
+	if scriptKey == "" {
+		scriptKey = route.Entrypoint
+	}
+	script, err := e.readScript(ctx, scriptKey, limits)
+	if err != nil {
+		return nil, err
+	}
+	thread, stopCancel := starlarkThread(ctx, "event "+event.Topic, limits.MaxExecutionSteps)
+	defer stopCancel()
+	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.websocketPredeclareds(ctx, bundle, route, limits))
+	if err != nil {
+		return nil, e.wrapStarlarkError(bundle, route, err)
+	}
+	value, ok := globals[event.Handler]
+	if !ok {
+		return nil, nil
+	}
+	callable, ok := value.(starlark.Callable)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s must be callable", ErrInvalidRuntime, event.Handler)
+	}
+	globals.Freeze()
+	result, err := starlark.Call(thread, callable, starlark.Tuple{eventContext(event), websocketServerEventValue(WebSocketServerEvent{Topic: event.Topic, Payload: event.Payload})}, nil)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ErrTimeout
+		}
+		return nil, e.wrapStarlarkError(bundle, route, err)
+	}
+	return websocketEffectsFromValue(result)
+}
+
 func (e *StarlarkExecutor) websocketPredeclareds(ctx context.Context, bundle Bundle, route Route, limits ResourceLimits) starlark.StringDict {
 	out := e.predeclareds(ctx, bundle, route, limits)
 	out["ws"] = websocketModule()
@@ -103,6 +142,22 @@ func websocketContext(event WebSocketEvent, routePath string) starlark.Value {
 		"params":  starlark.NewDict(0),
 		"user": starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
 			"id": starlark.String("anonymous"),
+		}),
+	})
+}
+
+func eventContext(event EventInvocation) starlark.Value {
+	return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
+		"site":    starlark.String(event.Site),
+		"version": starlark.MakeInt64(event.Version),
+		"route":   starlark.String(event.Entrypoint),
+		"path":    starlark.String("/"),
+		"query":   starlark.String(""),
+		"headers": starlark.NewDict(0),
+		"conn_id": starlark.String(""),
+		"params":  starlark.NewDict(0),
+		"user": starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
+			"id": starlark.String("system"),
 		}),
 	})
 }

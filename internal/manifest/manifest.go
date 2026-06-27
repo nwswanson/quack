@@ -23,6 +23,8 @@ type Manifest struct {
 	Exclude      []string     `json:"exclude" yaml:"exclude"`
 	Routes       []Route      `json:"routes" yaml:"routes"`
 	APIProxies   []APIProxy   `json:"api_proxies" yaml:"api_proxies"`
+	Pipes        []Pipe       `json:"pipes" yaml:"pipes"`
+	Events       []EventRoute `json:"events" yaml:"events"`
 }
 
 type Features struct {
@@ -91,6 +93,18 @@ type APIProxy struct {
 	InsecureSSL bool     `json:"insecure_ssl,omitempty" yaml:"insecure_ssl,omitempty"`
 }
 
+type Pipe struct {
+	Name      string `json:"name" yaml:"name"`
+	Retain    int    `json:"retain,omitempty" yaml:"retain,omitempty"`
+	Unlimited bool   `json:"unlimited,omitempty" yaml:"unlimited,omitempty"`
+	Overflow  string `json:"overflow,omitempty" yaml:"overflow,omitempty"`
+}
+
+type EventRoute struct {
+	Selector string `json:"selector" yaml:"selector"`
+	OnEvent  string `json:"on_event" yaml:"on_event"`
+}
+
 func Default() Manifest {
 	return Manifest{}
 }
@@ -135,6 +149,12 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 		return Manifest{}, err
 	}
 	if err := validateAPIProxies(manifest.APIProxies); err != nil {
+		return Manifest{}, err
+	}
+	if err := validatePipes(manifest.Pipes); err != nil {
+		return Manifest{}, err
+	}
+	if err := validateEvents(manifest.Events); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil
@@ -323,6 +343,93 @@ func validateAPIProxies(proxies []APIProxy) error {
 		}
 		proxy.Methods = methods
 		proxy.MethodsAll = all
+	}
+	return nil
+}
+
+func validatePipes(pipes []Pipe) error {
+	seen := map[string]bool{}
+	for _, pipe := range pipes {
+		name := strings.TrimSpace(pipe.Name)
+		if name == "" {
+			return fmt.Errorf("pipe.name is required")
+		}
+		if err := validateEventName(name, "pipe.name"); err != nil {
+			return err
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate pipe %q", name)
+		}
+		seen[name] = true
+		if pipe.Retain < 0 {
+			return fmt.Errorf("pipe.retain cannot be negative")
+		}
+		switch strings.TrimSpace(pipe.Overflow) {
+		case "", "drop_oldest", "drop_new":
+		default:
+			return fmt.Errorf("unsupported pipe overflow %q", pipe.Overflow)
+		}
+	}
+	return nil
+}
+
+func validateEvents(events []EventRoute) error {
+	for _, event := range events {
+		selector := strings.TrimSpace(event.Selector)
+		if selector == "" {
+			return fmt.Errorf("event.selector is required")
+		}
+		if strings.Contains(selector, "*") && !strings.HasSuffix(selector, "*") {
+			return fmt.Errorf("event.selector wildcard is only supported as the last character")
+		}
+		base := strings.TrimSuffix(selector, "*")
+		base = strings.TrimSuffix(base, ".")
+		if base == "" {
+			return fmt.Errorf("event.selector must name a pipe prefix")
+		}
+		if err := validateEventName(base, "event.selector"); err != nil {
+			return err
+		}
+		if _, _, err := SplitEventHandler(event.OnEvent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func SplitEventHandler(value string) (string, string, error) {
+	value = strings.TrimSpace(value)
+	file, handler, ok := strings.Cut(value, ":")
+	if !ok || strings.TrimSpace(file) == "" || strings.TrimSpace(handler) == "" {
+		return "", "", fmt.Errorf("event.on_event must be formatted as file.star:function")
+	}
+	file = strings.TrimSpace(file)
+	handler = strings.TrimSpace(handler)
+	if _, err := SanitizeStaticFile(file); err != nil {
+		return "", "", fmt.Errorf("invalid event.on_event file: %w", err)
+	}
+	if !strings.HasSuffix(file, ".star") {
+		return "", "", fmt.Errorf("event.on_event file must be a .star module")
+	}
+	if !identifierRE.MatchString(handler) {
+		return "", "", fmt.Errorf("event.on_event function %q is invalid", handler)
+	}
+	return file, handler, nil
+}
+
+var identifierRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func validateEventName(value string, field string) error {
+	for _, part := range strings.Split(value, ".") {
+		if part == "" {
+			return fmt.Errorf("%s cannot contain empty name segments", field)
+		}
+		for _, r := range part {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+				continue
+			}
+			return fmt.Errorf("%s contains unsupported character %q", field, r)
+		}
 	}
 	return nil
 }
