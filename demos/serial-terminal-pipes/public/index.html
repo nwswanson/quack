@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Serial Terminal</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <div>
+          <h1>Serial Terminal</h1>
+          <p id="subtitle">Choose a bound serial device and send line-based test commands.</p>
+        </div>
+        <div class="state" id="statePill" data-state="idle">
+          <span class="dot"></span>
+          <span id="stateText">Idle</span>
+        </div>
+      </header>
+
+      <section class="controls" aria-label="Connection controls">
+        <div class="device-controls">
+          <label class="device-field">
+            <span>Device</span>
+            <select id="deviceSelect"></select>
+          </label>
+
+          <div class="button-row">
+            <button id="refreshBtn" type="button">Refresh</button>
+            <button id="connectBtn" class="primary" type="button">Connect</button>
+            <button id="quitBtn" class="danger" type="button" disabled>Quit</button>
+          </div>
+        </div>
+
+        <fieldset>
+          <legend>Line Settings</legend>
+          <label>
+            <span>Line ending</span>
+            <select id="lineEnding">
+              <option value="lf">LF</option>
+              <option value="crlf">CRLF</option>
+              <option value="cr">CR</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+        </fieldset>
+      </section>
+
+      <section class="workspace" aria-label="Serial terminal workspace">
+        <section class="terminal-panel" aria-label="Terminal">
+          <div class="terminal-head">
+            <span id="terminalTitle">No device connected</span>
+            <button id="clearTerminalBtn" type="button">Clear</button>
+          </div>
+          <pre id="terminal" class="terminal" aria-live="polite"></pre>
+          <form id="commandForm" class="command-line">
+            <span class="prompt">&gt;</span>
+            <input id="commandInput" autocomplete="off" spellcheck="false" disabled>
+            <button id="sendBtn" class="primary" type="submit" disabled>Send</button>
+          </form>
+        </section>
+
+        <section class="debug-panel" aria-label="Debug pane">
+          <div class="debug-head">
+            <span>Debug</span>
+            <button id="clearDebugBtn" type="button">Clear</button>
+          </div>
+          <pre id="debugLog" class="debug-log" aria-live="polite"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

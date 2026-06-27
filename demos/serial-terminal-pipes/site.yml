@@ -1,0 +1,17 @@
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/terminal.star
+
+  - path: /
+    kind: static
+    root: public
+
+pipes:
+  - name: serial-terminal-pipes:session
+    retain: 64
+
+events:
+  - selector: "hardware.serial.*"
+    on_event: api/terminal.star:on_hardware_event
