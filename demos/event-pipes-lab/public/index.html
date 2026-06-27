@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Event Pipes Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>Event Pipes Lab</h1>
+        <p>Three websocket workflows built from pipe events, stage handlers, and session-scoped channels.</p>
+      </div>
+      <div class="status" data-state="connecting">
+        <span id="statusDot"></span>
+        <span id="statusText">Connecting</span>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <nav class="tabs" aria-label="Pipe demos">
+        <button class="tab active" data-flow="map_reduce">Map Reduce</button>
+        <button class="tab" data-flow="scatter_gather">Scatter/Gather</button>
+        <button class="tab" data-flow="sharding">Sharding</button>
+      </nav>
+
+      <section class="panel active" data-panel="map_reduce">
+        <div class="brief">
+          <h2>Map Reduce</h2>
+          <p>The client publishes a start event. The server splits text into chunks, maps each chunk into word-count pairs, then reduces those pairs into final totals.</p>
+          <ol>
+            <li><code>pipe-demo.map_reduce.&lt;session&gt;.start</code></li>
+            <li><code>split</code> publishes several <code>map</code> events</li>
+            <li><code>reduce</code> publishes the websocket-visible result</li>
+          </ol>
+        </div>
+        <form class="runner" data-runner="map_reduce">
+          <label for="mapInput">Text to count</label>
+          <textarea id="mapInput" name="input" rows="8">Pipes carry events. Events trigger handlers. Handlers publish more events. Pipes make websocket demos feel alive.</textarea>
+          <button type="submit">Run map-reduce</button>
+        </form>
+      </section>
+
+      <section class="panel" data-panel="scatter_gather">
+        <div class="brief">
+          <h2>Scatter/Gather</h2>
+          <p>A controller scatters independent work items to worker events. Each worker returns a partial score, and the gather stage waits until the session has every response.</p>
+          <ol>
+            <li><code>start</code> fans out to many <code>worker</code> pipe events</li>
+            <li>Workers store partial responses under the session id</li>
+            <li><code>gather</code> merges responses and chooses the highest score</li>
+          </ol>
+        </div>
+        <form class="runner" data-runner="scatter_gather">
+          <label for="scatterInput">Work items</label>
+          <textarea id="scatterInput" name="input" rows="8">alpha, quartz, websocket, pipe, reduce, gather</textarea>
+          <button type="submit">Run scatter/gather</button>
+        </form>
+      </section>
+
+      <section class="panel" data-panel="sharding">
+        <div class="brief">
+          <h2>Sharding</h2>
+          <p>The router hashes records onto shard events. Every shard computes its local count and sum, then a merge event combines the shard summaries.</p>
+          <ol>
+            <li><code>route</code> assigns records by stable key hash</li>
+            <li><code>shard</code> handlers process separate partitions</li>
+            <li><code>merge</code> shows the aggregate result</li>
+          </ol>
+        </div>
+        <form class="runner" data-runner="sharding">
+          <div class="form-row">
+            <label for="shards">Shards</label>
+            <input id="shards" name="shards" type="number" min="2" max="6" value="3">
+          </div>
+          <label for="shardInput">Records as key:value</label>
+          <textarea id="shardInput" name="input" rows="8">ada:4
+ben:7
+carla:3
+ada:6
+dinesh:2
+elena:8
+frank:5</textarea>
+          <button type="submit">Run sharding</button>
+        </form>
+      </section>
+    </section>
+
+    <aside class="debug">
+      <div class="debug-head">
+        <div>
+          <h2>WebSocket Pipe Trace</h2>
+          <p id="sessionLabel"></p>
+        </div>
+        <button id="clearLog" type="button">Clear</button>
+      </div>
+      <div id="traceLog" class="trace" aria-live="polite"></div>
+    </aside>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -9,7 +9,7 @@ routes:
     root: public
 
 pipes:
-  - name: serial-terminal-pipes:session
+  - name: serial-terminal-pipes.session
     retain: 64
 
 events:

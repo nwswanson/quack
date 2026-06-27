@@ -1,0 +1,27 @@
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/pipes.star
+
+  - path: /
+    kind: static
+    root: public
+
+pipes:
+  - name: pipe-demo.session
+    retain: 128
+  - name: pipe-demo.map_reduce
+    retain: 128
+  - name: pipe-demo.scatter_gather
+    retain: 128
+  - name: pipe-demo.sharding
+    retain: 128
+
+events:
+  - selector: "pipe-demo.map_reduce.*"
+    on_event: api/pipes.star:on_map_reduce_event
+  - selector: "pipe-demo.scatter_gather.*"
+    on_event: api/pipes.star:on_scatter_gather_event
+  - selector: "pipe-demo.sharding.*"
+    on_event: api/pipes.star:on_sharding_event

@@ -1,7 +1,7 @@
-TOPIC = "serial-terminal-pipes:session"
-STATE_KEY = "serial-terminal-pipes:state"
-TERMINAL_KEY = "serial-terminal-pipes:terminal"
-DEBUG_KEY = "serial-terminal-pipes:debug"
+TOPIC = "serial-terminal-pipes.session"
+STATE_KEY = "serial-terminal-pipes.state"
+TERMINAL_KEY = "serial-terminal-pipes.terminal"
+DEBUG_KEY = "serial-terminal-pipes.debug"
 MAX_TERMINAL_LINES = 500
 MAX_DEBUG_LINES = 240
 

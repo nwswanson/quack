@@ -913,6 +913,119 @@ func TestDemoSerialTerminalWebSocketExecutes(t *testing.T) {
 	}
 }
 
+func TestDemoSerialTerminalPipesWebSocketExecutes(t *testing.T) {
+	src, err := os.ReadFile("../../demos/serial-terminal-pipes/api/terminal.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modules.WipeMemorySite("demo-serial-terminal-pipes")
+	executor := newTestStarlarkExecutor(t, map[string]string{"api/terminal.star": string(src)})
+	hardwareSvc := &serialTerminalHardware{
+		devices: []hardware.DeviceInfo{{
+			ID:    "meter",
+			Alias: "meter",
+			Kind:  hardware.DeviceKindSerial,
+			Label: "Bench meter",
+			Permissions: hardware.DevicePermissions{
+				SerialRead:  true,
+				SerialWrite: true,
+			},
+		}},
+	}
+	executor.SetHardwareService(hardwareSvc)
+	bundle := Bundle{
+		Site:    "demo-serial-terminal-pipes",
+		Version: 1,
+		Routes:  []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "api/terminal.star"}},
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) < 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "serial-terminal-pipes.session" {
+		t.Fatalf("connect effects = %+v, want pipes subscription and snapshot sends", effects)
+	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"refresh"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"open"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hardwareSvc.openReq.DeviceID != "meter" {
+		t.Fatalf("open device = %q, want meter", hardwareSvc.openReq.DeviceID)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"write","text":"READ"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(hardwareSvc.writeReq.Data); got != "READ\n" {
+		t.Fatalf("write data = %q, want READ newline", got)
+	}
+	for _, effect := range effects {
+		if strings.Contains(string(effect.Payload), `42`) {
+			t.Fatalf("write effects = %+v, want no read output until hardware event", effects)
+		}
+	}
+
+	effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+		Site: "demo-serial-terminal-pipes", Version: 1, Entrypoint: "api/terminal.star", Handler: "on_hardware_event",
+		Topic: "hardware.serial.meter.read", Payload: []byte("42\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundReadPublish := false
+	var terminalPayload []byte
+	for _, effect := range effects {
+		if effect.Type == WebSocketEffectPublish &&
+			effect.Topic == "serial-terminal-pipes.session" &&
+			strings.Contains(string(effect.Payload), `"type":"terminal"`) &&
+			strings.Contains(string(effect.Payload), `42`) {
+			foundReadPublish = true
+			terminalPayload = effect.Payload
+		}
+	}
+	if !foundReadPublish {
+		t.Fatalf("hardware event effects = %+v, want terminal read publish", effects)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventEvent,
+		Event: WebSocketServerEvent{Topic: "serial-terminal-pipes.session", Payload: terminalPayload},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectSend || string(effects[0].Payload) != string(terminalPayload) {
+		t.Fatalf("session event effects = %+v, want websocket send of terminal payload", effects)
+	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"close"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
 	site := "demo-pixeldraw-namespaced-tabs"
 	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
