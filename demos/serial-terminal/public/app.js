@@ -2,8 +2,18 @@ const state = {
   devices: [],
   selected: "",
   connected: false,
-  busy: false,
-  lastEventAt: "",
+  locked: false,
+  status: "idle",
+  settings: {
+    line_ending: "lf",
+    until: "\n",
+    timeout_ms: 1000,
+  },
+  socket: null,
+  reconnectTimer: 0,
+  reconnectDelay: 600,
+  pollTimer: 0,
+  localSettingsWrite: false,
 };
 
 const els = {
@@ -26,40 +36,43 @@ const els = {
   clearDebugBtn: document.getElementById("clearDebugBtn"),
 };
 
-async function api(method, path, body) {
-  const started = performance.now();
-  const opts = { method, headers: {} };
-  if (body != null) {
-    opts.headers["content-type"] = "application/json";
-    opts.body = JSON.stringify(body);
-  }
+function socketUrl() {
+  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${window.location.host}/ws`;
+}
 
-  debug("request", { method, path, body: body || null });
-  const res = await fetch("/api" + path, opts);
-  const text = await res.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch (err) {
-    data = { error: text || err.message };
-  }
-  debug("response", {
-    method,
-    path,
-    status: res.status,
-    elapsed_ms: Math.round(performance.now() - started),
-    data,
-  });
-  if (!res.ok) throw new Error(data.error || `${res.status}`);
-  return data;
+function isOpen() {
+  return state.socket && state.socket.readyState === WebSocket.OPEN;
+}
+
+function send(message) {
+  if (!isOpen()) return;
+  state.socket.send(JSON.stringify(message));
 }
 
 function decodeEscapes(value) {
-  return value
+  return String(value || "")
     .replaceAll("\\r", "\r")
     .replaceAll("\\n", "\n")
     .replaceAll("\\t", "\t")
     .replaceAll("\\0", "\0");
+}
+
+function encodeEscapes(value) {
+  return String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\r", "\\r")
+    .replaceAll("\n", "\\n")
+    .replaceAll("\t", "\\t")
+    .replaceAll("\0", "\\0");
+}
+
+function stamp(value) {
+  if (value) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.valueOf())) return parsed.toLocaleTimeString();
+  }
+  return new Date().toLocaleTimeString();
 }
 
 function setStatus(kind, text) {
@@ -67,22 +80,24 @@ function setStatus(kind, text) {
   els.stateText.textContent = text;
 }
 
-function setBusy(busy) {
-  state.busy = busy;
-  renderControls();
-}
-
 function renderControls() {
+  const socketReady = isOpen();
   const hasDevice = Boolean(state.selected);
-  els.deviceSelect.disabled = state.connected || state.busy;
-  els.refreshBtn.disabled = state.connected || state.busy;
-  els.connectBtn.disabled = !hasDevice || state.connected || state.busy;
-  els.quitBtn.disabled = !state.connected || state.busy;
-  els.commandInput.disabled = !state.connected || state.busy;
-  els.sendBtn.disabled = !state.connected || state.busy;
+  const locked = state.locked || state.connected;
+
+  els.deviceSelect.disabled = !socketReady || locked;
+  els.refreshBtn.disabled = !socketReady || locked;
+  els.connectBtn.disabled = !socketReady || !hasDevice || locked;
+  els.quitBtn.disabled = !socketReady || !state.connected;
+  els.commandInput.disabled = !socketReady || !state.connected;
+  els.sendBtn.disabled = !socketReady || !state.connected;
+  els.lineEnding.disabled = !socketReady || locked;
+  els.untilInput.disabled = !socketReady || locked;
+  els.timeoutInput.disabled = !socketReady || locked;
 }
 
 function renderDevices() {
+  const previous = els.deviceSelect.value;
   els.deviceSelect.innerHTML = "";
 
   if (state.devices.length === 0) {
@@ -90,212 +105,220 @@ function renderDevices() {
     option.value = "";
     option.textContent = "No serial devices bound";
     els.deviceSelect.appendChild(option);
-    state.selected = "";
-    renderControls();
-    return;
+  } else {
+    for (const device of state.devices) {
+      const alias = device.alias || device.id;
+      const option = document.createElement("option");
+      option.value = alias;
+      option.textContent = device.label ? `${device.label} (${alias})` : alias;
+      els.deviceSelect.appendChild(option);
+    }
   }
 
-  for (const device of state.devices) {
-    const alias = device.alias || device.id;
-    const option = document.createElement("option");
-    option.value = alias;
-    option.textContent = device.label ? `${device.label} (${alias})` : alias;
-    els.deviceSelect.appendChild(option);
+  els.deviceSelect.value = state.selected || previous || "";
+}
+
+function renderSettings() {
+  state.localSettingsWrite = true;
+  els.lineEnding.value = state.settings.line_ending || "lf";
+  els.untilInput.value = encodeEscapes(state.settings.until ?? "\n");
+  els.timeoutInput.value = String(state.settings.timeout_ms ?? 1000);
+  state.localSettingsWrite = false;
+}
+
+function renderState() {
+  renderDevices();
+  renderSettings();
+
+  const statusText = state.status || (state.connected ? "open" : "closed");
+  if (!isOpen()) {
+    setStatus("error", "Offline");
+  } else if (state.connected) {
+    setStatus("open", "Connected");
+  } else if (state.devices.length === 0) {
+    setStatus("idle", "No devices");
+  } else {
+    setStatus(statusText === "error" ? "error" : "closed", state.locked ? "Locked" : "Ready");
   }
 
-  if (!state.devices.find((device) => (device.alias || device.id) === state.selected)) {
-    state.selected = state.devices[0].alias || state.devices[0].id;
-  }
-  els.deviceSelect.value = state.selected;
+  const lockLabel = state.locked ? "locked" : "editable";
+  els.terminalTitle.textContent = state.selected
+    ? `${state.selected} · ${statusText} · ${lockLabel}`
+    : "No device connected";
   renderControls();
+  updatePolling();
 }
 
-function unavailableMessage(err) {
-  const message = err && err.message ? err.message : String(err);
-  if (message.includes("undefined: serial")) {
-    return "Serial hardware service is not configured for this server.";
-  }
-  return message;
-}
-
-function appendTerminal(text, className) {
-  const stamp = new Date().toLocaleTimeString();
-  els.terminal.textContent += `[${stamp}] ${text}\n`;
+function appendTerminal(line) {
+  if (!line || typeof line.text !== "string") return;
+  const prefix = `[${stamp(line.at)}] `;
+  const text = line.text.endsWith("\n") ? line.text : `${line.text}\n`;
+  els.terminal.textContent += `${prefix}${text}`;
   els.terminal.scrollTop = els.terminal.scrollHeight;
 }
 
-function debug(type, payload) {
-  const stamp = new Date().toISOString();
-  els.debugLog.textContent += `${stamp} ${type}\n${JSON.stringify(payload, null, 2)}\n\n`;
+function setTerminal(lines) {
+  els.terminal.textContent = "";
+  for (const line of Array.isArray(lines) ? lines : []) {
+    appendTerminal(line);
+  }
+}
+
+function appendDebug(entry) {
+  if (!entry) return;
+  els.debugLog.textContent += `${stamp(entry.at)} ${entry.kind || "event"}\n${JSON.stringify(entry.payload ?? {}, null, 2)}\n\n`;
   els.debugLog.scrollTop = els.debugLog.scrollHeight;
 }
 
-function rememberRecent(status) {
-  if (!status || !Array.isArray(status.recent)) return;
-  for (const event of status.recent) {
-    if (event.at && event.at > state.lastEventAt) {
-      state.lastEventAt = event.at;
-    }
+function setDebug(entries) {
+  els.debugLog.textContent = "";
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    appendDebug(entry);
   }
 }
 
-function appendRecentReads(status, skipBase64) {
-  if (!status || !Array.isArray(status.recent)) return { appended: false, skipped: false };
-
-  let appended = false;
-  let skipped = false;
-  const chunks = [];
-  for (const event of status.recent) {
-    if (!event.at || event.at <= state.lastEventAt) continue;
-    if (event.type === "read" && event.text) {
-      if (!skipped && skipBase64 && event.base64 === skipBase64) {
-        skipped = true;
-      } else {
-        chunks.push(event.text);
-        appended = true;
-      }
-    }
-    if (event.at > state.lastEventAt) {
-      state.lastEventAt = event.at;
-    }
-  }
-
-  if (chunks.length > 0) {
-    appendTerminal(chunks.join("").replace(/\n$/, "").replace(/\r$/, ""));
-  }
-  return { appended, skipped };
+function applySharedState(next) {
+  if (!next || typeof next !== "object") return;
+  state.devices = Array.isArray(next.devices) ? next.devices : [];
+  state.selected = next.selected || "";
+  state.connected = Boolean(next.connected);
+  state.locked = Boolean(next.locked);
+  state.status = next.status || "";
+  state.settings = {
+    ...state.settings,
+    ...(next.settings && typeof next.settings === "object" ? next.settings : {}),
+  };
+  renderState();
 }
 
-function applyStatus(status) {
-  if (!status) return;
-  const open = Boolean(status.open);
-  state.connected = open;
-  setStatus(open ? "open" : status.status === "error" ? "error" : "closed", status.status || (open ? "Open" : "Closed"));
-  els.terminalTitle.textContent = state.selected ? `${state.selected} · ${status.status || "unknown"}` : "No device connected";
-  if (status.error) appendTerminal(`! ${status.error}`);
-  rememberRecent(status);
+function handleMessage(event) {
+  let message = {};
+  try {
+    message = JSON.parse(event.data);
+  } catch (err) {
+    appendDebug({ kind: "socket_error", payload: { message: event.data || err.message } });
+    return;
+  }
+
+  if (message.type === "snapshot") {
+    applySharedState(message.state);
+    setTerminal(message.terminal);
+    setDebug(message.debug);
+    return;
+  }
+  if (message.type === "state") {
+    applySharedState(message.state);
+    return;
+  }
+  if (message.type === "terminal") {
+    appendTerminal(message.line);
+    return;
+  }
+  if (message.type === "debug") {
+    appendDebug(message.entry);
+    return;
+  }
+  if (message.type === "clear_terminal") {
+    els.terminal.textContent = "";
+    return;
+  }
+  if (message.type === "clear_debug") {
+    els.debugLog.textContent = "";
+    return;
+  }
+  if (message.type === "error") {
+    appendTerminal({ kind: "error", text: `! ${message.message || "unknown error"}` });
+    return;
+  }
+  if (message.type !== "ready") {
+    appendDebug({ kind: "socket_message", payload: message });
+  }
+}
+
+function connect() {
+  window.clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = 0;
+
+  if (state.socket) {
+    state.socket.onopen = null;
+    state.socket.onmessage = null;
+    state.socket.onclose = null;
+    state.socket.onerror = null;
+    state.socket.close();
+  }
+
+  setStatus("idle", "Connecting");
   renderControls();
-}
+  const socket = new WebSocket(socketUrl());
+  state.socket = socket;
 
-async function refreshDevices() {
-  setBusy(true);
-  try {
-    const data = await api("GET", "");
-    state.devices = data.devices || [];
-    renderDevices();
-    setStatus(state.devices.length > 0 ? "closed" : "idle", state.devices.length > 0 ? "Ready" : "No devices");
-  } catch (err) {
-    state.devices = [];
-    renderDevices();
-    setStatus("error", "List failed");
-    appendTerminal(`! ${unavailableMessage(err)}`);
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function connectDevice() {
-  if (!state.selected) return;
-  setBusy(true);
-  try {
-    const data = await api("POST", "/open", { device: state.selected });
-    applyStatus(data.status);
-    appendTerminal(`connected to ${state.selected}`);
-    els.commandInput.focus();
-  } catch (err) {
-    setStatus("error", "Open failed");
-    appendTerminal(`! ${unavailableMessage(err)}`);
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function quitTerminal() {
-  if (!state.selected) return;
-  setBusy(true);
-  try {
-    const data = await api("POST", "/close", { device: state.selected });
-    applyStatus(data.status);
-    appendTerminal(`closed ${state.selected}`);
-  } catch (err) {
-    setStatus("error", "Close failed");
-    appendTerminal(`! ${unavailableMessage(err)}`);
-  } finally {
-    state.connected = false;
+  socket.addEventListener("open", () => {
+    state.reconnectDelay = 600;
+    send({ type: "snapshot" });
     renderControls();
-    setBusy(false);
-  }
+  });
+
+  socket.addEventListener("message", handleMessage);
+
+  socket.addEventListener("close", () => {
+    if (state.socket !== socket) return;
+    stopPolling();
+    setStatus("error", "Offline");
+    renderControls();
+    state.reconnectTimer = window.setTimeout(connect, state.reconnectDelay);
+    state.reconnectDelay = Math.min(state.reconnectDelay * 1.7, 5000);
+  });
+
+  socket.addEventListener("error", () => {
+    setStatus("error", "Socket error");
+  });
 }
 
-async function drainRecentReads(skipBase64, timeoutMs) {
-  const deadline = Date.now() + Math.max(250, Math.min(timeoutMs + 500, 2500));
-  let quietSince = Date.now();
-  let skip = skipBase64;
+function stopPolling() {
+  window.clearInterval(state.pollTimer);
+  state.pollTimer = 0;
+}
 
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 75));
-    const data = await api("GET", `/status/${encodeURIComponent(state.selected)}`);
-    const result = appendRecentReads(data.status, skip);
-    applyStatus(data.status);
-    if (result.skipped) skip = "";
-    if (result.appended) {
-      quietSince = Date.now();
-    } else if (Date.now() - quietSince >= 225) {
-      break;
+function updatePolling() {
+  if (state.connected && isOpen()) {
+    if (!state.pollTimer) {
+      state.pollTimer = window.setInterval(() => send({ type: "poll" }), 125);
     }
+  } else {
+    stopPolling();
   }
 }
 
-async function sendCommand(event) {
-  event.preventDefault();
-  const text = els.commandInput.value;
-  if (!state.connected || state.busy || text.length === 0) return;
-
-  els.commandInput.value = "";
-  appendTerminal(`> ${text}`);
-  setBusy(true);
-  try {
-    const data = await api("POST", "/command", {
-      device: state.selected,
-      text,
+function syncSettings() {
+  if (state.localSettingsWrite || state.locked || state.connected) return;
+  send({
+    type: "settings",
+    settings: {
       line_ending: els.lineEnding.value,
       until: decodeEscapes(els.untilInput.value),
       timeout_ms: Number.parseInt(els.timeoutInput.value, 10) || 0,
-      max_bytes: 4096,
-    });
-    const response = data.response || {};
-    const output = response.text || "";
-    if (output.length > 0) {
-      appendTerminal(output.replace(/\n$/, "").replace(/\r$/, ""));
-    } else {
-      appendTerminal(response.timeout ? "(timeout)" : "(no output)");
-    }
-    appendRecentReads(data.status, response.base64);
-    applyStatus(data.status);
-    await drainRecentReads(response.base64, Number.parseInt(els.timeoutInput.value, 10) || 0);
-  } catch (err) {
-    setStatus("error", "Command failed");
-    appendTerminal(`! ${unavailableMessage(err)}`);
-  } finally {
-    setBusy(false);
-    els.commandInput.focus();
-  }
+    },
+  });
 }
 
 els.deviceSelect.addEventListener("change", () => {
-  state.selected = els.deviceSelect.value;
-  els.terminalTitle.textContent = state.selected ? `${state.selected} · closed` : "No device connected";
-  renderControls();
+  send({ type: "select", device: els.deviceSelect.value });
 });
-els.refreshBtn.addEventListener("click", refreshDevices);
-els.connectBtn.addEventListener("click", connectDevice);
-els.quitBtn.addEventListener("click", quitTerminal);
-els.commandForm.addEventListener("submit", sendCommand);
-els.clearTerminalBtn.addEventListener("click", () => {
-  els.terminal.textContent = "";
+els.refreshBtn.addEventListener("click", () => send({ type: "refresh" }));
+els.connectBtn.addEventListener("click", () => send({ type: "open" }));
+els.quitBtn.addEventListener("click", () => send({ type: "close" }));
+els.commandForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = els.commandInput.value;
+  if (!state.connected || text.length === 0) return;
+  els.commandInput.value = "";
+  send({ type: "write", text });
+  els.commandInput.focus();
 });
-els.clearDebugBtn.addEventListener("click", () => {
-  els.debugLog.textContent = "";
-});
+els.lineEnding.addEventListener("change", syncSettings);
+els.untilInput.addEventListener("change", syncSettings);
+els.timeoutInput.addEventListener("change", syncSettings);
+els.clearTerminalBtn.addEventListener("click", () => send({ type: "clear_terminal" }));
+els.clearDebugBtn.addEventListener("click", () => send({ type: "clear_debug" }));
 
-refreshDevices();
+connect();

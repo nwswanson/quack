@@ -19,9 +19,9 @@
         </div>
       </header>
 
-      <section class="workspace" aria-label="Serial terminal workspace">
-        <aside class="controls" aria-label="Connection controls">
-          <label>
+      <section class="controls" aria-label="Connection controls">
+        <div class="device-controls">
+          <label class="device-field">
             <span>Device</span>
             <select id="deviceSelect"></select>
           </label>
@@ -31,29 +31,31 @@
             <button id="connectBtn" class="primary" type="button">Connect</button>
             <button id="quitBtn" class="danger" type="button" disabled>Quit</button>
           </div>
+        </div>
 
-          <fieldset>
-            <legend>Line Settings</legend>
-            <label>
-              <span>Line ending</span>
-              <select id="lineEnding">
-                <option value="lf">LF</option>
-                <option value="crlf">CRLF</option>
-                <option value="cr">CR</option>
-                <option value="none">None</option>
-              </select>
-            </label>
-            <label>
-              <span>Read until</span>
-              <input id="untilInput" value="\n" autocomplete="off">
-            </label>
-            <label>
-              <span>Timeout ms</span>
-              <input id="timeoutInput" type="number" min="0" step="50" value="1000">
-            </label>
-          </fieldset>
-        </aside>
+        <fieldset>
+          <legend>Line Settings</legend>
+          <label>
+            <span>Line ending</span>
+            <select id="lineEnding">
+              <option value="lf">LF</option>
+              <option value="crlf">CRLF</option>
+              <option value="cr">CR</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label>
+            <span>Read until</span>
+            <input id="untilInput" value="\n" autocomplete="off">
+          </label>
+          <label>
+            <span>Timeout ms</span>
+            <input id="timeoutInput" type="number" min="0" step="50" value="1000">
+          </label>
+        </fieldset>
+      </section>
 
+      <section class="workspace" aria-label="Serial terminal workspace">
         <section class="terminal-panel" aria-label="Terminal">
           <div class="terminal-head">
             <span id="terminalTitle">No device connected</span>

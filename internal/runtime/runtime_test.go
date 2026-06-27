@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/hardware"
 	"quack/internal/logbuffer"
 	"quack/internal/manifest"
+	"quack/internal/runtime/modules"
 	appsettings "quack/internal/settings"
 )
 
@@ -793,6 +795,85 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 	}
 }
 
+func TestDemoSerialTerminalWebSocketExecutes(t *testing.T) {
+	src, err := os.ReadFile("../../demos/serial-terminal/api/terminal.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modules.WipeMemorySite("demo-serial-terminal")
+	executor := newTestStarlarkExecutor(t, map[string]string{"api/terminal.star": string(src)})
+	hardwareSvc := &serialTerminalHardware{
+		devices: []hardware.DeviceInfo{{
+			ID:    "meter",
+			Alias: "meter",
+			Kind:  hardware.DeviceKindSerial,
+			Label: "Bench meter",
+			Permissions: hardware.DevicePermissions{
+				SerialRead:  true,
+				SerialWrite: true,
+			},
+		}},
+	}
+	executor.SetHardwareService(hardwareSvc)
+	bundle := Bundle{
+		Site:    "demo-serial-terminal",
+		Version: 1,
+		Routes:  []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "api/terminal.star"}},
+	}
+
+	effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) < 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "serial-terminal:session" {
+		t.Fatalf("connect effects = %+v, want subscription and snapshot sends", effects)
+	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"refresh"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"open"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hardwareSvc.openReq.DeviceID != "meter" {
+		t.Fatalf("open device = %q, want meter", hardwareSvc.openReq.DeviceID)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"type":"write","text":"READ"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(hardwareSvc.writeReq.Data); got != "READ\n" {
+		t.Fatalf("write data = %q, want READ newline", got)
+	}
+	foundReadPublish := false
+	for _, effect := range effects {
+		if effect.Type == WebSocketEffectPublish &&
+			effect.Topic == "serial-terminal:session" &&
+			strings.Contains(string(effect.Payload), `"type":"terminal"`) &&
+			strings.Contains(string(effect.Payload), `42`) {
+			foundReadPublish = true
+		}
+	}
+	if !foundReadPublish {
+		t.Fatalf("write effects = %+v, want terminal read publish", effects)
+	}
+}
+
 func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
 	site := "demo-pixeldraw-namespaced-tabs"
 	src, err := os.ReadFile("../../demos/pixeldraw/api/pixels.star")
@@ -1286,6 +1367,55 @@ func newTestStarlarkExecutor(t *testing.T, scripts map[string]string) *StarlarkE
 		t.Fatal(err)
 	}
 	return executor
+}
+
+type serialTerminalHardware struct {
+	devices  []hardware.DeviceInfo
+	openReq  hardware.SerialOpenRequest
+	writeReq hardware.SerialWriteRequest
+	closed   bool
+	seq      int64
+}
+
+func (h *serialTerminalHardware) ListDevices(_ context.Context, req hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error) {
+	return hardware.ListDevicesResponse{Devices: h.devices}, nil
+}
+
+func (h *serialTerminalHardware) Capture(context.Context, hardware.CaptureRequest) (hardware.CaptureResponse, error) {
+	return hardware.CaptureResponse{}, nil
+}
+
+func (h *serialTerminalHardware) OpenSerial(_ context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error) {
+	h.openReq = req
+	h.closed = false
+	return hardware.SerialOpenResponse{DeviceID: req.DeviceID, Open: true}, nil
+}
+
+func (h *serialTerminalHardware) WriteSerial(_ context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error) {
+	h.writeReq = req
+	h.seq += 2
+	return hardware.SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
+}
+
+func (h *serialTerminalHardware) RequestSerial(context.Context, hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error) {
+	return hardware.SerialRequestResponse{}, nil
+}
+
+func (h *serialTerminalHardware) SerialStatus(context.Context, hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error) {
+	open := !h.closed && h.openReq.DeviceID != ""
+	recent := []hardware.SerialEvent{}
+	if h.writeReq.DeviceID != "" {
+		recent = append(recent,
+			hardware.SerialEvent{UnixNano: h.seq - 1, Type: "write", Data: h.writeReq.Data},
+			hardware.SerialEvent{UnixNano: h.seq, Type: "read", Data: []byte("42\n")},
+		)
+	}
+	return hardware.SerialStatusResponse{DeviceID: "meter", Open: open, Status: map[bool]string{true: "open", false: "closed"}[open], Recent: recent}, nil
+}
+
+func (h *serialTerminalHardware) CloseSerial(context.Context, hardware.SerialCloseRequest) (hardware.SerialCloseResponse, error) {
+	h.closed = true
+	return hardware.SerialCloseResponse{DeviceID: "meter", Closed: true}, nil
 }
 
 type scriptMap map[string]string

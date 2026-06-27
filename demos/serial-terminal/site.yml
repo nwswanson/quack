@@ -1,11 +1,9 @@
 routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/terminal.star
+
   - path: /
     kind: static
     root: public
-
-  - path: /api
-    kind: http
-    runtime: starlark
-    entrypoint: api/terminal.star
-    methods: [GET, POST]
-    expose_errors: true
