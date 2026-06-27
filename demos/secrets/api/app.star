@@ -74,7 +74,14 @@ def handle(req):
 
     body = """
     <h1>Secrets demo</h1>
+    <p>Secrets are encrypted with an auto-generated base key, which is itself encrypted with an unlock key (that can be changed), so they are encrypted at rest via AES/GCM. It hasn't been pentested etc, but it is at least better than storing in memory/on-disk. On server boot the admin needs to enter the passcode to unlock the server store--this lasts until server reboot. </p>
     <p>Each value is guarded with <code>secret.exists("site", name)</code> before calling <code>secret.get</code>.</p>
+    <h3>Example</h3>
+    <code>
+    hello_body = '<span class="missing">missing</span>'<br />
+    if secret.exists("site", "hello"):<br />
+        &nbsp;&nbsp;hello_body = _escape_html(secret.get("site", "hello"))<br />
+    </code>
     <div class="secret"><code>hello</code>: %s</div>
     <div class="secret"><code>hello2</code>: %s</div>
 """ % (hello_body, hello2_body)

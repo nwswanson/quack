@@ -1,0 +1,11 @@
+routes:
+  - path: /
+    kind: static
+    root: public
+
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/terminal.star
+    methods: [GET, POST]
+    expose_errors: true
