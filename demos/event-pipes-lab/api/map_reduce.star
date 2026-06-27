@@ -1,7 +1,10 @@
 FLOW = "map_reduce"
 START = "pipe-demo.map_reduce.start"
 SPLIT = "pipe-demo.map_reduce.split"
-MAP = "pipe-demo.map_reduce.map"
+MAP_0 = "pipe-demo.map_reduce.map_0"
+MAP_1 = "pipe-demo.map_reduce.map_1"
+MAP_2 = "pipe-demo.map_reduce.map_2"
+MAP_3 = "pipe-demo.map_reduce.map_3"
 REDUCE = "pipe-demo.map_reduce.reduce"
 
 def _trace_topic(session):
@@ -59,17 +62,20 @@ def _words(text):
             out.append(word)
     return out
 
-def _chunks(items, size):
-    out = []
-    current = []
-    for item in items:
-        current.append(item)
-        if len(current) >= size:
-            out.append(current)
-            current = []
-    if len(current) > 0:
-        out.append(current)
+def _partitions(items):
+    out = [[], [], [], []]
+    for i, item in enumerate(items):
+        out[i % 4].append(item)
     return out
+
+def _map_pipe(slot):
+    if slot == 0:
+        return MAP_0
+    if slot == 1:
+        return MAP_1
+    if slot == 2:
+        return MAP_2
+    return MAP_3
 
 def start_node(ctx, event):
     payload = event.payload
@@ -92,15 +98,15 @@ def split_node(ctx, event):
     if not _safe_session(session):
         return []
     words = _words(payload.get("text", ""))
-    chunks = _chunks(words, 4)
+    chunks = _partitions(words)
     state = _state(session)
-    state["expected"] = len(chunks)
+    state["expected"] = 4
     state["mapped"] = []
     _save(session, state)
-    effects = [_trace(session, "split_node", "split text into fixed map work units", {
+    effects = [_trace(session, "split_node", "split text across four hardcoded map workers", {
         "node": "api/map_reduce.star:split_node",
         "incoming_edge": SPLIT,
-        "outgoing_edge": MAP,
+        "outgoing_edges": [MAP_0, MAP_1, MAP_2, MAP_3],
         "word_count": len(words),
         "chunk_count": len(chunks),
         "chunks": chunks,
@@ -109,11 +115,10 @@ def split_node(ctx, event):
         effects.append(_result(session, "no words to reduce", {"counts": []}))
         return effects
     for i, chunk in enumerate(chunks):
-        effects.append(events.publish(MAP, {"session": session, "chunk": i + 1, "words": chunk}))
+        effects.append(events.publish(_map_pipe(i), {"session": session, "worker": i, "words": chunk}))
     return effects
 
-def map_node(ctx, event):
-    payload = event.payload
+def _map_node(payload, node_name, incoming_edge):
     session = payload.get("session", "") if type(payload) == "dict" else ""
     if not _safe_session(session):
         return []
@@ -122,14 +127,14 @@ def map_node(ctx, event):
         pairs.append({"word": word, "count": 1})
     state = _state(session)
     mapped = state.get("mapped", [])
-    mapped.append({"chunk": payload.get("chunk", 0), "pairs": pairs})
+    mapped.append({"worker": payload.get("worker", 0), "pairs": pairs})
     state["mapped"] = mapped
     _save(session, state)
-    effects = [_trace(session, "map_node", "map worker emitted word-count pairs", {
-        "node": "api/map_reduce.star:map_node",
-        "incoming_edge": MAP,
+    effects = [_trace(session, node_name, "map worker emitted word-count pairs", {
+        "node": "api/map_reduce.star:" + node_name,
+        "incoming_edge": incoming_edge,
         "outgoing_edge": REDUCE,
-        "chunk": payload.get("chunk", 0),
+        "worker": payload.get("worker", 0),
         "pairs": pairs,
         "received": len(mapped),
         "expected": state.get("expected", 0),
@@ -137,6 +142,18 @@ def map_node(ctx, event):
     if len(mapped) >= state.get("expected", 0):
         effects.append(events.publish(REDUCE, {"session": session, "mapped": mapped}))
     return effects
+
+def map_0_node(ctx, event):
+    return _map_node(event.payload, "map_0_node", MAP_0)
+
+def map_1_node(ctx, event):
+    return _map_node(event.payload, "map_1_node", MAP_1)
+
+def map_2_node(ctx, event):
+    return _map_node(event.payload, "map_2_node", MAP_2)
+
+def map_3_node(ctx, event):
+    return _map_node(event.payload, "map_3_node", MAP_3)
 
 def reduce_node(ctx, event):
     payload = event.payload

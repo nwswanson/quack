@@ -13,14 +13,26 @@ pipes:
     retain: 128
   - name: pipe-demo.map_reduce.split
     retain: 128
-  - name: pipe-demo.map_reduce.map
+  - name: pipe-demo.map_reduce.map_0
+    retain: 128
+  - name: pipe-demo.map_reduce.map_1
+    retain: 128
+  - name: pipe-demo.map_reduce.map_2
+    retain: 128
+  - name: pipe-demo.map_reduce.map_3
     retain: 128
   - name: pipe-demo.map_reduce.reduce
     retain: 128
 
   - name: pipe-demo.scatter_gather.start
     retain: 128
-  - name: pipe-demo.scatter_gather.worker
+  - name: pipe-demo.scatter_gather.profile
+    retain: 128
+  - name: pipe-demo.scatter_gather.pricing
+    retain: 128
+  - name: pipe-demo.scatter_gather.inventory
+    retain: 128
+  - name: pipe-demo.scatter_gather.risk
     retain: 128
   - name: pipe-demo.scatter_gather.gather
     retain: 128
@@ -45,15 +57,27 @@ events:
     on_event: api/map_reduce.star:start_node
   - selector: pipe-demo.map_reduce.split
     on_event: api/map_reduce.star:split_node
-  - selector: pipe-demo.map_reduce.map
-    on_event: api/map_reduce.star:map_node
+  - selector: pipe-demo.map_reduce.map_0
+    on_event: api/map_reduce.star:map_0_node
+  - selector: pipe-demo.map_reduce.map_1
+    on_event: api/map_reduce.star:map_1_node
+  - selector: pipe-demo.map_reduce.map_2
+    on_event: api/map_reduce.star:map_2_node
+  - selector: pipe-demo.map_reduce.map_3
+    on_event: api/map_reduce.star:map_3_node
   - selector: pipe-demo.map_reduce.reduce
     on_event: api/map_reduce.star:reduce_node
 
   - selector: pipe-demo.scatter_gather.start
     on_event: api/scatter_gather.star:start_node
-  - selector: pipe-demo.scatter_gather.worker
-    on_event: api/scatter_gather.star:worker_node
+  - selector: pipe-demo.scatter_gather.profile
+    on_event: api/scatter_gather.star:profile_node
+  - selector: pipe-demo.scatter_gather.pricing
+    on_event: api/scatter_gather.star:pricing_node
+  - selector: pipe-demo.scatter_gather.inventory
+    on_event: api/scatter_gather.star:inventory_node
+  - selector: pipe-demo.scatter_gather.risk
+    on_event: api/scatter_gather.star:risk_node
   - selector: pipe-demo.scatter_gather.gather
     on_event: api/scatter_gather.star:gather_node
 

@@ -29,36 +29,44 @@
       <section class="panel active" data-panel="map_reduce">
         <div class="brief">
           <h2>Map Reduce</h2>
-          <p>The client publishes one fixed start edge. Named handlers split text, map chunks into word-count pairs, and reduce those pairs into final totals.</p>
+          <p>The client publishes one fixed start edge. The splitter partitions text across four explicit map workers, then the reducer merges those worker outputs.</p>
           <ol>
             <li><code>pipe-demo.map_reduce.start</code> -> <code>api/map_reduce.star:start_node</code></li>
             <li><code>pipe-demo.map_reduce.split</code> -> <code>api/map_reduce.star:split_node</code></li>
-            <li><code>pipe-demo.map_reduce.map</code> -> <code>api/map_reduce.star:map_node</code></li>
+            <li><code>pipe-demo.map_reduce.map_0..3</code> -> explicit map worker nodes</li>
             <li><code>pipe-demo.map_reduce.reduce</code> -> <code>api/map_reduce.star:reduce_node</code></li>
           </ol>
         </div>
         <form class="runner" data-runner="map_reduce">
           <label for="mapInput">Text to count</label>
           <textarea id="mapInput" name="input" rows="8">Pipes carry events. Events trigger handlers. Handlers publish more events. Pipes make websocket demos feel alive.</textarea>
+          <output class="result-box" data-result="map_reduce" aria-live="polite">
+            <span class="empty">Run the pipeline to see word counts.</span>
+          </output>
           <button type="submit">Run map-reduce</button>
         </form>
+        <section class="graph-panel" data-graph="map_reduce" aria-live="polite"></section>
       </section>
 
       <section class="panel" data-panel="scatter_gather">
         <div class="brief">
           <h2>Scatter/Gather</h2>
-          <p>A controller scatters independent work items over one worker edge. The worker node stores partial scores by session, then a gather edge merges them.</p>
+          <p>A controller scatters the request to four independent service nodes. Each service returns a partial answer, then the gather node merges them.</p>
           <ol>
             <li><code>pipe-demo.scatter_gather.start</code> -> <code>api/scatter_gather.star:start_node</code></li>
-            <li><code>pipe-demo.scatter_gather.worker</code> -> <code>api/scatter_gather.star:worker_node</code></li>
+            <li><code>profile</code>, <code>pricing</code>, <code>inventory</code>, <code>risk</code> service edges</li>
             <li><code>pipe-demo.scatter_gather.gather</code> -> <code>api/scatter_gather.star:gather_node</code></li>
           </ol>
         </div>
         <form class="runner" data-runner="scatter_gather">
           <label for="scatterInput">Work items</label>
           <textarea id="scatterInput" name="input" rows="8">alpha, quartz, websocket, pipe, reduce, gather</textarea>
+          <output class="result-box" data-result="scatter_gather" aria-live="polite">
+            <span class="empty">Run the pipeline to see gathered worker scores.</span>
+          </output>
           <button type="submit">Run scatter/gather</button>
         </form>
+        <section class="graph-panel" data-graph="scatter_gather" aria-live="polite"></section>
       </section>
 
       <section class="panel" data-panel="sharding">
@@ -80,8 +88,12 @@ ada:6
 dinesh:2
 elena:8
 frank:5</textarea>
+          <output class="result-box" data-result="sharding" aria-live="polite">
+            <span class="empty">Run the pipeline to see shard totals.</span>
+          </output>
           <button type="submit">Run sharding</button>
         </form>
+        <section class="graph-panel" data-graph="sharding" aria-live="polite"></section>
       </section>
     </section>
 
@@ -91,11 +103,15 @@ frank:5</textarea>
           <h2>WebSocket Pipe Trace</h2>
           <p id="sessionLabel"></p>
         </div>
-        <button id="clearLog" type="button">Clear</button>
+        <div class="debug-actions">
+          <button id="toggleTrace" type="button">Collapse</button>
+          <button id="clearLog" type="button">Clear</button>
+        </div>
       </div>
       <div id="traceLog" class="trace" aria-live="polite"></div>
     </aside>
   </main>
+  <script src="/vendor/d3.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

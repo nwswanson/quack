@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,19 +87,37 @@ func runMapReduce(t *testing.T, executor *StarlarkExecutor) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasPublish(effects, "pipe-demo.map_reduce.map", `"pipe"`) {
-		t.Fatalf("map split effects = %+v, want map publish", effects)
+	for _, topic := range []string{
+		"pipe-demo.map_reduce.map_0",
+		"pipe-demo.map_reduce.map_1",
+		"pipe-demo.map_reduce.map_2",
+		"pipe-demo.map_reduce.map_3",
+	} {
+		if !hasPublish(effects, topic, `"session":"smr"`) {
+			t.Fatalf("map split effects = %+v, want publish to %s", effects, topic)
+		}
 	}
 
-	effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
-		Site: "demo-event-pipes-lab", Version: 1, Entrypoint: "api/map_reduce.star", Handler: "map_node",
-		Topic: "pipe-demo.map_reduce.map", Payload: []byte(`{"session":"smr","chunk":1,"words":["pipe","pipe","event"]}`),
-	})
-	if err != nil {
-		t.Fatal(err)
+	for i, step := range []struct {
+		handler string
+		topic   string
+		words   string
+	}{
+		{"map_0_node", "pipe-demo.map_reduce.map_0", `["pipe"]`},
+		{"map_1_node", "pipe-demo.map_reduce.map_1", `["pipe"]`},
+		{"map_2_node", "pipe-demo.map_reduce.map_2", `["event"]`},
+		{"map_3_node", "pipe-demo.map_reduce.map_3", `[]`},
+	} {
+		effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+			Site: "demo-event-pipes-lab", Version: 1, Entrypoint: "api/map_reduce.star", Handler: step.handler,
+			Topic: step.topic, Payload: []byte(`{"session":"smr","worker":` + strconv.Itoa(i) + `,"words":` + step.words + `}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if !hasPublish(effects, "pipe-demo.map_reduce.reduce", `"pairs"`) {
-		t.Fatalf("map worker effects = %+v, want reduce publish", effects)
+		t.Fatalf("last map worker effects = %+v, want reduce publish", effects)
 	}
 }
 
@@ -112,26 +131,36 @@ func runScatterGather(t *testing.T, executor *StarlarkExecutor) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasPublish(effects, "pipe-demo.scatter_gather.worker", `"alpha"`) {
-		t.Fatalf("scatter start effects = %+v, want worker publish", effects)
+	for _, topic := range []string{
+		"pipe-demo.scatter_gather.profile",
+		"pipe-demo.scatter_gather.pricing",
+		"pipe-demo.scatter_gather.inventory",
+		"pipe-demo.scatter_gather.risk",
+	} {
+		if !hasPublish(effects, topic, `"alpha"`) {
+			t.Fatalf("scatter start effects = %+v, want publish to %s", effects, topic)
+		}
 	}
 
-	_, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
-		Site: "demo-event-pipes-lab", Version: 1, Entrypoint: "api/scatter_gather.star", Handler: "worker_node",
-		Topic: "pipe-demo.scatter_gather.worker", Payload: []byte(`{"session":"ssg","index":1,"item":"alpha"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
-		Site: "demo-event-pipes-lab", Version: 1, Entrypoint: "api/scatter_gather.star", Handler: "worker_node",
-		Topic: "pipe-demo.scatter_gather.worker", Payload: []byte(`{"session":"ssg","index":2,"item":"websocket"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
+	for _, step := range []struct {
+		handler string
+		topic   string
+	}{
+		{"profile_node", "pipe-demo.scatter_gather.profile"},
+		{"pricing_node", "pipe-demo.scatter_gather.pricing"},
+		{"inventory_node", "pipe-demo.scatter_gather.inventory"},
+		{"risk_node", "pipe-demo.scatter_gather.risk"},
+	} {
+		effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+			Site: "demo-event-pipes-lab", Version: 1, Entrypoint: "api/scatter_gather.star", Handler: step.handler,
+			Topic: step.topic, Payload: []byte(`{"session":"ssg","items":["alpha","websocket"]}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if !hasPublish(effects, "pipe-demo.scatter_gather.gather", `"responses"`) {
-		t.Fatalf("scatter worker effects = %+v, want gather publish", effects)
+		t.Fatalf("last scatter worker effects = %+v, want gather publish", effects)
 	}
 }
 

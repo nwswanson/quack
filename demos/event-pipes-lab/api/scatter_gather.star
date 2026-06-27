@@ -1,7 +1,10 @@
 FLOW = "scatter_gather"
 MAX_ITEMS = 18
 START = "pipe-demo.scatter_gather.start"
-WORKER = "pipe-demo.scatter_gather.worker"
+PROFILE = "pipe-demo.scatter_gather.profile"
+PRICING = "pipe-demo.scatter_gather.pricing"
+INVENTORY = "pipe-demo.scatter_gather.inventory"
+RISK = "pipe-demo.scatter_gather.risk"
 GATHER = "pipe-demo.scatter_gather.gather"
 
 def _trace_topic(session):
@@ -67,46 +70,98 @@ def _score(item):
         score += lower.count(ch) * 7
     return score
 
+def _service_pipe(index):
+    if index == 0:
+        return PROFILE
+    if index == 1:
+        return PRICING
+    if index == 2:
+        return INVENTORY
+    return RISK
+
 def start_node(ctx, event):
     payload = event.payload
     session = payload.get("session", "") if type(payload) == "dict" else ""
     if not _safe_session(session):
         return []
     items = _items(payload.get("input", ""))
-    _reset(session, len(items))
-    effects = [_trace(session, "start_node", "scatter controller accepted work", {
+    _reset(session, 4)
+    effects = [_trace(session, "start_node", "scatter controller sent the same request to four services", {
         "node": "api/scatter_gather.star:start_node",
         "incoming_edge": START,
-        "outgoing_edge": WORKER,
+        "outgoing_edges": [PROFILE, PRICING, INVENTORY, RISK],
         "items": items,
     })]
     if len(items) == 0:
         effects.append(_result(session, "nothing to gather", {"responses": []}))
         return effects
-    for i, item in enumerate(items):
-        effects.append(events.publish(WORKER, {"session": session, "index": i + 1, "item": item}))
+    for i in range(4):
+        effects.append(events.publish(_service_pipe(i), {"session": session, "items": items}))
     return effects
 
-def worker_node(ctx, event):
-    payload = event.payload
+def _profile_response(items):
+    longest = ""
+    for item in items:
+        if len(item) > len(longest):
+            longest = item
+    return {
+        "service": "profile",
+        "summary": "classified " + str(len(items)) + " items",
+        "score": len(items) * 11 + len(longest),
+        "longest": longest,
+    }
+
+def _pricing_response(items):
+    total = 0
+    for item in items:
+        total += _score(item)
+    return {
+        "service": "pricing",
+        "summary": "estimated blended value",
+        "score": total,
+        "average": total / len(items) if len(items) > 0 else 0,
+    }
+
+def _inventory_response(items):
+    available = []
+    backorder = []
+    for i, item in enumerate(items):
+        if i % 2 == 0:
+            available.append(item)
+        else:
+            backorder.append(item)
+    return {
+        "service": "inventory",
+        "summary": "checked availability",
+        "score": len(available) * 19 - len(backorder) * 3,
+        "available": available,
+        "backorder": backorder,
+    }
+
+def _risk_response(items):
+    flagged = []
+    for item in items:
+        if len(item) > 7:
+            flagged.append(item)
+    return {
+        "service": "risk",
+        "summary": "screened long items",
+        "score": 100 - len(flagged) * 13,
+        "flagged": flagged,
+    }
+
+def _worker_node(payload, node_name, incoming_edge, response):
     session = payload.get("session", "") if type(payload) == "dict" else ""
     if not _safe_session(session):
         return []
-    item = payload.get("item", "")
-    response = {
-        "index": payload.get("index", 0),
-        "item": item,
-        "score": _score(item),
-        "summary": item.upper() + " / len=" + str(len(item)),
-    }
     state = _state(session)
     responses = state.get("responses", [])
     responses.append(response)
     state["responses"] = responses
     _save(session, state)
-    effects = [_trace(session, "worker_node", "worker returned a partial response", {
-        "node": "api/scatter_gather.star:worker_node",
-        "incoming_edge": WORKER,
+    effects = [_trace(session, node_name, "service returned a partial response", {
+        "node": "api/scatter_gather.star:" + node_name,
+        "incoming_edge": incoming_edge,
         "outgoing_edge": GATHER,
         "response": response,
         "received": len(responses),
@@ -115,6 +170,22 @@ def worker_node(ctx, event):
     if len(responses) >= state.get("expected", 0):
         effects.append(events.publish(GATHER, {"session": session, "responses": responses}))
     return effects
+
+def profile_node(ctx, event):
+    items = event.payload.get("items", []) if type(event.payload) == "dict" else []
+    return _worker_node(event.payload, "profile_node", PROFILE, _profile_response(items))
+
+def pricing_node(ctx, event):
+    items = event.payload.get("items", []) if type(event.payload) == "dict" else []
+    return _worker_node(event.payload, "pricing_node", PRICING, _pricing_response(items))
+
+def inventory_node(ctx, event):
+    items = event.payload.get("items", []) if type(event.payload) == "dict" else []
+    return _worker_node(event.payload, "inventory_node", INVENTORY, _inventory_response(items))
+
+def risk_node(ctx, event):
+    items = event.payload.get("items", []) if type(event.payload) == "dict" else []
+    return _worker_node(event.payload, "risk_node", RISK, _risk_response(items))
 
 def gather_node(ctx, event):
     payload = event.payload

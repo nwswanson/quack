@@ -31,7 +31,7 @@ input {
 .shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.42fr);
+  grid-template-columns: minmax(0, 1fr) minmax(460px, 0.48fr);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
   padding: 20px;
@@ -112,7 +112,8 @@ h1 {
 
 .tab,
 button[type="submit"],
-#clearLog {
+#clearLog,
+#toggleTrace {
   border: 1px solid var(--line);
   background: #fff;
   color: var(--ink);
@@ -120,6 +121,13 @@ button[type="submit"],
   min-height: 38px;
   padding: 0 14px;
   cursor: pointer;
+}
+
+.debug-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .tab.active,
@@ -190,10 +198,182 @@ textarea {
   resize: vertical;
 }
 
+.result-box {
+  display: block;
+  min-height: 108px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 10px;
+}
+
+.result-box .empty {
+  color: var(--muted);
+}
+
+.result-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.result-box table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.result-box th,
+.result-box td {
+  border-top: 1px solid var(--line);
+  padding: 6px 4px;
+  text-align: left;
+}
+
+.result-box th:last-child,
+.result-box td:last-child {
+  text-align: right;
+}
+
+.metric {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  align-items: baseline;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.metric span,
+.metric em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.metric strong {
+  font-size: 20px;
+}
+
+.result-box ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.result-box li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+
+.graph-panel {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  min-width: 0;
+}
+
+.graph-title {
+  font-weight: 750;
+  margin-bottom: 12px;
+}
+
+.graph-frame {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.pipeline-graph {
+  display: block;
+  min-width: 100%;
+}
+
+.graph-link {
+  fill: none;
+  stroke: #9aa99e;
+  stroke-width: 2;
+}
+
+.graph-link.active {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.graph-arrow {
+  fill: var(--accent);
+}
+
+.graph-link-label {
+  fill: var(--accent-strong);
+  paint-order: stroke;
+  stroke: #fbfcfa;
+  stroke-width: 5;
+  stroke-linejoin: round;
+  font-size: 12px;
+  text-anchor: middle;
+}
+
+.graph-node rect {
+  fill: #fff;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.graph-node.active rect {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.graph-card {
+  height: 132px;
+  padding: 10px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 3px;
+}
+
+.graph-card-title {
+  font-weight: 750;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.graph-card-id {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.graph-card pre {
+  margin: 0;
+  padding: 6px;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.graph-missing {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  color: var(--warm);
+}
+
 .debug {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 560px;
+  align-self: start;
+  position: sticky;
+  top: 20px;
+  height: calc(100vh - 40px);
+  min-height: 0;
 }
 
 .debug-head {
@@ -206,11 +386,19 @@ textarea {
 
 .trace {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   padding: 12px;
   display: grid;
   align-content: start;
   gap: 10px;
+}
+
+.debug.collapsed {
+  grid-template-rows: auto;
+}
+
+.debug.collapsed .trace {
+  display: none;
 }
 
 .trace-item {
@@ -221,7 +409,7 @@ textarea {
   background: #fff;
 }
 
-.trace-item.result {
+.trace-item.kind-result {
   border-left-color: var(--warm);
 }
 
@@ -244,6 +432,7 @@ pre {
   margin: 8px 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  overflow: visible;
   background: #f4f6f2;
   border-radius: 6px;
   padding: 10px;
