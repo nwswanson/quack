@@ -127,9 +127,6 @@
         session: state.session,
         input: data.get("input") || "",
       };
-      if (flow === "sharding") {
-        payload.shards = Number(data.get("shards") || 3);
-      }
       appendTrace({
         type: "trace",
         flow,

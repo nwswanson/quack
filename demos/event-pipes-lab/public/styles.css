@@ -171,13 +171,6 @@ code {
   align-content: start;
 }
 
-.form-row {
-  display: grid;
-  grid-template-columns: 80px 90px;
-  align-items: center;
-  gap: 10px;
-}
-
 label {
   font-weight: 650;
 }

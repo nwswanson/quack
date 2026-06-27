@@ -9,19 +9,65 @@ routes:
     root: public
 
 pipes:
-  - name: pipe-demo.session
+  - name: pipe-demo.map_reduce.start
     retain: 128
-  - name: pipe-demo.map_reduce
+  - name: pipe-demo.map_reduce.split
     retain: 128
-  - name: pipe-demo.scatter_gather
+  - name: pipe-demo.map_reduce.map
     retain: 128
-  - name: pipe-demo.sharding
+  - name: pipe-demo.map_reduce.reduce
+    retain: 128
+
+  - name: pipe-demo.scatter_gather.start
+    retain: 128
+  - name: pipe-demo.scatter_gather.worker
+    retain: 128
+  - name: pipe-demo.scatter_gather.gather
+    retain: 128
+
+  - name: pipe-demo.sharding.start
+    retain: 128
+  - name: pipe-demo.sharding.route
+    retain: 128
+  - name: pipe-demo.sharding.shard_0
+    retain: 128
+  - name: pipe-demo.sharding.shard_1
+    retain: 128
+  - name: pipe-demo.sharding.shard_2
+    retain: 128
+  - name: pipe-demo.sharding.shard_3
+    retain: 128
+  - name: pipe-demo.sharding.merge
     retain: 128
 
 events:
-  - selector: "pipe-demo.map_reduce.*"
-    on_event: api/pipes.star:on_map_reduce_event
-  - selector: "pipe-demo.scatter_gather.*"
-    on_event: api/pipes.star:on_scatter_gather_event
-  - selector: "pipe-demo.sharding.*"
-    on_event: api/pipes.star:on_sharding_event
+  - selector: pipe-demo.map_reduce.start
+    on_event: api/map_reduce.star:start_node
+  - selector: pipe-demo.map_reduce.split
+    on_event: api/map_reduce.star:split_node
+  - selector: pipe-demo.map_reduce.map
+    on_event: api/map_reduce.star:map_node
+  - selector: pipe-demo.map_reduce.reduce
+    on_event: api/map_reduce.star:reduce_node
+
+  - selector: pipe-demo.scatter_gather.start
+    on_event: api/scatter_gather.star:start_node
+  - selector: pipe-demo.scatter_gather.worker
+    on_event: api/scatter_gather.star:worker_node
+  - selector: pipe-demo.scatter_gather.gather
+    on_event: api/scatter_gather.star:gather_node
+
+  - selector: pipe-demo.sharding.start
+    on_event: api/sharding.star:start_node
+  - selector: pipe-demo.sharding.route
+    on_event: api/sharding.star:route_node
+  - selector: pipe-demo.sharding.shard_0
+    on_event: api/sharding.star:shard_0_node
+  - selector: pipe-demo.sharding.shard_1
+    on_event: api/sharding.star:shard_1_node
+  - selector: pipe-demo.sharding.shard_2
+    on_event: api/sharding.star:shard_2_node
+  - selector: pipe-demo.sharding.shard_3
+    on_event: api/sharding.star:shard_3_node
+  - selector: pipe-demo.sharding.merge
+    on_event: api/sharding.star:merge_node

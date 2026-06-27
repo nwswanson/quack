@@ -11,7 +11,7 @@
     <header class="topbar">
       <div>
         <h1>Event Pipes Lab</h1>
-        <p>Three websocket workflows built from pipe events, stage handlers, and session-scoped channels.</p>
+        <p>Three websocket workflows built from hardcoded pipe edges, named Starlark handler nodes, and session-scoped websocket traces.</p>
       </div>
       <div class="status" data-state="connecting">
         <span id="statusDot"></span>
@@ -29,11 +29,12 @@
       <section class="panel active" data-panel="map_reduce">
         <div class="brief">
           <h2>Map Reduce</h2>
-          <p>The client publishes a start event. The server splits text into chunks, maps each chunk into word-count pairs, then reduces those pairs into final totals.</p>
+          <p>The client publishes one fixed start edge. Named handlers split text, map chunks into word-count pairs, and reduce those pairs into final totals.</p>
           <ol>
-            <li><code>pipe-demo.map_reduce.&lt;session&gt;.start</code></li>
-            <li><code>split</code> publishes several <code>map</code> events</li>
-            <li><code>reduce</code> publishes the websocket-visible result</li>
+            <li><code>pipe-demo.map_reduce.start</code> -> <code>api/map_reduce.star:start_node</code></li>
+            <li><code>pipe-demo.map_reduce.split</code> -> <code>api/map_reduce.star:split_node</code></li>
+            <li><code>pipe-demo.map_reduce.map</code> -> <code>api/map_reduce.star:map_node</code></li>
+            <li><code>pipe-demo.map_reduce.reduce</code> -> <code>api/map_reduce.star:reduce_node</code></li>
           </ol>
         </div>
         <form class="runner" data-runner="map_reduce">
@@ -46,11 +47,11 @@
       <section class="panel" data-panel="scatter_gather">
         <div class="brief">
           <h2>Scatter/Gather</h2>
-          <p>A controller scatters independent work items to worker events. Each worker returns a partial score, and the gather stage waits until the session has every response.</p>
+          <p>A controller scatters independent work items over one worker edge. The worker node stores partial scores by session, then a gather edge merges them.</p>
           <ol>
-            <li><code>start</code> fans out to many <code>worker</code> pipe events</li>
-            <li>Workers store partial responses under the session id</li>
-            <li><code>gather</code> merges responses and chooses the highest score</li>
+            <li><code>pipe-demo.scatter_gather.start</code> -> <code>api/scatter_gather.star:start_node</code></li>
+            <li><code>pipe-demo.scatter_gather.worker</code> -> <code>api/scatter_gather.star:worker_node</code></li>
+            <li><code>pipe-demo.scatter_gather.gather</code> -> <code>api/scatter_gather.star:gather_node</code></li>
           </ol>
         </div>
         <form class="runner" data-runner="scatter_gather">
@@ -63,18 +64,14 @@
       <section class="panel" data-panel="sharding">
         <div class="brief">
           <h2>Sharding</h2>
-          <p>The router hashes records onto shard events. Every shard computes its local count and sum, then a merge event combines the shard summaries.</p>
+          <p>The router hashes records onto four fixed shard edges. Each shard node computes a local count and sum, then the merge node combines the summaries.</p>
           <ol>
-            <li><code>route</code> assigns records by stable key hash</li>
-            <li><code>shard</code> handlers process separate partitions</li>
-            <li><code>merge</code> shows the aggregate result</li>
+            <li><code>pipe-demo.sharding.route</code> -> <code>api/sharding.star:route_node</code></li>
+            <li><code>pipe-demo.sharding.shard_0..3</code> -> explicit shard nodes</li>
+            <li><code>pipe-demo.sharding.merge</code> -> <code>api/sharding.star:merge_node</code></li>
           </ol>
         </div>
         <form class="runner" data-runner="sharding">
-          <div class="form-row">
-            <label for="shards">Shards</label>
-            <input id="shards" name="shards" type="number" min="2" max="6" value="3">
-          </div>
           <label for="shardInput">Records as key:value</label>
           <textarea id="shardInput" name="input" rows="8">ada:4
 ben:7
