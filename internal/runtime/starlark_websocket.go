@@ -268,8 +268,8 @@ func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
 	return effect, nil
 }
 
-func websocketModule() *starlarkstruct.Module {
-	return &starlarkstruct.Module{Name: "ws", Members: starlark.StringDict{
+var (
+	sharedWebSocketModule = frozenModule(&starlarkstruct.Module{Name: "ws", Members: starlark.StringDict{
 		"accept":          starlark.NewBuiltin("ws.accept", makeEffectBuiltin(WebSocketEffectAccept, nil)),
 		"close":           starlark.NewBuiltin("ws.close", makeEffectBuiltin(WebSocketEffectClose, []string{"conn_id?", "code?", "reason?"})),
 		"send":            starlark.NewBuiltin("ws.send", makeEffectBuiltin(WebSocketEffectSend, []string{"conn_id", "payload"})),
@@ -277,19 +277,32 @@ func websocketModule() *starlarkstruct.Module {
 		"subscribe":       starlark.NewBuiltin("ws.subscribe", makeEffectBuiltin(WebSocketEffectSubscribe, []string{"conn_id", "topic"})),
 		"unsubscribe":     starlark.NewBuiltin("ws.unsubscribe", makeEffectBuiltin(WebSocketEffectUnsubscribe, []string{"conn_id", "topic"})),
 		"unsubscribe_all": starlark.NewBuiltin("ws.unsubscribe_all", makeEffectBuiltin(WebSocketEffectUnsubscribeAll, []string{"conn_id"})),
-	}}
+	}})
+
+	sharedEventsModule = frozenModule(&starlarkstruct.Module{Name: "events", Members: starlark.StringDict{
+		"publish": starlark.NewBuiltin("events.publish", makeEffectBuiltin(WebSocketEffectPublish, []string{"topic", "payload"})),
+	}})
+
+	sharedTimersModule = frozenModule(&starlarkstruct.Module{Name: "timers", Members: starlark.StringDict{
+		"set": starlark.NewBuiltin("timers.set", makeEffectBuiltin(WebSocketEffectSetTimer, []string{"key", "after", "event?"})),
+	}})
+)
+
+func frozenModule(module *starlarkstruct.Module) *starlarkstruct.Module {
+	module.Freeze()
+	return module
+}
+
+func websocketModule() *starlarkstruct.Module {
+	return sharedWebSocketModule
 }
 
 func eventsModule() *starlarkstruct.Module {
-	return &starlarkstruct.Module{Name: "events", Members: starlark.StringDict{
-		"publish": starlark.NewBuiltin("events.publish", makeEffectBuiltin(WebSocketEffectPublish, []string{"topic", "payload"})),
-	}}
+	return sharedEventsModule
 }
 
 func timersModule() *starlarkstruct.Module {
-	return &starlarkstruct.Module{Name: "timers", Members: starlark.StringDict{
-		"set": starlark.NewBuiltin("timers.set", makeEffectBuiltin(WebSocketEffectSetTimer, []string{"key", "after", "event?"})),
-	}}
+	return sharedTimersModule
 }
 
 func makeEffectBuiltin(effectType WebSocketEffectType, fields []string) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {

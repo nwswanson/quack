@@ -19,6 +19,7 @@ import (
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkjson"
+	"go.starlark.net/starlarkstruct"
 	"go.starlark.net/syntax"
 )
 
@@ -34,6 +35,8 @@ type StarlarkExecutor struct {
 	cachePrograms       bool
 	programMu           sync.Mutex
 	programs            map[programCacheKey]*starlark.Program
+	moduleMu            sync.RWMutex
+	memoryModules       map[memoryModuleCacheKey]*starlarkstruct.Module
 }
 
 type policyLoader interface {
@@ -57,6 +60,7 @@ func NewStarlarkExecutor(loader ScriptLoader, limits ResourceLimits) (*StarlarkE
 		limits:        limits.withDefaults(),
 		cachePrograms: true,
 		programs:      map[programCacheKey]*starlark.Program{},
+		memoryModules: map[memoryModuleCacheKey]*starlarkstruct.Module{},
 	}, nil
 }
 
@@ -131,6 +135,11 @@ type programCacheKey struct {
 	sourceID  string
 	limits    ResourceLimits
 	predefs   string
+}
+
+type memoryModuleCacheKey struct {
+	site  string
+	quota int64
 }
 
 func (e *StarlarkExecutor) program(ctx context.Context, bundle Bundle, route Route, scriptKey string, limits ResourceLimits, predeclared starlark.StringDict) (*starlark.Program, error) {
@@ -213,7 +222,7 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 	for key, value := range predeclareds {
 		out[key] = value
 	}
-	out["memory"] = modules.NewMemoryModule(bundle.Site, limits.MaxMemoryBytes)
+	out["memory"] = e.memoryModule(bundle.Site, limits.MaxMemoryBytes)
 	out["log"] = modules.NewLogModule(ctx, modules.LogModuleOptions{
 		Buffer:  e.logs,
 		Site:    bundle.Site,
@@ -230,6 +239,25 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 		out["fs"] = modules.NewFSModule(ctx, fsFiles(bundle.Files, route.FilesystemRoot), e.loader.OpenScript, limits.MaxScriptBytes)
 	}
 	return out
+}
+
+func (e *StarlarkExecutor) memoryModule(site string, quota int64) *starlarkstruct.Module {
+	key := memoryModuleCacheKey{site: site, quota: quota}
+	e.moduleMu.RLock()
+	module := e.memoryModules[key]
+	e.moduleMu.RUnlock()
+	if module != nil {
+		return module
+	}
+
+	e.moduleMu.Lock()
+	defer e.moduleMu.Unlock()
+	if module := e.memoryModules[key]; module != nil {
+		return module
+	}
+	module = modules.NewMemoryModule(site, quota)
+	e.memoryModules[key] = module
+	return module
 }
 
 func fsFiles(files []BundleFile, root string) []modules.FSFile {
