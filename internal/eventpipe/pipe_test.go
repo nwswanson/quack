@@ -29,3 +29,41 @@ func TestStorePublishDropNewRejectsWhenFull(t *testing.T) {
 		t.Fatalf("recent = %#v, want first event retained", recent)
 	}
 }
+
+func TestStorePublishRetainedRingKeepsChronologicalOrder(t *testing.T) {
+	store := NewStore()
+	config := Config{Name: "sensor", Retain: 3}
+	for i := 0; i < 8; i++ {
+		if _, ok := store.Publish(config, Event{Site: "site", Payload: []byte{byte('0' + i)}}); !ok {
+			t.Fatal("publish rejected")
+		}
+	}
+	recent := store.Recent("site", config)
+	if got := payloads(recent); got != "567" {
+		t.Fatalf("recent payloads = %q, want 567", got)
+	}
+}
+
+func TestStorePublishRetainedConfigShrinkKeepsNewest(t *testing.T) {
+	store := NewStore()
+	for i := 0; i < 5; i++ {
+		if _, ok := store.Publish(Config{Name: "sensor", Retain: 5}, Event{Site: "site", Payload: []byte{byte('0' + i)}}); !ok {
+			t.Fatal("publish rejected")
+		}
+	}
+	if _, ok := store.Publish(Config{Name: "sensor", Retain: 2}, Event{Site: "site", Payload: []byte("5")}); !ok {
+		t.Fatal("publish rejected after shrink")
+	}
+	recent := store.Recent("site", Config{Name: "sensor"})
+	if got := payloads(recent); got != "45" {
+		t.Fatalf("recent payloads = %q, want 45", got)
+	}
+}
+
+func payloads(events []Event) string {
+	out := make([]byte, 0, len(events))
+	for _, event := range events {
+		out = append(out, event.Payload...)
+	}
+	return string(out)
+}

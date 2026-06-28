@@ -41,6 +41,8 @@ type pipe struct {
 	config Config
 	next   uint64
 	events []Event
+	start  int
+	count  int
 }
 
 func NewStore() *Store {
@@ -66,9 +68,9 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 		p = &pipe{config: config}
 		s.pipes[key] = p
 	} else {
-		p.config = config
+		p.setConfig(config)
 	}
-	if !p.config.Unlimited && p.config.Overflow == DropNew && len(p.events) >= p.config.Retain {
+	if !p.config.Unlimited && p.config.Overflow == DropNew && p.count >= p.config.Retain {
 		return event, false
 	}
 	p.next++
@@ -84,10 +86,7 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	}
 	event.Payload = append([]byte(nil), event.Payload...)
 	event.Headers = cloneHeaders(event.Headers)
-	p.events = append(p.events, event)
-	if !p.config.Unlimited && p.config.Retain > 0 && len(p.events) > p.config.Retain {
-		p.events = append([]Event(nil), p.events[len(p.events)-p.config.Retain:]...)
-	}
+	p.append(event)
 	return event, true
 }
 
@@ -102,9 +101,73 @@ func (s *Store) Recent(site string, config Config) []Event {
 	if p == nil {
 		return nil
 	}
-	out := make([]Event, len(p.events))
-	for i, event := range p.events {
+	events := p.orderedEvents()
+	out := make([]Event, len(events))
+	for i, event := range events {
 		out[i] = cloneEvent(event)
+	}
+	return out
+}
+
+func (p *pipe) setConfig(config Config) {
+	if p.config == config {
+		return
+	}
+	events := p.orderedEvents()
+	p.config = config
+	p.start = 0
+	p.count = 0
+	if p.config.Unlimited {
+		p.events = append([]Event(nil), events...)
+		p.count = len(p.events)
+		return
+	}
+	if p.config.Retain <= 0 {
+		p.events = nil
+		return
+	}
+	if len(events) > p.config.Retain {
+		events = events[len(events)-p.config.Retain:]
+	}
+	p.events = make([]Event, p.config.Retain)
+	copy(p.events, events)
+	p.count = len(events)
+}
+
+func (p *pipe) append(event Event) {
+	if p.config.Unlimited {
+		p.events = append(p.events, event)
+		p.start = 0
+		p.count = len(p.events)
+		return
+	}
+	if p.config.Retain <= 0 {
+		return
+	}
+	if len(p.events) != p.config.Retain {
+		p.events = make([]Event, p.config.Retain)
+		p.start = 0
+		p.count = 0
+	}
+	if p.count < p.config.Retain {
+		p.events[(p.start+p.count)%len(p.events)] = event
+		p.count++
+		return
+	}
+	p.events[p.start] = event
+	p.start = (p.start + 1) % len(p.events)
+}
+
+func (p *pipe) orderedEvents() []Event {
+	if p.count == 0 {
+		return nil
+	}
+	if p.config.Unlimited || p.start == 0 {
+		return p.events[:p.count]
+	}
+	out := make([]Event, p.count)
+	for i := 0; i < p.count; i++ {
+		out[i] = p.events[(p.start+i)%len(p.events)]
 	}
 	return out
 }
