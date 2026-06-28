@@ -626,3 +626,228 @@ platform:
 Those limitations should be treated as part of the operational contract. Pipes
 are the host-owned event spine for live Quack applications. Durable workflows
 should layer explicit state, idempotency, and persistence on top of them.
+
+## Evolution Path
+
+The next version should improve reliability without turning Quack into a
+general-purpose streaming platform. The right target is a small, inspectable,
+single-node event substrate that keeps the same programming model:
+
+```text
+events in -> bounded Starlark invocation -> declarative effects out
+```
+
+The most valuable additions are local durability, controlled replay, cycle
+protection, and clearer backpressure controls. Cross-node replication and
+Kafka-style consumer groups are intentionally poor fits for the current product
+shape. They add distributed systems obligations that would dominate the runtime:
+leader election, partition ownership, membership, offset coordination,
+compaction semantics, operational repair, and cross-node websocket affinity.
+Quack should instead make the single-host case excellent and leave multi-node
+event distribution to an external system if an installation truly needs it.
+
+### Durable Local Pipe Store
+
+The first step is to make selected pipes durable in SQLite. This should be
+opt-in per pipe:
+
+```yaml
+pipes:
+  - name: app.jobs
+    retain: 1000
+    durable: true
+    overflow: drop_oldest
+```
+
+A minimal schema is enough:
+
+```text
+pipe_events(
+  site text,
+  pipe text,
+  seq integer,
+  topic text,
+  source_kind text,
+  source_name text,
+  headers_json text,
+  payload blob,
+  created_at text,
+  primary key(site, pipe, seq)
+)
+```
+
+The current in-memory store can remain the hot path for non-durable pipes. For
+durable pipes, publish should append to SQLite inside the same serialized writer
+model Quack already uses elsewhere, then update the in-memory tail. Retention
+can be enforced by deleting rows below the retained sequence window. This gives
+restart survival and operator inspection without introducing a separate broker.
+
+Durability should not imply exactly-once delivery. It should mean that accepted
+events can survive process restart and can be replayed by sequence number.
+Applications that need exactly-once state changes should still use idempotency
+keys or domain versions in their payloads.
+
+### Replay API
+
+Once durable or retained events exist behind a stable interface, expose a small
+Starlark read API rather than a full consumer protocol:
+
+```python
+events.recent("app.jobs", limit = 100)
+events.after("app.jobs", seq = last_seen, limit = 100)
+```
+
+The API should return event records with `seq`, `topic`, `payload`, `headers`,
+and `created_at`. It should be explicitly pull-based. Websocket connections can
+then implement reconnect repair by storing the last seen sequence and asking for
+events after that point before subscribing for live updates.
+
+This avoids per-subscriber offsets in the host. The application owns its cursor
+when it needs one. That keeps the host small and avoids the ambiguity of when a
+websocket frame is actually consumed by browser code.
+
+### Acknowledgements And Job Semantics
+
+Pipe fanout and work queues should remain separate concepts. Most pipe topics
+are streams: all matching subscribers may need to observe the same event.
+Acknowledgements only make sense for queue-like work where one worker claims a
+task.
+
+If Quack needs local job processing, add a separate queue mode rather than
+overloading every pipe:
+
+```yaml
+pipes:
+  - name: app.jobs.thumbnail
+    durable: true
+    mode: queue
+    max_attempts: 5
+```
+
+Queue mode can add a small lease table:
+
+```text
+pipe_event_attempts(
+  site text,
+  pipe text,
+  seq integer,
+  status text,
+  attempts integer,
+  leased_until text,
+  last_error text
+)
+```
+
+That is enough for at-least-once local jobs: claim with a short lease, run a
+bounded handler, ack on success, release or retry on failure. This should not be
+presented as a consumer group system. It is a local durable work queue with
+leases.
+
+### Retry And Dead Letters
+
+Retries should be explicit and bounded. A manifest event route can eventually
+accept retry settings:
+
+```yaml
+events:
+  - selector: "app.jobs.thumbnail"
+    on_event: api/jobs.star:on_thumbnail
+    retry:
+      max_attempts: 5
+      backoff: exponential
+      dead_letter: app.jobs.thumbnail.dead
+```
+
+The host should record attempt count, last error, and next eligible time. When
+attempts are exhausted, it should publish a compact dead-letter event containing
+the original event id or sequence, the failing handler, the final error, and
+the original payload. Dead-letter topics should be ordinary durable pipes so
+operators can inspect and repair them with the same APIs.
+
+For stream-style websocket fanout, automatic retry is usually the wrong
+default. A disconnected or slow websocket should repair itself with replay on
+reconnect if the application needs that behavior.
+
+### Cycle Detection
+
+Cycle detection is a high-value, low-footprint improvement. The dispatch path
+should carry a small trace context through nested publishes:
+
+```text
+root_event_id
+depth
+visited route/topic edges
+```
+
+A reasonable default policy is:
+
+- reject dispatch when depth exceeds a small limit such as 32
+- reject an immediate repeated edge such as the same handler publishing back to
+  the same topic in one trace
+- emit a structured runtime error event or log entry with the trace
+
+This does not require graph analysis or durable topology state. It only
+protects the process from accidental recursive publish loops in one dispatch
+tree.
+
+### Ordering And Offsets
+
+Per-pipe sequence numbers are worth preserving and making durable. They are
+simple, cheap, and useful for replay. The host should not try to provide stable
+global ordering across independent pipes or subscribers.
+
+The practical contract should be:
+
+- durable order is per site and pipe
+- websocket frame order is per connection
+- application-level ordering across topics belongs in the payload
+- reconnect repair uses `events.after(pipe, seq)` where the application knows
+  which pipe it is following
+
+This is enough for terminals, local telemetry, UI sessions, and single-host job
+queues without inheriting the complexity of a distributed log.
+
+### Configurable Backpressure
+
+The hard-coded websocket outbound queue depth should become a server setting,
+and possibly a route-level limit later:
+
+```text
+runtime.websocket.send_queue_depth
+runtime.websocket.write_timeout_millis
+```
+
+Pipe-level admission should also expose clear metrics:
+
+```text
+accepted events
+dropped oldest events
+dropped new events
+current retained events
+handler failures
+subscriber closes from backpressure
+```
+
+Configuration is less important than visibility. Operators need to know whether
+loss happened at producer admission, handler execution, or websocket egress.
+
+### What Not To Add
+
+Do not add cross-process or cross-node replication to the built-in pipe store.
+It would force Quack to solve cluster membership, event ownership, duplicate
+delivery, offset coordination, and websocket routing. Those are the core
+responsibilities of dedicated brokers and orchestrators.
+
+Do not add implicit exactly-once delivery. The honest target is at-least-once
+for durable queues and best-effort plus replay for streams. Exactly-once effects
+require application idempotency because Starlark handlers can call external
+systems, mutate memory, publish more events, and send websocket frames.
+
+Do not make every websocket subscription a durable consumer. Websocket
+connections are ephemeral transport attachments. If a browser needs recovery,
+the application should store a cursor and request replay explicitly.
+
+The north star is small and legible: local durable append, bounded replay,
+bounded retry for queue mode, cycle guards, and good metrics. That moves pipes
+from "live event spine" to "reliable local event spine" without pretending to be
+a distributed data platform.
