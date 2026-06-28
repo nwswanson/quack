@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Room Chat</title>
+<link rel="stylesheet" href="/styles.css?v=1">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="mark">#</span>
+      <div>
+        <h1>Multi-Room Chat</h1>
+        <p id="topicLabel">chat.room.*</p>
+      </div>
+    </div>
+
+    <form id="joinForm" class="join">
+      <label for="nameInput">Name</label>
+      <input id="nameInput" name="name" autocomplete="nickname" maxlength="24" placeholder="Guest">
+
+      <label for="roomInput">Room</label>
+      <div class="room-row">
+        <input id="roomInput" name="room" inputmode="numeric" pattern="[0-9]*" min="1" max="100" value="7">
+        <button type="submit">Join</button>
+      </div>
+    </form>
+
+    <div class="status" data-state="closed" id="status">
+      <span class="dot"></span>
+      <span id="statusText">Connecting</span>
+    </div>
+
+    <div class="rooms" id="roomButtons"></div>
+  </aside>
+
+  <main class="chat">
+    <header class="chat-head">
+      <div>
+        <h2 id="roomTitle">Room 7</h2>
+        <p id="selectorLabel">chat.room.*</p>
+      </div>
+      <div class="counter" id="messageCount">0</div>
+    </header>
+
+    <section class="messages" id="messages" aria-live="polite"></section>
+
+    <div class="typing" id="typing"></div>
+
+    <form id="messageForm" class="composer">
+      <input id="messageInput" maxlength="280" autocomplete="off" placeholder="Message">
+      <button type="submit">Send</button>
+    </form>
+  </main>
+</div>
+<script src="/app.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/chat.star
+
+  - path: /
+    kind: static
+    root: public
+
+pipes:
+  - selector: "chat.room.*"
+    retain: 64
+    overflow: drop_oldest
+    key_by: topic
+    max_topics: 100
+    topic_overflow: evict_lru
+
+events:
+  - selector: "chat.room.*"
+    concurrency: serial_by_topic
+    on_event: api/chat.star:on_chat_event
