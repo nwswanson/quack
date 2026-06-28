@@ -109,6 +109,7 @@ func (p pipeFlowBench) invoke(ctx context.Context, handler string, topic string,
 		Site:    "bench",
 		Version: 1,
 		Routes:  []Route{{Path: "event:bench.star", Kind: RouteWebSocket, Entrypoint: "bench.star"}},
+		Files:   []BundleFile{{Path: "bench.star", BlobPath: "bench.star", FileSHA: "bench-pipe-script", Bytes: int64(len(pipeStressScript))}},
 	}, EventInvocation{
 		Site:       "bench",
 		Version:    1,

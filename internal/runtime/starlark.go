@@ -2,12 +2,16 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"sort"
 	"strings"
+	"sync"
 
 	"quack/internal/domain"
 	"quack/internal/logbuffer"
@@ -15,6 +19,7 @@ import (
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkjson"
+	"go.starlark.net/syntax"
 )
 
 type StarlarkExecutor struct {
@@ -26,6 +31,9 @@ type StarlarkExecutor struct {
 	secrets             modules.SecretGetter
 	hardware            modules.HardwareService
 	allowHTTPClientSelf bool
+	cachePrograms       bool
+	programMu           sync.Mutex
+	programs            map[programCacheKey]*starlark.Program
 }
 
 type policyLoader interface {
@@ -38,11 +46,18 @@ var predeclareds = starlark.StringDict{
 	"uuid":    modules.UUIDModule,
 }
 
+const maxProgramCacheEntries = 128
+
 func NewStarlarkExecutor(loader ScriptLoader, limits ResourceLimits) (*StarlarkExecutor, error) {
 	if loader == nil {
 		return nil, fmt.Errorf("script loader is required")
 	}
-	return &StarlarkExecutor{loader: loader, limits: limits.withDefaults()}, nil
+	return &StarlarkExecutor{
+		loader:        loader,
+		limits:        limits.withDefaults(),
+		cachePrograms: true,
+		programs:      map[programCacheKey]*starlark.Program{},
+	}, nil
 }
 
 func (e *StarlarkExecutor) SetLogBuffer(logs *logbuffer.Service) {
@@ -63,6 +78,15 @@ func (e *StarlarkExecutor) SetHardwareService(hardware modules.HardwareService) 
 	e.hardware = hardware
 }
 
+func (e *StarlarkExecutor) SetProgramCacheEnabled(enabled bool) {
+	e.programMu.Lock()
+	defer e.programMu.Unlock()
+	e.cachePrograms = enabled
+	if !enabled {
+		e.programs = map[programCacheKey]*starlark.Program{}
+	}
+}
+
 func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req InvocationRequest) (InvocationResponse, error) {
 	route, err := singleHTTPRoute(bundle)
 	if err != nil {
@@ -73,13 +97,14 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	if scriptKey == "" {
 		scriptKey = route.Entrypoint
 	}
-	script, err := e.readScript(ctx, scriptKey, limits)
-	if err != nil {
-		return InvocationResponse{}, err
-	}
 	thread, stopCancel := starlarkThread(ctx, req.Method+" "+req.Route, limits.MaxExecutionSteps)
 	defer stopCancel()
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.predeclareds(ctx, bundle, route, limits))
+	predeclared := e.predeclareds(ctx, bundle, route, limits)
+	program, err := e.program(ctx, bundle, route, scriptKey, limits, predeclared)
+	if err != nil {
+		return InvocationResponse{}, e.wrapStarlarkError(bundle, route, err)
+	}
+	globals, err := program.Init(thread, predeclared)
 	if err != nil {
 		return InvocationResponse{}, e.wrapStarlarkError(bundle, route, err)
 	}
@@ -97,6 +122,92 @@ func (e *StarlarkExecutor) Invoke(ctx context.Context, bundle Bundle, req Invoca
 	}
 	return responseFromValue(result)
 }
+
+type programCacheKey struct {
+	site      string
+	version   int64
+	scriptKey string
+	filename  string
+	sourceID  string
+	limits    ResourceLimits
+	predefs   string
+}
+
+func (e *StarlarkExecutor) program(ctx context.Context, bundle Bundle, route Route, scriptKey string, limits ResourceLimits, predeclared starlark.StringDict) (*starlark.Program, error) {
+	key := programCacheKey{
+		site:      bundle.Site,
+		version:   bundle.Version,
+		scriptKey: scriptKey,
+		filename:  route.Entrypoint,
+		sourceID:  scriptSourceID(bundle, route, scriptKey),
+		limits:    limits,
+		predefs:   predeclaredSignature(predeclared),
+	}
+	if key.sourceID != "" {
+		if program := e.cachedProgram(key); program != nil {
+			return program, nil
+		}
+	}
+
+	script, err := e.readScript(ctx, scriptKey, limits)
+	if err != nil {
+		return nil, err
+	}
+	if key.sourceID == "" {
+		sum := sha256.Sum256([]byte(script))
+		key.sourceID = "sha256:" + hex.EncodeToString(sum[:])
+		if program := e.cachedProgram(key); program != nil {
+			return program, nil
+		}
+	}
+	_, program, err := starlark.SourceProgramOptions(syntax.LegacyFileOptions(), route.Entrypoint, script, predeclared.Has)
+	if err != nil {
+		return nil, err
+	}
+	e.programMu.Lock()
+	defer e.programMu.Unlock()
+	if e.cachePrograms {
+		if existing := e.programs[key]; existing != nil {
+			return existing, nil
+		}
+		if len(e.programs) >= maxProgramCacheEntries {
+			e.programs = map[programCacheKey]*starlark.Program{}
+		}
+		e.programs[key] = program
+	}
+	return program, nil
+}
+
+func (e *StarlarkExecutor) cachedProgram(key programCacheKey) *starlark.Program {
+	e.programMu.Lock()
+	defer e.programMu.Unlock()
+	if !e.cachePrograms {
+		return nil
+	}
+	return e.programs[key]
+}
+
+func scriptSourceID(bundle Bundle, route Route, scriptKey string) string {
+	for _, file := range bundle.Files {
+		if file.FileSHA == "" {
+			continue
+		}
+		if file.BlobPath == scriptKey || file.Path == route.Entrypoint {
+			return "file:" + file.FileSHA
+		}
+	}
+	return ""
+}
+
+func predeclaredSignature(predeclared starlark.StringDict) string {
+	keys := make([]string, 0, len(predeclared))
+	for key := range predeclared {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\x00")
+}
+
 func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, route Route, limits ResourceLimits) starlark.StringDict {
 	out := make(starlark.StringDict, len(predeclareds)+2)
 	for key, value := range predeclareds {

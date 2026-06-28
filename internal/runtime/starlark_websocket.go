@@ -20,13 +20,14 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 	if scriptKey == "" {
 		scriptKey = route.Entrypoint
 	}
-	script, err := e.readScript(ctx, scriptKey, limits)
-	if err != nil {
-		return nil, err
-	}
 	thread, stopCancel := starlarkThread(ctx, string(event.EventType)+" "+event.Route, limits.MaxExecutionSteps)
 	defer stopCancel()
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.websocketPredeclareds(ctx, bundle, route, limits))
+	predeclared := e.websocketPredeclareds(ctx, bundle, route, limits)
+	program, err := e.program(ctx, bundle, route, scriptKey, limits, predeclared)
+	if err != nil {
+		return nil, e.wrapStarlarkError(bundle, route, err)
+	}
+	globals, err := program.Init(thread, predeclared)
 	if err != nil {
 		return nil, e.wrapStarlarkError(bundle, route, err)
 	}
@@ -58,13 +59,14 @@ func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event
 	if scriptKey == "" {
 		scriptKey = route.Entrypoint
 	}
-	script, err := e.readScript(ctx, scriptKey, limits)
-	if err != nil {
-		return nil, err
-	}
 	thread, stopCancel := starlarkThread(ctx, "event "+event.Topic, limits.MaxExecutionSteps)
 	defer stopCancel()
-	globals, err := starlark.ExecFile(thread, route.Entrypoint, script, e.websocketPredeclareds(ctx, bundle, route, limits))
+	predeclared := e.websocketPredeclareds(ctx, bundle, route, limits)
+	program, err := e.program(ctx, bundle, route, scriptKey, limits, predeclared)
+	if err != nil {
+		return nil, e.wrapStarlarkError(bundle, route, err)
+	}
+	globals, err := program.Init(thread, predeclared)
 	if err != nil {
 		return nil, e.wrapStarlarkError(bundle, route, err)
 	}

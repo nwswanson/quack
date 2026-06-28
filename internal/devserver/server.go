@@ -86,6 +86,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
+	executor.SetProgramCacheEnabled(false)
 	executor.SetHTTPClientPolicy(repo, repo, false)
 	runtimeService := appruntime.NewService(appruntime.ServiceOptions{
 		Repository:      repo,
