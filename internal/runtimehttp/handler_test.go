@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/eventpipe"
+	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
 )
@@ -429,6 +431,102 @@ func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
 	got := runtime.eventRequests[0]
 	if got.Site != "foo" || got.Version != 3 || got.Entrypoint != "api/serial.star" || got.Handler != "on_serial" || got.Topic != "hardware.serial.rpi.read" {
 		t.Fatalf("event request = %#v, want selector event invocation", got)
+	}
+}
+
+func TestEventSettingsPipeUsesExactThenLongestPrefixSelector(t *testing.T) {
+	settings := eventSettings{pipes: []manifest.Pipe{
+		{Selector: "room.*", Retain: 64, KeyBy: "selector"},
+		{Selector: "room.audit.*", Retain: 1024, KeyBy: "selector"},
+		{Selector: "room.audit.created", Retain: 7},
+	}}
+	if got := settings.pipe("room.audit.created"); got.Name != "room.audit.created" || got.Retain != 7 {
+		t.Fatalf("exact pipe config = %+v, want exact selector", got)
+	}
+	if got := settings.pipe("room.audit.deleted"); got.Name != "room.audit.*" || got.Retain != 1024 {
+		t.Fatalf("audit pipe config = %+v, want longest prefix selector", got)
+	}
+	if got := settings.pipe("room.chat"); got.Name != "room.*" || got.Retain != 64 {
+		t.Fatalf("room pipe config = %+v, want broad selector", got)
+	}
+}
+
+func TestHandlerSelectorPipeCanRetainBySelector(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"selector":"notifications.*","retain":2,"key_by":"selector"}]`,
+		},
+	}}}))
+
+	for _, topic := range []string{"notifications.email", "notifications.sms"} {
+		if err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+			Type: appruntime.WebSocketEffectPublish, Topic: topic, Payload: []byte(topic),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "notifications.*"})
+	if len(recent) != 2 || recent[0].Topic != "notifications.email" || recent[1].Topic != "notifications.sms" {
+		t.Fatalf("recent = %#v, want aggregate selector retention", recent)
+	}
+}
+
+func TestHandlerSelectorPipeRetainByTopicBoundsCardinality(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"selector":"room.*","retain":1,"key_by":"topic","max_topics":2,"topic_overflow":"evict_lru"}]`,
+		},
+	}}}))
+
+	for _, topic := range []string{"room.1", "room.2", "room.1", "room.3"} {
+		if err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+			Type: appruntime.WebSocketEffectPublish, Topic: topic, Payload: []byte(topic),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "room.2"}); len(recent) != 0 {
+		t.Fatalf("room.2 recent = %#v, want evicted topic", recent)
+	}
+	if recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "room.1"}); len(recent) != 1 || recent[0].Topic != "room.1" {
+		t.Fatalf("room.1 recent = %#v, want retained topic", recent)
+	}
+	if recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "room.3"}); len(recent) != 1 || recent[0].Topic != "room.3" {
+		t.Fatalf("room.3 recent = %#v, want retained topic", recent)
+	}
+}
+
+func TestSocketManagerSelectorSubscriptionsDedupeAndCapFanout(t *testing.T) {
+	manager := newSocketManager()
+	first, _, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: websocketMaxEventFanout + 10, maxPerSite: websocketMaxEventFanout + 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.subscribe(first, "room.*")
+	manager.subscribe(first, "room.1")
+	for i := 0; i < websocketMaxEventFanout+5; i++ {
+		id, _, err := manager.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: websocketMaxEventFanout + 10, maxPerSite: websocketMaxEventFanout + 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager.subscribe(id, fmt.Sprintf("room.%d", i))
+	}
+
+	exact := manager.subscriberSnapshots("foo", "room.1")
+	if len(exact) != 2 {
+		t.Fatalf("exact snapshots = %d, want deduped wildcard plus exact subscribers", len(exact))
+	}
+	selector := manager.subscriberSnapshots("foo", "room.*")
+	if len(selector) != websocketMaxEventFanout {
+		t.Fatalf("selector snapshots = %d, want fanout cap %d", len(selector), websocketMaxEventFanout)
 	}
 }
 

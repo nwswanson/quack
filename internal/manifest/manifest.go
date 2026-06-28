@@ -94,10 +94,14 @@ type APIProxy struct {
 }
 
 type Pipe struct {
-	Name      string `json:"name" yaml:"name"`
-	Retain    int    `json:"retain,omitempty" yaml:"retain,omitempty"`
-	Unlimited bool   `json:"unlimited,omitempty" yaml:"unlimited,omitempty"`
-	Overflow  string `json:"overflow,omitempty" yaml:"overflow,omitempty"`
+	Name          string `json:"name,omitempty" yaml:"name,omitempty"`
+	Selector      string `json:"selector,omitempty" yaml:"selector,omitempty"`
+	Retain        int    `json:"retain,omitempty" yaml:"retain,omitempty"`
+	Unlimited     bool   `json:"unlimited,omitempty" yaml:"unlimited,omitempty"`
+	Overflow      string `json:"overflow,omitempty" yaml:"overflow,omitempty"`
+	KeyBy         string `json:"key_by,omitempty" yaml:"key_by,omitempty"`
+	MaxTopics     int    `json:"max_topics,omitempty" yaml:"max_topics,omitempty"`
+	TopicOverflow string `json:"topic_overflow,omitempty" yaml:"topic_overflow,omitempty"`
 }
 
 type EventRoute struct {
@@ -352,16 +356,23 @@ func validatePipes(pipes []Pipe) error {
 	seen := map[string]bool{}
 	for _, pipe := range pipes {
 		name := strings.TrimSpace(pipe.Name)
-		if name == "" {
-			return fmt.Errorf("pipe.name is required")
+		selector := strings.TrimSpace(pipe.Selector)
+		if name == "" && selector == "" {
+			return fmt.Errorf("pipe.selector is required")
 		}
-		if err := validateEventName(name, "pipe.name"); err != nil {
+		if name != "" && selector != "" && name != selector {
+			return fmt.Errorf("pipe.name and pipe.selector cannot both be set")
+		}
+		if selector == "" {
+			selector = name
+		}
+		if err := validateEventSelector(selector, "pipe.selector"); err != nil {
 			return err
 		}
-		if seen[name] {
-			return fmt.Errorf("duplicate pipe %q", name)
+		if seen[selector] {
+			return fmt.Errorf("duplicate pipe %q", selector)
 		}
-		seen[name] = true
+		seen[selector] = true
 		if pipe.Retain < 0 {
 			return fmt.Errorf("pipe.retain cannot be negative")
 		}
@@ -369,6 +380,26 @@ func validatePipes(pipes []Pipe) error {
 		case "", "drop_oldest", "drop_new":
 		default:
 			return fmt.Errorf("unsupported pipe overflow %q", pipe.Overflow)
+		}
+		keyBy := strings.TrimSpace(pipe.KeyBy)
+		if keyBy == "" {
+			keyBy = "topic"
+		}
+		switch keyBy {
+		case "topic", "selector":
+		default:
+			return fmt.Errorf("unsupported pipe.key_by %q", pipe.KeyBy)
+		}
+		if pipe.MaxTopics < 0 {
+			return fmt.Errorf("pipe.max_topics cannot be negative")
+		}
+		switch strings.TrimSpace(pipe.TopicOverflow) {
+		case "", "evict_lru", "drop_new":
+		default:
+			return fmt.Errorf("unsupported pipe.topic_overflow %q", pipe.TopicOverflow)
+		}
+		if strings.HasSuffix(selector, "*") && keyBy == "topic" && pipe.MaxTopics <= 0 {
+			return fmt.Errorf("pipe.max_topics is required when wildcard pipe key_by is topic")
 		}
 	}
 	return nil
@@ -380,15 +411,7 @@ func validateEvents(events []EventRoute) error {
 		if selector == "" {
 			return fmt.Errorf("event.selector is required")
 		}
-		if strings.Contains(selector, "*") && !strings.HasSuffix(selector, "*") {
-			return fmt.Errorf("event.selector wildcard is only supported as the last character")
-		}
-		base := strings.TrimSuffix(selector, "*")
-		base = strings.TrimSuffix(base, ".")
-		if base == "" {
-			return fmt.Errorf("event.selector must name a pipe prefix")
-		}
-		if err := validateEventName(base, "event.selector"); err != nil {
+		if err := validateEventSelector(selector, "event.selector"); err != nil {
 			return err
 		}
 		if _, _, err := SplitEventHandler(event.OnEvent); err != nil {
@@ -401,6 +424,17 @@ func validateEvents(events []EventRoute) error {
 		}
 	}
 	return nil
+}
+
+func validateEventSelector(selector string, field string) error {
+	if strings.Contains(selector, "*") && !strings.HasSuffix(selector, ".*") {
+		return fmt.Errorf("%s wildcard is only supported as the final segment", field)
+	}
+	base := strings.TrimSuffix(selector, ".*")
+	if base == "" {
+		return fmt.Errorf("%s must name a pipe prefix", field)
+	}
+	return validateEventName(base, field)
 }
 
 func SplitEventHandler(value string) (string, string, error) {

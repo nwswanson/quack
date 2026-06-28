@@ -51,15 +51,24 @@ pipes:
     retain: 64
     overflow: drop_oldest
 
+  - selector: "hardware.serial.*"
+    retain: 128
+    overflow: drop_oldest
+    key_by: selector
+
 events:
   - selector: "hardware.serial.*"
     on_event: api/terminal.star:on_hardware_event
 ```
 
-Pipe names and event selectors are dotted names. Each name segment may contain
-letters, digits, `_`, or `-`. Empty segments are rejected. Event selector
-wildcards are supported only as the final character, so `hardware.serial.*` is
-valid and `hardware.*.read` is not.
+Pipe names, pipe selectors, and event selectors are dotted names. Each name
+segment may contain letters, digits, `_`, or `-`. Empty segments are rejected.
+Wildcards are supported only as the final segment, so `hardware.serial.*` is
+valid and `hardware.*.read`, `*.read`, `hardware*`, and `*` are not.
+
+`pipe.name` is the legacy exact-topic form. `pipe.selector` may be exact or a
+final-segment prefix selector. A selector is a policy matcher for published
+topics; it does not expand into possible topic names.
 
 `on_event` must be formatted as:
 
@@ -249,13 +258,20 @@ state repair in an explicit state store.
 
 ## Retention And Overflow
 
-Each pipe has a retention policy:
+Each pipe selector has a retention policy:
 
 ```yaml
 pipes:
   - name: app.telemetry
     retain: 256
     overflow: drop_oldest
+
+  - selector: "room.*"
+    retain: 64
+    overflow: drop_oldest
+    key_by: topic
+    max_topics: 256
+    topic_overflow: evict_lru
 ```
 
 Supported overflow modes are:
@@ -281,6 +297,35 @@ The dispatch path treats a rejected publish as a no-op: event handlers and
 websocket subscribers are not invoked for that event. This mode is useful when a
 pipe represents a bounded admission queue and dropping older context would be
 more misleading than dropping new work.
+
+When multiple pipe selectors match a publish topic, exact selectors win first,
+then the longest prefix selector wins. For example, `room.audit.*` is selected
+over `room.*` for `room.audit.created`.
+
+Selector pipes also choose how retained history is keyed:
+
+```yaml
+pipes:
+  - selector: "room.*"
+    retain: 64
+    key_by: topic
+    max_topics: 256
+    topic_overflow: evict_lru
+
+  - selector: "notifications.*"
+    retain: 512
+    key_by: selector
+```
+
+`key_by: topic` retains each concrete topic under its own pipe name, so
+`room.1.message` and `room.2.message` have separate recent-event buffers. A
+wildcard selector using `key_by: topic` must set `max_topics`; otherwise random
+topic names could create unbounded retained pipe objects. `topic_overflow` may
+be `evict_lru` or `drop_new`, and defaults to `evict_lru`.
+
+`key_by: selector` retains all matching events under the selector name, so
+`notifications.email` and `notifications.sms` share the `notifications.*`
+buffer. This is the safer choice for broad internal streams.
 
 Pipes may also be configured as `unlimited`. An unlimited pipe is not trimmed by
 the pipe store. This should be treated as an exceptional mode because it

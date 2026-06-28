@@ -32,6 +32,7 @@ const (
 	websocketSendQueueDepth     = 64
 	websocketWriteTimeout       = 5 * time.Second
 	websocketBackpressureStatus = 1013
+	websocketMaxEventFanout     = 1024
 )
 
 func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req appruntime.WebSocketInvocationRequest) {
@@ -226,10 +227,10 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 	if err != nil {
 		return err
 	}
-	pipeName := strings.TrimSpace(topic)
-	config := settings.pipe(pipeName)
+	topic = strings.TrimSpace(topic)
+	config := settings.pipe(topic)
 	event, accepted := h.pipes.Publish(config, eventpipe.Event{
-		Site: site, Pipe: pipeName, Topic: topic, SourceKind: sourceKind, SourceName: sourceName, Payload: payload, Headers: headers,
+		Site: site, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName, Payload: payload, Headers: headers,
 	})
 	if !accepted {
 		return nil
@@ -260,11 +261,11 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 			return err
 		}
 	}
-	for _, snapshot := range h.sockets.subscriberSnapshots(site, topic) {
+	for _, snapshot := range h.sockets.subscriberSnapshots(site, event.Topic) {
 		effects, err := h.runtime.InvokeWebSocket(ctx, appruntime.WebSocketInvocationRequest{
 			Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Query: snapshot.query,
 			Headers: snapshot.headers, ConnID: snapshot.id, EventType: appruntime.WebSocketEventEvent,
-			Event: appruntime.WebSocketServerEvent{Topic: topic, Payload: payload},
+			Event: appruntime.WebSocketServerEvent{Topic: event.Topic, Payload: payload},
 		})
 		if err != nil {
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event invocation failed")
@@ -317,12 +318,38 @@ func (h Handler) siteEventSettings(ctx context.Context, site string) (eventSetti
 }
 
 func (s eventSettings) pipe(name string) eventpipe.Config {
+	var best *manifest.Pipe
+	bestLen := -1
 	for _, pipe := range s.pipes {
-		if pipe.Name == name {
-			return eventpipe.Config{Name: pipe.Name, Retain: pipe.Retain, Unlimited: pipe.Unlimited, Overflow: pipe.Overflow}
+		selector := pipeSelector(pipe)
+		if selector == "" || !selectorMatches(selector, name) {
+			continue
 		}
+		specificity := selectorSpecificity(selector)
+		if specificity <= bestLen {
+			continue
+		}
+		current := pipe
+		best = &current
+		bestLen = specificity
 	}
-	return eventpipe.Config{Name: name}
+	if best == nil {
+		return eventpipe.Config{Name: name}
+	}
+	selector := pipeSelector(*best)
+	keyBy := strings.TrimSpace(best.KeyBy)
+	if keyBy == "" {
+		keyBy = eventpipe.KeyByTopic
+	}
+	configName := name
+	if keyBy == eventpipe.KeyBySelector {
+		configName = selector
+	}
+	return eventpipe.Config{
+		Name: configName, Selector: selector, Retain: best.Retain, Unlimited: best.Unlimited,
+		Overflow: best.Overflow, KeyBy: keyBy, MaxTopics: best.MaxTopics,
+		TopicOverflow: best.TopicOverflow,
+	}
 }
 
 func (s eventSettings) matchingRoutes(topic string) []manifest.EventRoute {
@@ -332,18 +359,60 @@ func (s eventSettings) matchingRoutes(topic string) []manifest.EventRoute {
 		if selector == "" {
 			continue
 		}
-		if strings.HasSuffix(selector, "*") {
-			prefix := strings.TrimSuffix(selector, "*")
-			if strings.HasPrefix(topic, prefix) {
-				out = append(out, route)
-			}
-			continue
-		}
-		if selector == topic {
+		if selectorMatches(selector, topic) {
 			out = append(out, route)
 		}
 	}
 	return out
+}
+
+func pipeSelector(pipe manifest.Pipe) string {
+	selector := strings.TrimSpace(pipe.Selector)
+	if selector == "" {
+		selector = strings.TrimSpace(pipe.Name)
+	}
+	return selector
+}
+
+func selectorMatches(selector string, topic string) bool {
+	selector = strings.TrimSpace(selector)
+	topic = strings.TrimSpace(topic)
+	if selector == "" || topic == "" {
+		return false
+	}
+	if strings.HasSuffix(selector, ".*") {
+		return strings.HasPrefix(topic, strings.TrimSuffix(selector, "*"))
+	}
+	return selector == topic
+}
+
+func selectorSpecificity(selector string) int {
+	if strings.HasSuffix(selector, ".*") {
+		return len(strings.TrimSuffix(selector, "*"))
+	}
+	return len(selector) + 1<<20
+}
+
+func selectorsIntersect(a string, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	aWildcard := strings.HasSuffix(a, ".*")
+	bWildcard := strings.HasSuffix(b, ".*")
+	switch {
+	case !aWildcard && !bWildcard:
+		return a == b
+	case aWildcard && !bWildcard:
+		return selectorMatches(a, b)
+	case !aWildcard && bWildcard:
+		return selectorMatches(b, a)
+	default:
+		aPrefix := strings.TrimSuffix(a, "*")
+		bPrefix := strings.TrimSuffix(b, "*")
+		return strings.HasPrefix(aPrefix, bPrefix) || strings.HasPrefix(bPrefix, aPrefix)
+	}
 }
 
 func (h Handler) websocketSettings(ctx context.Context) (domain.ServerSettings, error) {
@@ -529,30 +598,33 @@ func (m *socketManager) unsubscribeAll(connID string) {
 	delete(m.connTopics, connID)
 }
 
-func (m *socketManager) subscribers(topic string) []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]string, 0, len(m.topics[topic]))
-	for connID := range m.topics[topic] {
-		out = append(out, connID)
-	}
-	return out
-}
-
 func (m *socketManager) subscriberSnapshots(site string, topic string) []socketSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	scoped := scopedTopic(site, topic)
-	out := make([]socketSnapshot, 0, len(m.topics[scoped]))
-	for connID := range m.topics[scoped] {
-		conn := m.connections[connID]
-		if conn == nil {
+	seen := map[string]struct{}{}
+	var out []socketSnapshot
+	for scoped, subscribers := range m.topics {
+		subSite, selector, ok := splitScopedTopic(scoped)
+		if !ok || subSite != site || !selectorsIntersect(selector, topic) {
 			continue
 		}
-		out = append(out, socketSnapshot{
-			id: conn.id, site: conn.site, version: conn.version, route: conn.route,
-			query: conn.query, headers: cloneHeaders(conn.headers),
-		})
+		for connID := range subscribers {
+			if _, ok := seen[connID]; ok {
+				continue
+			}
+			if len(out) >= websocketMaxEventFanout {
+				return out
+			}
+			conn := m.connections[connID]
+			if conn == nil {
+				continue
+			}
+			seen[connID] = struct{}{}
+			out = append(out, socketSnapshot{
+				id: conn.id, site: conn.site, version: conn.version, route: conn.route,
+				query: conn.query, headers: cloneHeaders(conn.headers),
+			})
+		}
 	}
 	return out
 }
@@ -600,13 +672,18 @@ func (m *socketManager) sendFrame(connID string, opcode byte, payload []byte) er
 }
 
 func (m *socketManager) broadcast(site string, topic string, payload []byte) {
-	for _, connID := range m.subscribers(scopedTopic(site, topic)) {
-		_ = m.send(connID, payload)
+	for _, snapshot := range m.subscriberSnapshots(site, topic) {
+		_ = m.send(snapshot.id, payload)
 	}
 }
 
 func scopedTopic(site string, topic string) string {
 	return site + "\x00" + topic
+}
+
+func splitScopedTopic(scoped string) (string, string, bool) {
+	site, topic, ok := strings.Cut(scoped, "\x00")
+	return site, topic, ok
 }
 
 func (m *socketManager) enqueueFrame(connID string, frame outboundFrame) error {

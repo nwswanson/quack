@@ -119,6 +119,54 @@ func TestParseAllowsSerialByTopicEventConcurrency(t *testing.T) {
 	}
 }
 
+func TestParseAllowsSelectorPipesWithTopicBounds(t *testing.T) {
+	body := `pipes:
+  - selector: "room.*"
+    retain: 64
+    overflow: drop_oldest
+    key_by: topic
+    max_topics: 256
+    topic_overflow: evict_lru
+  - selector: "notifications.*"
+    retain: 512
+    key_by: selector
+`
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	if len(got.Pipes) != 2 || got.Pipes[0].Selector != "room.*" || got.Pipes[0].MaxTopics != 256 || got.Pipes[1].KeyBy != "selector" {
+		t.Fatalf("pipes = %#v, want selector pipe policies", got.Pipes)
+	}
+}
+
+func TestParseRejectsUnboundedWildcardTopicPipe(t *testing.T) {
+	body := `pipes:
+  - selector: "room.*"
+    retain: 64
+`
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "pipe.max_topics is required") {
+		t.Fatalf("Parse error = %v, want max_topics requirement", err)
+	}
+}
+
+func TestParseRejectsInvalidPipeSelectors(t *testing.T) {
+	tests := []string{
+		"pipes:\n  - selector: \"room.*.message\"\n    key_by: selector\n",
+		"pipes:\n  - selector: \"*.message\"\n    key_by: selector\n",
+		"pipes:\n  - selector: \"room*\"\n    key_by: selector\n",
+		"pipes:\n  - selector: \"*\"\n    key_by: selector\n",
+	}
+	for _, body := range tests {
+		t.Run(body, func(t *testing.T) {
+			if _, err := Parse(strings.NewReader(body), int64(len(body))); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
 func TestParseRejectsUnknownEventConcurrency(t *testing.T) {
 	body := `events:
   - selector: "room.*"

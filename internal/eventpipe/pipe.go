@@ -10,13 +10,20 @@ const (
 	DefaultRetain = 64
 	DropOldest    = "drop_oldest"
 	DropNew       = "drop_new"
+	KeyByTopic    = "topic"
+	KeyBySelector = "selector"
+	EvictLRU      = "evict_lru"
 )
 
 type Config struct {
-	Name      string `json:"name"`
-	Retain    int    `json:"retain,omitempty"`
-	Unlimited bool   `json:"unlimited,omitempty"`
-	Overflow  string `json:"overflow,omitempty"`
+	Name          string `json:"name"`
+	Selector      string `json:"selector,omitempty"`
+	Retain        int    `json:"retain,omitempty"`
+	Unlimited     bool   `json:"unlimited,omitempty"`
+	Overflow      string `json:"overflow,omitempty"`
+	KeyBy         string `json:"key_by,omitempty"`
+	MaxTopics     int    `json:"max_topics,omitempty"`
+	TopicOverflow string `json:"topic_overflow,omitempty"`
 }
 
 type Event struct {
@@ -33,8 +40,14 @@ type Event struct {
 }
 
 type Store struct {
-	mu    sync.Mutex
-	pipes map[string]*pipe
+	mu       sync.Mutex
+	pipes    map[string]*pipe
+	policies map[string]*topicIndex
+}
+
+type topicIndex struct {
+	topics map[string]struct{}
+	lru    []string
 }
 
 type pipe struct {
@@ -47,7 +60,7 @@ type pipe struct {
 }
 
 func NewStore() *Store {
-	return &Store{pipes: map[string]*pipe{}}
+	return &Store{pipes: map[string]*pipe{}, policies: map[string]*topicIndex{}}
 }
 
 func (s *Store) Publish(config Config, event Event) (Event, bool) {
@@ -63,6 +76,10 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	}
 	key := scopedKey(event.Site, config.Name)
 	s.mu.Lock()
+	if !s.admitTopicLocked(event.Site, config, strings.TrimSpace(event.Topic)) {
+		s.mu.Unlock()
+		return event, false
+	}
 	p := s.pipes[key]
 	if p == nil {
 		p = &pipe{config: config}
@@ -93,6 +110,37 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	event.Headers = cloneHeaders(event.Headers)
 	p.append(event)
 	return event, true
+}
+
+func (s *Store) admitTopicLocked(site string, config Config, topic string) bool {
+	if config.Selector == "" || config.KeyBy != KeyByTopic || config.MaxTopics <= 0 {
+		return true
+	}
+	if topic == "" {
+		topic = config.Name
+	}
+	policyKey := scopedKey(site, config.Selector)
+	index := s.policies[policyKey]
+	if index == nil {
+		index = &topicIndex{topics: map[string]struct{}{}}
+		s.policies[policyKey] = index
+	}
+	if _, ok := index.topics[topic]; ok {
+		index.touch(topic)
+		return true
+	}
+	if len(index.topics) >= config.MaxTopics {
+		if config.TopicOverflow == DropNew {
+			return false
+		}
+		evicted := index.evictLRU()
+		if evicted != "" {
+			delete(s.pipes, scopedKey(site, evicted))
+		}
+	}
+	index.topics[topic] = struct{}{}
+	index.lru = append(index.lru, topic)
+	return true
 }
 
 func (s *Store) Recent(site string, config Config) []Event {
@@ -183,8 +231,15 @@ func (p *pipe) orderedEvents() []Event {
 
 func normalizeConfig(config Config) Config {
 	config.Name = strings.TrimSpace(config.Name)
+	config.Selector = strings.TrimSpace(config.Selector)
 	if config.Overflow == "" {
 		config.Overflow = DropOldest
+	}
+	if config.KeyBy == "" {
+		config.KeyBy = KeyByTopic
+	}
+	if config.TopicOverflow == "" {
+		config.TopicOverflow = EvictLRU
 	}
 	if config.Retain < 0 {
 		config.Retain = 0
@@ -193,6 +248,31 @@ func normalizeConfig(config Config) Config {
 		config.Retain = DefaultRetain
 	}
 	return config
+}
+
+func (i *topicIndex) touch(topic string) {
+	for pos, current := range i.lru {
+		if current != topic {
+			continue
+		}
+		copy(i.lru[pos:], i.lru[pos+1:])
+		i.lru[len(i.lru)-1] = topic
+		return
+	}
+	i.lru = append(i.lru, topic)
+}
+
+func (i *topicIndex) evictLRU() string {
+	for len(i.lru) > 0 {
+		topic := i.lru[0]
+		i.lru = i.lru[1:]
+		if _, ok := i.topics[topic]; !ok {
+			continue
+		}
+		delete(i.topics, topic)
+		return topic
+	}
+	return ""
 }
 
 func scopedKey(site string, name string) string {
