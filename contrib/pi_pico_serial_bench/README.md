@@ -60,6 +60,7 @@ PINSTATUS 15
 TESTMODE HELP
 TESTMODE <mode>
 SETDEBUGMODE <option> <value>
+STREAM <characters> <pattern>
 ```
 
 Examples:
@@ -116,6 +117,8 @@ TESTMODE WRONG_TERMINATOR
 TESTMODE UNSOLICITED_OUTPUT
 TESTMODE RESET_MID_COMMAND
 TESTMODE BURST_OUTPUT
+TESTMODE STREAM_OUTPUT
+TESTMODE NUMERIC_WRITE
 ```
 
 Modes:
@@ -140,6 +143,24 @@ Modes:
   prints a boot banner, resets internal state, and returns to `NORMAL`.
 - `BURST_OUTPUT`: emits a large amount of log output quickly before the command
   response. This tests buffering, memory limits, and read throughput.
+- `STREAM_OUTPUT`: emits exactly the requested number of pattern characters.
+  In this mode, send `<characters> <pattern>` or use the explicit
+  `STREAM <characters> <pattern>` command. The stream does not include an
+  acknowledgement line, so byte counts stay exact.
+- `NUMERIC_WRITE`: accepts digit bytes until the raw byte sequence `EXIT` or
+  `exit` is received, then returns to `NORMAL` and reports the number of digits
+  accepted. This mode is intentionally not line-oriented, so input such as
+  `123123123123EXIT` exits the mode.
+
+The `STREAM` command can also be used directly from normal mode:
+
+```text
+STREAM 10 abc
+abcabcabca
+```
+
+The stream length is the requested character count, not a count of pattern
+loops.
 
 ## Configurable Debug Options
 

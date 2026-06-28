@@ -51,6 +51,8 @@ MODE_WRONG_TERMINATOR = "WRONG_TERMINATOR"
 MODE_UNSOLICITED_OUTPUT = "UNSOLICITED_OUTPUT"
 MODE_RESET_MID_COMMAND = "RESET_MID_COMMAND"
 MODE_BURST_OUTPUT = "BURST_OUTPUT"
+MODE_STREAM_OUTPUT = "STREAM_OUTPUT"
+MODE_NUMERIC_WRITE = "NUMERIC_WRITE"
 
 VALID_MODES = (
     MODE_NORMAL,
@@ -63,6 +65,8 @@ VALID_MODES = (
     MODE_UNSOLICITED_OUTPUT,
     MODE_RESET_MID_COMMAND,
     MODE_BURST_OUTPUT,
+    MODE_STREAM_OUTPUT,
+    MODE_NUMERIC_WRITE,
 )
 
 mode = MODE_NORMAL
@@ -71,6 +75,7 @@ fragment_gap_ms = 250
 wrong_terminator = "CR"
 burst_bytes = 64 * 1024
 unsolicited_interval_ms = 1000
+stream_output_max_chars = 262144
 
 command_count = 0
 edge_events = []
@@ -80,6 +85,8 @@ last_unsolicited_ms = time.ticks_ms()
 connected_reported = False
 keyboard_interrupt_disabled = False
 input_buf = ""
+numeric_write_count = 0
+numeric_write_exit_buf = ""
 
 
 def millis():
@@ -169,6 +176,7 @@ def help_lines():
         "COMMAND SETDEBUGMODE WRONG_TERMINATOR LF|CR|CRLF|NONE|DOUBLE|EMBEDDED",
         "COMMAND SETDEBUGMODE BURST_OUTPUT <bytes>",
         "COMMAND SETDEBUGMODE UNSOLICITED_OUTPUT <milliseconds>",
+        "COMMAND STREAM <characters> <pattern>",
     ]
     if mode == MODE_NO_RESPONSE:
         lines.append("NOTE NO_RESPONSE suppresses ordinary replies; TESTMODE NORMAL still replies")
@@ -178,6 +186,10 @@ def help_lines():
         lines.append("NOTE WRONG_TERMINATOR currently uses %s" % wrong_terminator)
     elif mode == MODE_BURST_OUTPUT:
         lines.append("NOTE BURST_OUTPUT currently emits %d bytes" % burst_bytes)
+    elif mode == MODE_STREAM_OUTPUT:
+        lines.append("NOTE STREAM_OUTPUT accepts '<characters> <pattern>' or 'STREAM <characters> <pattern>'")
+    elif mode == MODE_NUMERIC_WRITE:
+        lines.append("NOTE NUMERIC_WRITE accepts digit bytes until EXIT or exit")
     lines.append("END HELP")
     return lines
 
@@ -195,7 +207,10 @@ def testmode_help_lines():
         "MODE UNSOLICITED_OUTPUT - emit async event and warning lines",
         "MODE RESET_MID_COMMAND - print a boot banner, reset state, then continue",
         "MODE BURST_OUTPUT - emit a large fast log burst",
+        "MODE STREAM_OUTPUT - stream exactly N pattern characters on request",
+        "MODE NUMERIC_WRITE - accept digit bytes until EXIT or exit",
         "ESCAPE TESTMODE NORMAL",
+        "ESCAPE NUMERIC_WRITE EXIT|exit",
         "END TESTMODE HELP",
     ]
     return lines
@@ -256,6 +271,65 @@ def set_debug_mode(parts):
     return ["ERR unknown debug option=%s" % option]
 
 
+def parse_stream_command(command, allow_short_form):
+    text = command.strip()
+    if not text:
+        return None, None, ["ERR usage=STREAM <characters> <pattern>"]
+
+    parts = text.split(None, 2)
+    if parts[0].upper() == "STREAM":
+        if len(parts) != 3:
+            return None, None, ["ERR usage=STREAM <characters> <pattern>"]
+        count_raw = parts[1]
+        pattern = parts[2]
+    elif allow_short_form:
+        if len(parts) < 2:
+            return None, None, ["ERR usage=<characters> <pattern>"]
+        count_raw = parts[0]
+        pattern = parts[1] if len(parts) == 2 else parts[1] + " " + parts[2]
+    else:
+        return None, None, None
+
+    count, err = parse_positive_int(count_raw, "characters", 0, stream_output_max_chars)
+    if err:
+        return None, None, [err]
+    if pattern == "":
+        return None, None, ["ERR pattern must not be empty"]
+    return count, pattern, None
+
+
+def write_pattern_chars(count, pattern):
+    if count <= 0:
+        return
+
+    pattern_len = len(pattern)
+    full_repeats = count // pattern_len
+    remainder = count % pattern_len
+
+    chunk = pattern
+    while len(chunk) < 128 and len(chunk) < count:
+        chunk += chunk
+
+    while full_repeats > 0:
+        repeats = min(full_repeats, max(1, len(chunk) // pattern_len))
+        data = pattern * repeats
+        write_bytes(data)
+        full_repeats -= repeats
+    if remainder:
+        write_bytes(pattern[:remainder])
+
+
+def handle_stream_output(command, allow_short_form):
+    count, pattern, err = parse_stream_command(command, allow_short_form)
+    if err:
+        write_lines(err)
+        return True
+    if pattern is None:
+        return False
+    write_pattern_chars(count, pattern)
+    return True
+
+
 def normal_response(command):
     global mode
 
@@ -276,6 +350,12 @@ def normal_response(command):
         return [version_status()]
     if op == "PING":
         return ["OK PONG"]
+    if op == "STREAM":
+        count, pattern, err = parse_stream_command(command, False)
+        if err:
+            return err
+        write_pattern_chars(count, pattern)
+        return []
     if op == "PINSTATUS":
         if len(parts) != 2:
             return ["ERR usage=PINSTATUS 15"]
@@ -353,6 +433,38 @@ def simulate_reset():
     boot_banner("simulated-reset")
 
 
+def enter_numeric_write_mode():
+    global mode
+    global numeric_write_count
+    global numeric_write_exit_buf
+
+    mode = MODE_NUMERIC_WRITE
+    numeric_write_count = 0
+    numeric_write_exit_buf = ""
+
+
+def handle_numeric_write_char(ch):
+    global mode
+    global numeric_write_count
+    global numeric_write_exit_buf
+
+    if ch >= "0" and ch <= "9":
+        numeric_write_count += 1
+        numeric_write_exit_buf = ""
+        return
+
+    numeric_write_exit_buf += ch
+    if len(numeric_write_exit_buf) > 4:
+        numeric_write_exit_buf = numeric_write_exit_buf[-4:]
+
+    if numeric_write_exit_buf == "EXIT" or numeric_write_exit_buf == "exit":
+        count = numeric_write_count
+        numeric_write_count = 0
+        numeric_write_exit_buf = ""
+        mode = MODE_NORMAL
+        write_line("OK NUMERIC_WRITE digits=%d" % count)
+
+
 def send_mode_response(lines):
     if mode == MODE_NORMAL:
         write_lines(lines)
@@ -378,10 +490,15 @@ def send_mode_response(lines):
     elif mode == MODE_BURST_OUTPUT:
         write_burst()
         write_lines(lines)
+    elif mode == MODE_STREAM_OUTPUT:
+        write_lines(lines)
+    elif mode == MODE_NUMERIC_WRITE:
+        return
 
 
 def handle_command(command):
     global command_count
+    global mode
     command_count += 1
 
     upper = command.strip().upper()
@@ -402,10 +519,20 @@ def handle_command(command):
         write_lines(normal_lines)
         return
     if upper == "TESTMODE" or upper.startswith("TESTMODE "):
-        write_lines(normal_response(command))
+        lines = normal_response(command)
+        if command.strip().upper() == "TESTMODE %s" % MODE_NUMERIC_WRITE:
+            enter_numeric_write_mode()
+            write_line("OK TESTMODE %s" % mode)
+        else:
+            write_lines(lines)
         return
     if upper == "HELP":
         write_lines(normal_response(command))
+        return
+    if upper == "STREAM" or upper.startswith("STREAM "):
+        handle_stream_output(command, False)
+        return
+    if mode == MODE_STREAM_OUTPUT and handle_stream_output(command, True):
         return
 
     send_mode_response(normal_response(command))
@@ -468,6 +595,9 @@ def main():
 
         chars = read_available_chars(poller)
         for ch in chars:
+            if mode == MODE_NUMERIC_WRITE:
+                handle_numeric_write_char(ch)
+                continue
             if ch == "\r":
                 continue
             if ch == "\n":
