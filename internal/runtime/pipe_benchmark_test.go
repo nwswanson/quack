@@ -102,14 +102,14 @@ func newPipeFlowBench(b *testing.B) pipeFlowBench {
 	return pipeFlowBench{
 		executor: executor,
 		store:    eventpipe.NewStore(),
-		config:   eventpipe.Config{Name: "bench.pipe", Retain: 256},
+		retain:   256,
 	}
 }
 
 type pipeFlowBench struct {
 	executor *StarlarkExecutor
 	store    *eventpipe.Store
-	config   eventpipe.Config
+	retain   int
 }
 
 func (p pipeFlowBench) run(ctx context.Context, seq int) error {
@@ -117,9 +117,10 @@ func (p pipeFlowBench) run(ctx context.Context, seq int) error {
 }
 
 func (p pipeFlowBench) invoke(ctx context.Context, handler string, topic string, payload []byte) error {
-	event, ok := p.store.Publish(p.config, eventpipe.Event{
+	config := eventpipe.Config{Name: topic, Retain: p.retain}
+	event, ok := p.store.Publish(config, eventpipe.Event{
 		Site:       "bench",
-		Pipe:       p.config.Name,
+		Pipe:       config.Name,
 		Topic:      topic,
 		SourceKind: "benchmark",
 		SourceName: handler,

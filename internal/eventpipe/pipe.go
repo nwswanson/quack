@@ -38,6 +38,7 @@ type Store struct {
 }
 
 type pipe struct {
+	mu     sync.Mutex
 	config Config
 	next   uint64
 	events []Event
@@ -60,14 +61,18 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	if config.Name == "" {
 		return event, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	key := scopedKey(event.Site, config.Name)
+	s.mu.Lock()
 	p := s.pipes[key]
 	if p == nil {
 		p = &pipe{config: config}
 		s.pipes[key] = p
-	} else {
+	}
+	s.mu.Unlock()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.config != config {
 		p.setConfig(config)
 	}
 	if !p.config.Unlimited && p.config.Overflow == DropNew && p.count >= p.config.Retain {
@@ -96,11 +101,15 @@ func (s *Store) Recent(site string, config Config) []Event {
 	}
 	config = normalizeConfig(config)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p := s.pipes[scopedKey(site, config.Name)]
 	if p == nil {
+		s.mu.Unlock()
 		return nil
 	}
+	s.mu.Unlock()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	events := p.orderedEvents()
 	out := make([]Event, len(events))
 	for i, event := range events {
