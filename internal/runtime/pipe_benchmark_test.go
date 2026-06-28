@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"quack/internal/eventpipe"
@@ -63,22 +64,45 @@ def reduce(ctx, event):
 `
 
 func BenchmarkStarlarkPipeFlow(b *testing.B) {
+	bench := newPipeFlowBench(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := bench.run(context.Background(), i); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkStarlarkPipeFlowParallel(b *testing.B) {
+	bench := newPipeFlowBench(b)
+	if err := bench.run(context.Background(), -1); err != nil {
+		b.Fatal(err)
+	}
+	var seq atomic.Int64
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			id := int(seq.Add(1))
+			if err := bench.run(context.Background(), id); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func newPipeFlowBench(b *testing.B) pipeFlowBench {
+	b.Helper()
 	executor, err := NewStarlarkExecutor(ScriptLoaderFunc(func(ctx context.Context, objectKey string) (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader(pipeStressScript)), nil
 	}), ResourceLimits{})
 	if err != nil {
 		b.Fatal(err)
 	}
-	bench := pipeFlowBench{
+	return pipeFlowBench{
 		executor: executor,
 		store:    eventpipe.NewStore(),
 		config:   eventpipe.Config{Name: "bench.pipe", Retain: 256},
-	}
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if err := bench.run(context.Background(), i); err != nil {
-			b.Fatal(err)
-		}
 	}
 }
 
