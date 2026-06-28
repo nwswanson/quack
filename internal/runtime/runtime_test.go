@@ -397,6 +397,74 @@ func TestKingsEatPieDemoUsesWebSocketLocks(t *testing.T) {
 	}
 }
 
+func TestKingsCountdownDemoLockedModeReachesTarget(t *testing.T) {
+	site := "kings-countdown-test"
+	modules.WipeMemorySite(site)
+	src, err := os.ReadFile("../../demos/kings-countdown/api/room.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{"api/room.star": string(src)})
+	bundle := Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "api/room.star"}},
+	}
+
+	for _, connID := range []string{"c1", "c2"} {
+		effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventConnect,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(effects) != 2 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "countdown.room.countdown" {
+			t.Fatalf("connect effects = %#v, want countdown subscribe", effects)
+		}
+		effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventMessage,
+			Message: []byte(`{"type":"join","mode":"locked"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(effects) != 1 || effects[0].Type != WebSocketEffectBroadcast {
+			t.Fatalf("join effects = %#v, want broadcast", effects)
+		}
+	}
+
+	for _, connID := range []string{"c1", "c2"} {
+		if _, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventMessage,
+			Message: []byte(`{"type":"ready"}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := 0; i < 50; i++ {
+		connID := "c1"
+		if i%2 == 1 {
+			connID = "c2"
+		}
+		effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventMessage,
+			Message: []byte(`{"type":"add","amount":20}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(effects) != 1 || effects[0].Type != WebSocketEffectBroadcast {
+			t.Fatalf("add effects = %#v, want broadcast", effects)
+		}
+		if i == 49 && !strings.Contains(string(effects[0].Payload), `"done":true`) {
+			t.Fatalf("final add payload = %s, want done", effects[0].Payload)
+		}
+		if i == 49 && !strings.Contains(string(effects[0].Payload), `"lost":0`) {
+			t.Fatalf("final add payload = %s, want no lost work in locked mode", effects[0].Payload)
+		}
+	}
+}
+
 func TestStarlarkExecutorLogModuleAcceptsFlexibleMessages(t *testing.T) {
 	logs := logbuffer.New(10)
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `

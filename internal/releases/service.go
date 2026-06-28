@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"quack/internal/domain"
+	"quack/internal/runtime/modules"
 )
 
 type Repository interface {
@@ -106,6 +107,9 @@ func (s service) DeleteSite(ctx context.Context, user domain.AdminUser, site str
 	deleted, err := s.repo.DeleteSite(ctx, user, site, siteSHA)
 	if err != nil {
 		return false, err
+	}
+	if deleted {
+		modules.WipeMemorySite(site)
 	}
 	s.logInvalidation(ctx, "site", s.invalidator.InvalidateSite(ctx, site))
 	s.logInvalidation(ctx, "site_version", s.invalidator.InvalidateSiteVersion(ctx, siteSHA, 0))

@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"quack/internal/domain"
 	"quack/internal/protocol"
+	"quack/internal/runtime/modules"
 	"reflect"
 	"strings"
 	"testing"
+
+	"go.starlark.net/starlark"
 )
 
 func TestLoginCheck(t *testing.T) {
@@ -416,6 +419,39 @@ func TestDeleteAcceptsUserTokenWithoutLegacyUploadToken(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestDeleteSiteWipesRuntimeMemory(t *testing.T) {
+	const site = "foo"
+	modules.WipeMemorySite(site)
+	t.Cleanup(func() { modules.WipeMemorySite(site) })
+
+	memoryModule := modules.NewMemoryModule(site, DefaultMaxUploadBytes)
+	if _, err := starlark.Call(&starlark.Thread{}, memoryModule.Members["set"], starlark.Tuple{starlark.String("key"), starlark.String("value")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := modules.MemoryUsage(site); got <= 0 {
+		t.Fatalf("MemoryUsage(%q) before delete = %d, want positive", site, got)
+	}
+
+	db := &fakeDatabase{
+		usersByToken: map[string]domain.AdminUser{
+			"user-token": {ID: 7, Username: "alice", AdminPriv: "user"},
+		},
+	}
+	srv := New("", "", fakeStorage{}, db, DefaultOptions())
+
+	req := httptest.NewRequest(http.MethodDelete, protocol.DeleteSitePathPrefix+site, nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+	rec := httptest.NewRecorder()
+	srv.Admin.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := modules.MemoryUsage(site); got != 0 {
+		t.Fatalf("MemoryUsage(%q) after delete = %d, want 0", site, got)
 	}
 }
 
