@@ -14,7 +14,8 @@ The store is protected by a per-site mutex, so individual memory operations are
 atomic. There is no multi-command transaction API. If a script needs a
 read-modify-write operation, prefer one of the atomic helpers such as
 `memory.incr`, `memory.decr`, `memory.list_push`, `memory.set_add`, or
-`memory.zadd`.
+`memory.zadd`. For multi-step updates from concurrent handlers, use the locking
+and serialized-topic patterns in [Starlark Concurrency](concurrency.md).
 
 ## Quota And Accounting
 

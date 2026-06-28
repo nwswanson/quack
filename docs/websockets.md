@@ -135,6 +135,12 @@ ctx.user       # currently anonymous public user info
 
 The runtime intentionally does not expose the underlying Go socket.
 
+Concurrent WebSocket handlers can run at the same time. If they mutate shared
+memory with a multi-step read-modify-write sequence, use `ctx.locks()` or route
+the mutation through an event declared with `concurrency: serial_by_topic`. See
+[Starlark Concurrency](concurrency.md) for the advanced patterns and failure
+modes.
+
 ## Message Values
 
 `on_message(ctx, msg)` receives the client message payload as a Starlark value.
