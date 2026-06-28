@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kings Countdown</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <button id="helpBtn" class="help-btn" aria-label="About this demo">?</button>
+    <div id="introModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="introTitle" hidden>
+      <section class="intro-card">
+        <div class="intro-top">
+          <span class="label">race condition lab</span>
+          <button id="closeIntroBtn" class="close-btn" aria-label="Close explanation">Close</button>
+        </div>
+        <div class="intro-scroll">
+          <h2 id="introTitle">The Lost Update Countdown</h2>
+          <p>
+            This room is trying to count to 1000. Every browser joins, presses
+            <strong>Say go</strong>, then starts sending random chunks between 1
+            and 20. If the remaining distance is less than 20, the browser sends
+            exactly the remaining amount.
+          </p>
+          <p>
+            In <strong>Locked</strong> mode, the backend wraps the
+            read-modify-write in <code>ctx.locks().acquire(...)</code>. Each
+            chunk sees the latest total, so the counter walks cleanly to 1000.
+          </p>
+          <p>
+            In <strong>Unsafe</strong> mode, the backend intentionally reads the
+            total, does a little busy work, and writes the new value without a
+            lock. Concurrent websocket handlers can read the same old total and
+            overwrite each other. The room still receives many chunks, but some
+            of the work disappears.
+          </p>
+          <p>
+            The <strong>applied</strong> number counts all chunk work the backend
+            accepted. The visible total is the shared room value. In unsafe mode,
+            <strong>lost</strong> grows when stale writes erase accepted work.
+          </p>
+          <pre><code>before = memory.get("total")
+# another handler can write here
+memory.set("total", before + amount)</code></pre>
+          <p>
+            Open a few browser windows, choose Unsafe, and press go. Then reset
+            into Locked mode and watch the same noisy clients behave.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <main class="stage">
+      <section class="poster">
+        <div class="label">websocket race demo</div>
+        <h1>Kings Countdown</h1>
+        <p id="notice">Join the room. Say go. Race to 1000.</p>
+        <div class="mode-control" role="group" aria-label="Countdown mode">
+          <button id="lockedModeBtn" class="mode active">Locked</button>
+          <button id="unsafeModeBtn" class="mode">Unsafe</button>
+        </div>
+        <div class="actions">
+          <button id="joinBtn">Join room</button>
+          <button id="readyBtn" disabled>Say go</button>
+          <button id="resetBtn" disabled>Reset</button>
+        </div>
+      </section>
+
+      <section class="counter-scene" aria-label="countdown arena">
+        <div class="sunburst"></div>
+        <div class="counter-stack">
+          <div id="modeBadge" class="mode-badge">LOCKED</div>
+          <div id="total" class="total">0</div>
+          <div class="target">target 1000</div>
+          <div class="stats">
+            <span>applied <strong id="applied">0</strong></span>
+            <span>lost <strong id="lost">0</strong></span>
+          </div>
+          <div class="meter">
+            <div id="meterFill" class="meter-fill"></div>
+          </div>
+        </div>
+        <div id="chunkLog" class="chunk-log"></div>
+      </section>
+
+      <section class="roster-wrap">
+        <div class="status">
+          <span id="dot" class="dot"></span>
+          <span id="statusText">connecting</span>
+        </div>
+        <div id="roster" class="roster"></div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
