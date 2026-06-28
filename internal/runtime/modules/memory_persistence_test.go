@@ -57,31 +57,30 @@ func TestMemorySnapshotRoundTripAllKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded := globalMemory.siteStore(site)
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-	if got, want := len(loaded.items), 6; got != want {
+	items := loaded.snapshotItems()
+	if got, want := len(items), 6; got != want {
 		t.Fatalf("loaded item count = %d, want %d", got, want)
 	}
-	if got := valueToStarlark(loaded.items["plain"].value.(memoryValue)).String(); got != `(None, 42, b"raw")` {
+	if got := valueToStarlark(items["plain"].value.(memoryValue)).String(); got != `(None, 42, b"raw")` {
 		t.Fatalf("plain = %s", got)
 	}
-	if got := starlarkValue(loaded.items["events"]).String(); got != `["first", "second"]` {
+	if got := starlarkValue(items["events"]).String(); got != `["first", "second"]` {
 		t.Fatalf("events = %s", got)
 	}
-	if got := starlarkValue(loaded.items["tags"]).String(); got != `set(["blue", "green"])` {
+	if got := starlarkValue(items["tags"]).String(); got != `set(["blue", "green"])` {
 		t.Fatalf("tags = %s", got)
 	}
-	if got := starlarkValue(loaded.items["scores"]).String(); got != `[("a", 1.0), ("b", 2.0)]` {
+	if got := starlarkValue(items["scores"]).String(); got != `[("a", 1.0), ("b", 2.0)]` {
 		t.Fatalf("scores = %s", got)
 	}
-	if got := loaded.items["count"].value.(int64); got != 3 {
+	if got := items["count"].value.(int64); got != 3 {
 		t.Fatalf("count = %d, want 3", got)
 	}
-	if got := loaded.items["raw_bytes"].value.(memoryValue).data.(string); got != rawBytes {
+	if got := items["raw_bytes"].value.(memoryValue).data.(string); got != rawBytes {
 		t.Fatalf("raw bytes = %q, want %q", got, rawBytes)
 	}
-	if loaded.used <= 0 {
-		t.Fatalf("loaded used = %d, want positive", loaded.used)
+	if loaded.used.Load() <= 0 {
+		t.Fatalf("loaded used = %d, want positive", loaded.used.Load())
 	}
 }
 

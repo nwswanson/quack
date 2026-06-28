@@ -524,12 +524,11 @@ func siteHash(site string) string {
 }
 
 func (s *siteMemory) snapshot(site string, now time.Time) (memorySnapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	items := make(map[string]memorySnapshotEntry, len(s.items))
-	keys := sortedKeys(s.items)
+	current := s.snapshotItems()
+	items := make(map[string]memorySnapshotEntry, len(current))
+	keys := sortedKeys(current)
 	for _, key := range keys {
-		entry, err := snapshotEntry(s.items[key])
+		entry, err := snapshotEntry(current[key])
 		if err != nil {
 			return memorySnapshot{}, fmt.Errorf("snapshot key %q: %w", key, err)
 		}
@@ -539,15 +538,15 @@ func (s *siteMemory) snapshot(site string, now time.Time) (memorySnapshot, error
 		Version: memorySnapshotVersion,
 		Site:    site,
 		SiteSHA: siteHash(site),
-		Used:    s.used,
+		Used:    s.used.Load(),
 		SavedAt: now.UTC().Format(time.RFC3339Nano),
 		Items:   items,
 	}, nil
 }
 
 func (s *siteMemory) loadSnapshot(site string, p *memorySnapshotPersistence) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.loadMu.Lock()
+	defer s.loadMu.Unlock()
 	if s.loaded {
 		return nil
 	}
@@ -574,8 +573,7 @@ func (s *siteMemory) loadSnapshot(site string, p *memorySnapshotPersistence) err
 		items[key] = entry
 		used += entry.bytes
 	}
-	s.items = items
-	s.used = used
+	s.loadItems(items, used)
 	return nil
 }
 

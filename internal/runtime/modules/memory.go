@@ -2,18 +2,22 @@ package modules
 
 import (
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"math"
 	"math/big"
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
 
 var globalMemory = newMemoryStore()
+
+const memoryShardCount = 64
 
 type MemoryPersistence interface {
 	Save(site string, snapshot map[string]any) error
@@ -43,10 +47,15 @@ type memoryStore struct {
 }
 
 type siteMemory struct {
-	mu     sync.Mutex
+	loadMu sync.Mutex
 	loaded bool
-	used   int64
-	items  map[string]memoryEntry
+	used   atomic.Int64
+	shards [memoryShardCount]memoryShard
+}
+
+type memoryShard struct {
+	mu    sync.Mutex
+	items map[string]memoryEntry
 }
 
 type memoryEntry struct {
@@ -107,12 +116,20 @@ func newMemoryStore() *memoryStore {
 	return &memoryStore{sites: map[string]*siteMemory{}}
 }
 
+func newSiteMemory(loaded bool) *siteMemory {
+	store := &siteMemory{loaded: loaded}
+	for i := range store.shards {
+		store.shards[i].items = map[string]memoryEntry{}
+	}
+	return store
+}
+
 func (s *memoryStore) siteStore(site string) *siteMemory {
 	site = normalizedMemorySite(site)
 	s.mu.Lock()
 	store := s.sites[site]
 	if store == nil {
-		store = &siteMemory{items: map[string]memoryEntry{}, loaded: s.persistence == nil}
+		store = newSiteMemory(s.persistence == nil)
 		s.sites[site] = store
 	}
 	manager := s.persistence
@@ -156,6 +173,76 @@ func (s *memoryStore) wipeAll() {
 
 func (m *memoryModule) store() *siteMemory { return globalMemory.siteStore(m.site) }
 
+func (s *siteMemory) shardFor(key string) *memoryShard {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return &s.shards[h.Sum32()%memoryShardCount]
+}
+
+func (s *siteMemory) len() int {
+	n := 0
+	for i := range s.shards {
+		shard := &s.shards[i]
+		shard.mu.Lock()
+		n += len(shard.items)
+		shard.mu.Unlock()
+	}
+	return n
+}
+
+func (s *siteMemory) clear() {
+	for i := range s.shards {
+		shard := &s.shards[i]
+		shard.mu.Lock()
+		shard.items = map[string]memoryEntry{}
+		shard.mu.Unlock()
+	}
+	s.used.Store(0)
+}
+
+func (s *siteMemory) snapshotItems() map[string]memoryEntry {
+	out := map[string]memoryEntry{}
+	for i := range s.shards {
+		shard := &s.shards[i]
+		shard.mu.Lock()
+		for key, entry := range shard.items {
+			out[key] = entry
+		}
+		shard.mu.Unlock()
+	}
+	return out
+}
+
+func (s *siteMemory) loadItems(items map[string]memoryEntry, used int64) {
+	for i := range s.shards {
+		s.shards[i].items = map[string]memoryEntry{}
+	}
+	for key, entry := range items {
+		shard := s.shardFor(key)
+		shard.items[key] = entry
+	}
+	s.used.Store(used)
+}
+
+func (s *siteMemory) reserve(delta int64, quota int64) bool {
+	if delta == 0 {
+		return true
+	}
+	for {
+		current := s.used.Load()
+		next := current + delta
+		if quota >= 0 && next > quota {
+			return false
+		}
+		if next < 0 {
+			next = 0
+		}
+		if s.used.CompareAndSwap(current, next) {
+			return true
+		}
+	}
+}
+
 func normalizedMemorySite(site string) string {
 	if site == "" {
 		return "<unknown>"
@@ -192,9 +279,7 @@ func (s *memoryStore) memoryUsage(site string) int64 {
 	}
 	s.mu.Unlock()
 	store = s.siteStore(site)
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	return store.used
+	return store.used.Load()
 }
 
 func (s *memoryStore) memoryUsageBySite() map[string]int64 {
@@ -211,9 +296,7 @@ func (m *memoryModule) usage(thread *starlark.Thread, fn *starlark.Builtin, args
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	return starlark.MakeInt64(store.used), nil
+	return starlark.MakeInt64(store.used.Load()), nil
 }
 
 func (m *memoryModule) quotaValue(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -228,14 +311,11 @@ func (m *memoryModule) clear(thread *starlark.Thread, fn *starlark.Builtin, args
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	n := len(store.items)
+	n := store.len()
 	if n == 0 {
 		return starlark.MakeInt(n), nil
 	}
-	store.items = map[string]memoryEntry{}
-	store.used = 0
+	store.clear()
 	globalMemory.markDirty(m.site)
 	return starlark.MakeInt(n), nil
 }
@@ -245,10 +325,9 @@ func (m *memoryModule) keys(thread *starlark.Thread, fn *starlark.Builtin, args 
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	keys := make([]string, 0, len(store.items))
-	for key := range store.items {
+	items := store.snapshotItems()
+	keys := make([]string, 0, len(items))
+	for key := range items {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -264,16 +343,15 @@ func (m *memoryModule) items(thread *starlark.Thread, fn *starlark.Builtin, args
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	keys := make([]string, 0, len(store.items))
-	for key := range store.items {
+	items := store.snapshotItems()
+	keys := make([]string, 0, len(items))
+	for key := range items {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	out := starlark.NewDict(len(keys))
 	for _, key := range keys {
-		_ = out.SetKey(starlark.String(key), starlarkValue(store.items[key]))
+		_ = out.SetKey(starlark.String(key), starlarkValue(items[key]))
 	}
 	return out, nil
 }
@@ -284,9 +362,10 @@ func (m *memoryModule) typeOf(thread *starlark.Thread, fn *starlark.Builtin, arg
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if entry, ok := store.items[key]; ok {
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if entry, ok := shard.items[key]; ok {
 		return starlark.String(entry.kind), nil
 	}
 	return starlark.None, nil
@@ -299,9 +378,10 @@ func (m *memoryModule) get(thread *starlark.Thread, fn *starlark.Builtin, args s
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	entry, ok := store.items[key]
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	entry, ok := shard.items[key]
 	if !ok {
 		return defaultValue, nil
 	}
@@ -330,12 +410,13 @@ func (m *memoryModule) delete(thread *starlark.Thread, fn *starlark.Builtin, arg
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	entry, ok := store.items[key]
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	entry, ok := shard.items[key]
 	if ok {
-		delete(store.items, key)
-		store.used -= entry.bytes
+		delete(shard.items, key)
+		store.used.Add(-entry.bytes)
 		globalMemory.markDirty(m.site)
 	}
 	return starlark.Bool(ok), nil
@@ -353,9 +434,10 @@ func (m *memoryModule) listPush(thread *starlark.Thread, fn *starlark.Builtin, a
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	list, old, err := collection[[]memoryValue](fn.Name(), store, key, "list")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	list, old, err := collection[[]memoryValue](fn.Name(), shard, key, "list")
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +451,7 @@ func (m *memoryModule) listPush(thread *starlark.Thread, fn *starlark.Builtin, a
 		return nil, fmt.Errorf("%s: side must be left or right", fn.Name())
 	}
 	entry := listEntry(key, next)
-	if !m.replace(store, key, old, entry) {
+	if !m.replace(store, shard, key, old, entry) {
 		return starlark.False, nil
 	}
 	return starlark.MakeInt(len(next)), nil
@@ -382,9 +464,10 @@ func (m *memoryModule) listPop(thread *starlark.Thread, fn *starlark.Builtin, ar
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	list, old, err := collection[[]memoryValue](fn.Name(), store, key, "list")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	list, old, err := collection[[]memoryValue](fn.Name(), shard, key, "list")
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +486,7 @@ func (m *memoryModule) listPop(thread *starlark.Thread, fn *starlark.Builtin, ar
 	default:
 		return nil, fmt.Errorf("%s: side must be left or right", fn.Name())
 	}
-	m.mustReplace(store, key, old, listEntry(key, next))
+	m.mustReplace(store, shard, key, old, listEntry(key, next))
 	return valueToStarlark(out), nil
 }
 
@@ -413,9 +496,10 @@ func (m *memoryModule) listLen(thread *starlark.Thread, fn *starlark.Builtin, ar
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	list, _, err := collection[[]memoryValue](fn.Name(), store, key, "list")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	list, _, err := collection[[]memoryValue](fn.Name(), shard, key, "list")
 	if err != nil {
 		return nil, err
 	}
@@ -429,9 +513,10 @@ func (m *memoryModule) listRange(thread *starlark.Thread, fn *starlark.Builtin, 
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	list, _, err := collection[[]memoryValue](fn.Name(), store, key, "list")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	list, _, err := collection[[]memoryValue](fn.Name(), shard, key, "list")
 	if err != nil {
 		return nil, err
 	}
@@ -454,9 +539,10 @@ func (m *memoryModule) setAdd(thread *starlark.Thread, fn *starlark.Builtin, arg
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	set, old, err := collection[map[string]memoryValue](fn.Name(), store, key, "set")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	set, old, err := collection[map[string]memoryValue](fn.Name(), shard, key, "set")
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +559,7 @@ func (m *memoryModule) setAdd(thread *starlark.Thread, fn *starlark.Builtin, arg
 		return starlark.False, nil
 	}
 	entry := setEntry(key, next)
-	if !m.replace(store, key, old, entry) {
+	if !m.replace(store, shard, key, old, entry) {
 		return starlark.False, nil
 	}
 	return starlark.Bool(added), nil
@@ -490,9 +576,10 @@ func (m *memoryModule) setRemove(thread *starlark.Thread, fn *starlark.Builtin, 
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	set, old, err := collection[map[string]memoryValue](fn.Name(), store, key, "set")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	set, old, err := collection[map[string]memoryValue](fn.Name(), shard, key, "set")
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +595,7 @@ func (m *memoryModule) setRemove(thread *starlark.Thread, fn *starlark.Builtin, 
 		return starlark.False, nil
 	}
 	delete(next, mvKey(mv))
-	m.mustReplace(store, key, old, setEntry(key, next))
+	m.mustReplace(store, shard, key, old, setEntry(key, next))
 	return starlark.Bool(removed), nil
 }
 
@@ -518,9 +605,10 @@ func (m *memoryModule) setMembers(thread *starlark.Thread, fn *starlark.Builtin,
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	set, _, err := collection[map[string]memoryValue](fn.Name(), store, key, "set")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	set, _, err := collection[map[string]memoryValue](fn.Name(), shard, key, "set")
 	if err != nil {
 		return nil, err
 	}
@@ -543,9 +631,10 @@ func (m *memoryModule) setContains(thread *starlark.Thread, fn *starlark.Builtin
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	set, _, err := collection[map[string]memoryValue](fn.Name(), store, key, "set")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	set, _, err := collection[map[string]memoryValue](fn.Name(), shard, key, "set")
 	if err != nil {
 		return nil, err
 	}
@@ -568,9 +657,10 @@ func (m *memoryModule) zadd(thread *starlark.Thread, fn *starlark.Builtin, args 
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	zset, old, err := collection[map[string]zmember](fn.Name(), store, key, "zset")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	zset, old, err := collection[map[string]zmember](fn.Name(), shard, key, "zset")
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +671,7 @@ func (m *memoryModule) zadd(thread *starlark.Thread, fn *starlark.Builtin, args 
 	_, existed := next[mvKey(mv)]
 	next[mvKey(mv)] = zmember{value: mv, score: score}
 	entry := zsetEntry(key, next)
-	if !m.replace(store, key, old, entry) {
+	if !m.replace(store, shard, key, old, entry) {
 		return starlark.False, nil
 	}
 	return starlark.Bool(!existed), nil
@@ -598,9 +688,10 @@ func (m *memoryModule) zremove(thread *starlark.Thread, fn *starlark.Builtin, ar
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	zset, old, err := collection[map[string]zmember](fn.Name(), store, key, "zset")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	zset, old, err := collection[map[string]zmember](fn.Name(), shard, key, "zset")
 	if err != nil {
 		return nil, err
 	}
@@ -616,7 +707,7 @@ func (m *memoryModule) zremove(thread *starlark.Thread, fn *starlark.Builtin, ar
 		return starlark.False, nil
 	}
 	delete(next, mvKey(mv))
-	m.mustReplace(store, key, old, zsetEntry(key, next))
+	m.mustReplace(store, shard, key, old, zsetEntry(key, next))
 	return starlark.Bool(removed), nil
 }
 
@@ -628,9 +719,10 @@ func (m *memoryModule) zrange(thread *starlark.Thread, fn *starlark.Builtin, arg
 		return nil, err
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	zset, _, err := collection[map[string]zmember](fn.Name(), store, key, "zset")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	zset, _, err := collection[map[string]zmember](fn.Name(), shard, key, "zset")
 	if err != nil {
 		return nil, err
 	}
@@ -658,9 +750,10 @@ func (m *memoryModule) zscore(thread *starlark.Thread, fn *starlark.Builtin, arg
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	zset, _, err := collection[map[string]zmember](fn.Name(), store, key, "zset")
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	zset, _, err := collection[map[string]zmember](fn.Name(), shard, key, "zset")
 	if err != nil {
 		return nil, err
 	}
@@ -690,11 +783,12 @@ func (m *memoryModule) decr(thread *starlark.Thread, fn *starlark.Builtin, args 
 
 func (m *memoryModule) addCounter(name, key string, delta int64) (starlark.Value, error) {
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 	var current int64
 	old := memoryEntry{}
-	if entry, ok := store.items[key]; ok {
+	if entry, ok := shard.items[key]; ok {
 		if entry.kind != "counter" {
 			return nil, wrongType(name, key, entry.kind, "counter")
 		}
@@ -706,7 +800,7 @@ func (m *memoryModule) addCounter(name, key string, delta int64) (starlark.Value
 	}
 	next := current + delta
 	entry := counterEntry(key, next)
-	if !m.replace(store, key, old, entry) {
+	if !m.replace(store, shard, key, old, entry) {
 		return starlark.None, nil
 	}
 	return starlark.MakeInt64(next), nil
@@ -714,18 +808,19 @@ func (m *memoryModule) addCounter(name, key string, delta int64) (starlark.Value
 
 func (m *memoryModule) write(key string, entry memoryEntry) (starlark.Value, error) {
 	store := m.store()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	old := store.items[key]
-	if !m.replace(store, key, old, entry) {
+	shard := store.shardFor(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	old := shard.items[key]
+	if !m.replace(store, shard, key, old, entry) {
 		return starlark.False, nil
 	}
 	return starlark.True, nil
 }
 
-func collection[T any](name string, store *siteMemory, key, kind string) (T, memoryEntry, error) {
+func collection[T any](name string, shard *memoryShard, key, kind string) (T, memoryEntry, error) {
 	var zero T
-	entry, ok := store.items[key]
+	entry, ok := shard.items[key]
 	if !ok {
 		return zero, memoryEntry{}, nil
 	}
@@ -735,20 +830,19 @@ func collection[T any](name string, store *siteMemory, key, kind string) (T, mem
 	return entry.value.(T), entry, nil
 }
 
-func (m *memoryModule) replace(store *siteMemory, key string, old, next memoryEntry) bool {
-	newUsed := store.used - old.bytes + next.bytes
-	if m.quota >= 0 && newUsed > m.quota {
+func (m *memoryModule) replace(store *siteMemory, shard *memoryShard, key string, old, next memoryEntry) bool {
+	delta := next.bytes - old.bytes
+	if !store.reserve(delta, m.quota) {
 		return false
 	}
-	store.items[key] = next
-	store.used = newUsed
+	shard.items[key] = next
 	globalMemory.markDirty(m.site)
 	return true
 }
 
-func (m *memoryModule) mustReplace(store *siteMemory, key string, old, next memoryEntry) {
-	store.items[key] = next
-	store.used = store.used - old.bytes + next.bytes
+func (m *memoryModule) mustReplace(store *siteMemory, shard *memoryShard, key string, old, next memoryEntry) {
+	shard.items[key] = next
+	store.used.Add(next.bytes - old.bytes)
 	globalMemory.markDirty(m.site)
 }
 
