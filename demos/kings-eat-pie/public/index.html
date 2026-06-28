@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kings Eat Pie</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <button id="helpBtn" class="help-btn" aria-label="About this demo">?</button>
+    <div id="introModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="introTitle" hidden>
+      <section class="intro-card">
+        <div class="intro-top">
+          <span class="label">why this exists</span>
+          <button id="closeIntroBtn" class="close-btn" aria-label="Close explanation">Close</button>
+        </div>
+        <div class="intro-scroll">
+          <h2 id="introTitle">The Pie Locking Problem</h2>
+          <p>
+            Websocket handlers can arrive at the same time. If two browsers both say
+            "ready" while the backend is reading and writing the same room object,
+            one update can stomp the other. That is how a perfectly good pie room
+            becomes a haunted spreadsheet.
+          </p>
+          <p>
+            This demo makes the race visible. Every browser joins the same room,
+            then everyone presses <strong>Say go</strong>. The backend has to decide
+            when the whole room is ready and produce one bite order. Without
+            coordination, concurrent websocket messages could see stale state and
+            start the pie too early, too late, or twice.
+          </p>
+          <p>
+            The Starlark handler solves it with a host-owned lease lock around the
+            room mutation:
+          </p>
+          <pre><code>lock = ctx.locks().acquire(
+    "memory:rooms:room:kings",
+    ttl_ms = 1000,
+    wait_ms = 50,
+)</code></pre>
+          <p>
+            While that lock is held, only one handler updates the room. It records
+            joins, ready flags, and the final pie order, then releases the lock
+            before the next websocket handler takes its turn. The lock is scoped to
+            this site and protected by a fencing token, so an expired old holder
+            cannot accidentally release a newer holder's lease.
+          </p>
+          <p>
+            The result: browsers can mash the button like a basement-show drum kit,
+            but the backend still walks around the booth in order. When everyone has
+            said go, the pie is eaten exactly once.
+          </p>
+        </div>
+      </section>
+    </div>
+    <main class="stage">
+      <section class="poster">
+        <div class="label">websocket lock demo</div>
+        <h1>Kings Eat Pie</h1>
+        <p id="notice">Find a room. Say go. Respect the pie mutex.</p>
+        <div class="actions">
+          <button id="joinBtn">Join booth</button>
+          <button id="readyBtn" disabled>Say go</button>
+          <button id="resetBtn" disabled>Fresh pie</button>
+        </div>
+      </section>
+
+      <section class="pie-scene" aria-label="pie arena">
+        <div class="sunburst"></div>
+        <div id="pie" class="pie">
+          <div class="tin"></div>
+          <div class="filling"></div>
+          <div class="slice s1"></div>
+          <div class="slice s2"></div>
+          <div class="slice s3"></div>
+          <div class="slice s4"></div>
+          <div class="crumb c1"></div>
+          <div class="crumb c2"></div>
+          <div class="crumb c3"></div>
+        </div>
+        <div id="chompLog" class="chomp-log"></div>
+      </section>
+
+      <section class="roster-wrap">
+        <div class="status">
+          <span id="dot" class="dot"></span>
+          <span id="statusText">connecting</span>
+        </div>
+        <div id="roster" class="roster"></div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -345,6 +345,58 @@ def on_event(ctx, event):
 	}
 }
 
+func TestKingsEatPieDemoUsesWebSocketLocks(t *testing.T) {
+	site := "kings-eat-pie-test"
+	modules.WipeMemorySite(site)
+	src, err := os.ReadFile("../../demos/kings-eat-pie/api/room.star")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newTestStarlarkExecutor(t, map[string]string{"api/room.star": string(src)})
+	bundle := Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "api/room.star"}},
+	}
+
+	for _, connID := range []string{"c1", "c2"} {
+		effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventConnect,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(effects) != 2 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pie.room.kings" {
+			t.Fatalf("connect effects = %#v, want room subscribe", effects)
+		}
+		effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventMessage,
+			Message: []byte(`{"type":"join"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(effects) != 1 || effects[0].Type != WebSocketEffectBroadcast {
+			t.Fatalf("join effects = %#v, want broadcast", effects)
+		}
+	}
+
+	for _, connID := range []string{"c1", "c2"} {
+		effects, err := executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+			Site: site, Version: 1, Route: "/ws", ConnID: connID, EventType: WebSocketEventMessage,
+			Message: []byte(`{"type":"ready"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(effects) != 1 || effects[0].Type != WebSocketEffectBroadcast {
+			t.Fatalf("ready effects = %#v, want broadcast", effects)
+		}
+		if connID == "c2" && !strings.Contains(string(effects[0].Payload), `"started":true`) {
+			t.Fatalf("second ready payload = %s, want started pie round", effects[0].Payload)
+		}
+	}
+}
+
 func TestStarlarkExecutorLogModuleAcceptsFlexibleMessages(t *testing.T) {
 	logs := logbuffer.New(10)
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
