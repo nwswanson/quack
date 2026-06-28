@@ -21,6 +21,7 @@ type Handler struct {
 	events   EventSettingsReader
 	pipes    *eventpipe.Store
 	sockets  *socketManager
+	lanes    *eventLaneRegistry
 	logs     *logbuffer.Service
 }
 
@@ -56,7 +57,7 @@ func New(runtime appruntime.Service, opts ...Option) Handler {
 		// a runtime service.
 		runtime = appruntime.NewDisabledService()
 	}
-	h := Handler{runtime: runtime, pipes: eventpipe.NewStore(), sockets: newSocketManager()}
+	h := Handler{runtime: runtime, pipes: eventpipe.NewStore(), sockets: newSocketManager(), lanes: newEventLaneRegistry()}
 	for _, opt := range opts {
 		opt(&h)
 	}

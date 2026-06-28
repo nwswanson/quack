@@ -18,6 +18,8 @@ import (
 	"quack/internal/manifest"
 	"quack/internal/runtime/modules"
 	appsettings "quack/internal/settings"
+
+	"go.starlark.net/starlark"
 )
 
 func TestDisabledServiceDoesNotInvokeRuntime(t *testing.T) {
@@ -274,6 +276,72 @@ def handle(req):
 	}
 	if string(resp.Body) != "ok" {
 		t.Fatalf("body = %q, want ok", string(resp.Body))
+	}
+}
+
+func TestStarlarkEventContextLocksAcquireWithWait(t *testing.T) {
+	site := "locks-wait-test"
+	modules.WipeMemorySite(site)
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def on_event(ctx, event):
+    lock = ctx.locks().acquire("memory:rooms:room.123", ttl_ms=40, wait_ms=200)
+    if not lock:
+        memory.list_push("locks", "busy")
+        return []
+    memory.list_push("locks", lock.token)
+    return []
+`})
+	bundle := Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/events", Kind: RouteWebSocket, Entrypoint: "app.star"}},
+	}
+	if _, err := executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+		Site: site, Version: 1, Entrypoint: "app.star", Handler: "on_event", Topic: "room.123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+		Site: site, Version: 1, Entrypoint: "app.star", Handler: "on_event", Topic: "room.123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 20*time.Millisecond {
+		t.Fatalf("second acquire returned too quickly; wait_ms did not wait for lease expiry")
+	}
+	values := memoryListStrings(t, site, "locks")
+	if len(values) != 2 || values[0] == "busy" || values[1] == "busy" || values[0] == values[1] {
+		t.Fatalf("locks list = %#v, want two acquired unique tokens", values)
+	}
+}
+
+func TestStarlarkEventContextLockReleaseFreesLease(t *testing.T) {
+	site := "locks-release-test"
+	modules.WipeMemorySite(site)
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def on_event(ctx, event):
+    lock = ctx.locks().acquire("memory:counter", ttl_ms=1000, wait_ms=0)
+    if not lock:
+        memory.list_push("locks", "busy")
+        return []
+    memory.list_push("locks", "got")
+    lock.release()
+    return []
+`})
+	bundle := Bundle{
+		Site: site, Version: 1,
+		Routes: []Route{{Path: "/events", Kind: RouteWebSocket, Entrypoint: "app.star"}},
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+			Site: site, Version: 1, Entrypoint: "app.star", Handler: "on_event", Topic: "counter",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	values := memoryListStrings(t, site, "locks")
+	if strings.Join(values, ",") != "got,got" {
+		t.Fatalf("locks list = %#v, want both invocations to acquire after release", values)
 	}
 }
 
@@ -1519,6 +1587,31 @@ func newTestStarlarkExecutor(t *testing.T, scripts map[string]string) *StarlarkE
 		t.Fatal(err)
 	}
 	return executor
+}
+
+func memoryListStrings(t *testing.T, site string, key string) []string {
+	t.Helper()
+	module := modules.NewMemoryModule(site, DefaultMaxMemoryBytes)
+	value, err := starlark.Call(&starlark.Thread{Name: "test memory list"}, module.Members["list_range"], starlark.Tuple{starlark.String(key)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, ok := value.(*starlark.List)
+	if !ok {
+		t.Fatalf("memory.list_range returned %T, want list", value)
+	}
+	out := make([]string, 0, list.Len())
+	iter := list.Iterate()
+	defer iter.Done()
+	var item starlark.Value
+	for iter.Next(&item) {
+		s, ok := starlark.AsString(item)
+		if !ok {
+			t.Fatalf("memory item = %s (%T), want string", item, item)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 type serialTerminalHardware struct {

@@ -432,6 +432,105 @@ func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
 	}
 }
 
+func TestHandlerSerialByTopicPreventsSameTopicConcurrentHandlers(t *testing.T) {
+	var mu sync.Mutex
+	active := map[string]int{}
+	violations := 0
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		mu.Lock()
+		active[req.Topic]++
+		if active[req.Topic] > 1 {
+			violations++
+		}
+		mu.Unlock()
+		time.Sleep(2 * time.Millisecond)
+		mu.Lock()
+		active[req.Topic]--
+		mu.Unlock()
+		return nil, nil
+	}}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimeEvents: `[{"selector":"room.*","concurrency":"serial_by_topic","on_event":"app/room.star:on_event"}]`,
+		},
+	}}}))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+				Type:    appruntime.WebSocketEffectPublish,
+				Topic:   "room.123",
+				Payload: []byte(`{"type":"join"}`),
+			}})
+			if err != nil {
+				t.Errorf("applyEffects error = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if violations != 0 {
+		t.Fatalf("same-topic concurrent handler violations = %d, want 0", violations)
+	}
+}
+
+func TestHandlerSerialByTopicAllowsDifferentTopicsConcurrentHandlers(t *testing.T) {
+	var mu sync.Mutex
+	activeTotal := 0
+	maxActiveTotal := 0
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		mu.Lock()
+		activeTotal++
+		if activeTotal > maxActiveTotal {
+			maxActiveTotal = activeTotal
+		}
+		mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		mu.Lock()
+		activeTotal--
+		mu.Unlock()
+		return nil, nil
+	}}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimeEvents: `[{"selector":"room.*","concurrency":"serial_by_topic","on_event":"app/room.star:on_event"}]`,
+		},
+	}}}))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		topic := fmt.Sprintf("room.%d", i%5)
+		go func() {
+			defer wg.Done()
+			err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+				Type:    appruntime.WebSocketEffectPublish,
+				Topic:   topic,
+				Payload: []byte(`{"type":"join"}`),
+			}})
+			if err != nil {
+				t.Errorf("applyEffects error = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if maxActiveTotal < 2 {
+		t.Fatalf("max concurrent handlers = %d, want different topics to overlap", maxActiveTotal)
+	}
+}
+
 func websocketPipe(t *testing.T, handler Handler, req appruntime.WebSocketInvocationRequest) (net.Conn, *bufio.Reader, <-chan struct{}) {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
@@ -528,6 +627,7 @@ func (r *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 type recordingRuntime struct {
+	mu                sync.Mutex
 	called            bool
 	req               appruntime.InvocationRequest
 	resp              appruntime.InvocationResponse
@@ -551,13 +651,17 @@ func (f eventSettingsFixture) ListCurrentSiteManifests(ctx context.Context) ([]d
 }
 
 func (r *recordingRuntime) InvokeHTTP(ctx context.Context, req appruntime.InvocationRequest) (appruntime.InvocationResponse, error) {
+	r.mu.Lock()
 	r.called = true
 	r.req = req
+	r.mu.Unlock()
 	return r.resp, r.err
 }
 
 func (r *recordingRuntime) InvokeWebSocket(ctx context.Context, req appruntime.WebSocketInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+	r.mu.Lock()
 	r.websocketRequests = append(r.websocketRequests, req)
+	r.mu.Unlock()
 	if r.websocket != nil {
 		return r.websocket(req)
 	}
@@ -565,7 +669,9 @@ func (r *recordingRuntime) InvokeWebSocket(ctx context.Context, req appruntime.W
 }
 
 func (r *recordingRuntime) InvokeEvent(ctx context.Context, req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+	r.mu.Lock()
 	r.eventRequests = append(r.eventRequests, req)
+	r.mu.Unlock()
 	if r.event != nil {
 		return r.event(req)
 	}

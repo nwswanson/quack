@@ -239,10 +239,20 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 		if err != nil {
 			return err
 		}
-		effects, err := h.runtime.InvokeEvent(ctx, appruntime.EventInvocationRequest{
-			Site: site, Version: settings.version, Entrypoint: entrypoint, Handler: handler,
-			Topic: event.Topic, Payload: event.Payload,
-		})
+		var effects []appruntime.WebSocketEffect
+		invoke := func() error {
+			var invokeErr error
+			effects, invokeErr = h.runtime.InvokeEvent(ctx, appruntime.EventInvocationRequest{
+				Site: site, Version: settings.version, Entrypoint: entrypoint, Handler: handler,
+				Topic: event.Topic, Payload: event.Payload,
+			})
+			return invokeErr
+		}
+		if strings.TrimSpace(route.Concurrency) == "serial_by_topic" {
+			err = h.lanes.Do(ctx, eventLaneKey(site, settings.version, route, event.Topic), invoke)
+		} else {
+			err = invoke()
+		}
 		if err != nil {
 			continue
 		}
@@ -266,6 +276,10 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 		}
 	}
 	return nil
+}
+
+func eventLaneKey(site string, version int64, route manifest.EventRoute, topic string) string {
+	return fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s", site, version, strings.TrimSpace(route.Selector), strings.TrimSpace(route.OnEvent), topic)
 }
 
 type eventSettings struct {

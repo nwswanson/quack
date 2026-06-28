@@ -101,8 +101,9 @@ type Pipe struct {
 }
 
 type EventRoute struct {
-	Selector string `json:"selector" yaml:"selector"`
-	OnEvent  string `json:"on_event" yaml:"on_event"`
+	Selector    string `json:"selector" yaml:"selector"`
+	Concurrency string `json:"concurrency,omitempty" yaml:"concurrency,omitempty"`
+	OnEvent     string `json:"on_event" yaml:"on_event"`
 }
 
 func Default() Manifest {
@@ -392,6 +393,11 @@ func validateEvents(events []EventRoute) error {
 		}
 		if _, _, err := SplitEventHandler(event.OnEvent); err != nil {
 			return err
+		}
+		switch strings.TrimSpace(event.Concurrency) {
+		case "", "parallel", "serial_by_topic":
+		default:
+			return fmt.Errorf("unsupported event.concurrency %q", event.Concurrency)
 		}
 	}
 	return nil

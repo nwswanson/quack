@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"quack/internal/runtime/modules"
+
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -129,19 +131,22 @@ func websocketHandler(globals starlark.StringDict, event WebSocketEvent, routePa
 }
 
 func websocketContext(event WebSocketEvent, routePath string) starlark.Value {
+	owner := modules.NewLockOwnerID()
 	headers := starlark.NewDict(len(event.Headers))
 	for key, values := range event.Headers {
 		_ = headers.SetKey(starlark.String(strings.ToLower(key)), starlark.NewList(stringValues(values)))
 	}
 	return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
-		"site":    starlark.String(event.Site),
-		"version": starlark.MakeInt64(event.Version),
-		"route":   starlark.String(routePath),
-		"path":    starlark.String(pathUnderRoute(event.Route, routePath)),
-		"query":   starlark.String(event.Query),
-		"headers": headers,
-		"conn_id": starlark.String(event.ConnID),
-		"params":  starlark.NewDict(0),
+		"site":          starlark.String(event.Site),
+		"version":       starlark.MakeInt64(event.Version),
+		"route":         starlark.String(routePath),
+		"path":          starlark.String(pathUnderRoute(event.Route, routePath)),
+		"query":         starlark.String(event.Query),
+		"headers":       headers,
+		"conn_id":       starlark.String(event.ConnID),
+		"invocation_id": starlark.String(owner),
+		"locks":         starlark.NewBuiltin("ctx.locks", locksContextBuiltin(event.Site, owner)),
+		"params":        starlark.NewDict(0),
 		"user": starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
 			"id": starlark.String("anonymous"),
 		}),
@@ -149,19 +154,31 @@ func websocketContext(event WebSocketEvent, routePath string) starlark.Value {
 }
 
 func eventContext(event EventInvocation) starlark.Value {
+	owner := modules.NewLockOwnerID()
 	return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
-		"site":    starlark.String(event.Site),
-		"version": starlark.MakeInt64(event.Version),
-		"route":   starlark.String(event.Entrypoint),
-		"path":    starlark.String("/"),
-		"query":   starlark.String(""),
-		"headers": starlark.NewDict(0),
-		"conn_id": starlark.String(""),
-		"params":  starlark.NewDict(0),
+		"site":          starlark.String(event.Site),
+		"version":       starlark.MakeInt64(event.Version),
+		"route":         starlark.String(event.Entrypoint),
+		"path":          starlark.String("/"),
+		"query":         starlark.String(""),
+		"headers":       starlark.NewDict(0),
+		"conn_id":       starlark.String(""),
+		"invocation_id": starlark.String(owner),
+		"locks":         starlark.NewBuiltin("ctx.locks", locksContextBuiltin(event.Site, owner)),
+		"params":        starlark.NewDict(0),
 		"user": starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
 			"id": starlark.String("system"),
 		}),
 	})
+}
+
+func locksContextBuiltin(site string, owner string) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
+	return func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+		if err := starlark.UnpackArgs(fn.Name(), args, kwargs); err != nil {
+			return nil, err
+		}
+		return modules.NewLocksModule(site, owner), nil
+	}
 }
 
 func websocketPayloadValue(payload []byte) starlark.Value {

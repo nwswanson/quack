@@ -104,6 +104,33 @@ func TestParseAllowsExcludePatterns(t *testing.T) {
 	}
 }
 
+func TestParseAllowsSerialByTopicEventConcurrency(t *testing.T) {
+	body := `events:
+  - selector: "room.*"
+    concurrency: serial_by_topic
+    on_event: app/room.star:on_event
+`
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	if len(got.Events) != 1 || got.Events[0].Concurrency != "serial_by_topic" {
+		t.Fatalf("events = %#v, want serial_by_topic", got.Events)
+	}
+}
+
+func TestParseRejectsUnknownEventConcurrency(t *testing.T) {
+	body := `events:
+  - selector: "room.*"
+    concurrency: single_file
+    on_event: app/room.star:on_event
+`
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "unsupported event.concurrency") {
+		t.Fatalf("Parse error = %v, want unsupported concurrency", err)
+	}
+}
+
 func TestParseRejectsInvalidExcludePattern(t *testing.T) {
 	tests := []string{
 		"exclude:\n  - \"\"\n",
