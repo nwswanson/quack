@@ -298,6 +298,24 @@ for all pipes serialize through that mutex. The critical section is intentionall
 small: normalize config, find or create the pipe, assign sequence metadata,
 copy payload and headers, append, and trim.
 
+### Performance Implication
+
+The single mutex makes the in-memory pipe store simple and gives each accepted
+event a clear host-local sequence assignment, but it also creates one shared
+publication bottleneck for the process. A hot pipe can briefly delay publication
+or recent-history reads for unrelated pipes because every pipe must pass through
+the same lock. In normal websocket demo and hardware-event use, the lock is held
+only around small memory operations, so Starlark execution, event fanout, and
+socket writes dominate latency long before the pipe store lock does.
+
+The place to be careful is high-rate, many-producer traffic with large payloads
+or frequent `Recent` calls. Payload and header copying happens while the mutex
+is held, so larger events increase lock hold time. Operators should treat pipes
+as lightweight coordination and observability streams, not as a high-throughput
+broker. If a workload needs sustained broker-like fan-in across many independent
+topics, it should be measured carefully before depending on the current
+in-memory store shape.
+
 The store does not hold its mutex while invoking Starlark handlers or writing
 websocket frames. Dispatch happens after publication returns. This prevents a
 slow handler or slow client from blocking unrelated pipe publication while
@@ -686,6 +704,31 @@ Durability should not imply exactly-once delivery. It should mean that accepted
 events can survive process restart and can be replayed by sequence number.
 Applications that need exactly-once state changes should still use idempotency
 keys or domain versions in their payloads.
+
+### Store Concurrency Improvements
+
+If measurement shows the single pipe-store mutex becoming material, split the
+store along the same boundary users already reason about: site plus pipe name.
+A straightforward improvement is a short global map lock only for lookup or
+creation, with each pipe owning its own mutex for sequence assignment, append,
+trim, and recent reads. That lets unrelated pipes publish and read recent
+history concurrently while preserving per-pipe sequence ordering.
+
+Another option is striped locking by hashed `(site, pipe)` key. Striping avoids
+one mutex per pipe and keeps implementation compact, but unrelated hot pipes can
+still collide on the same stripe. Per-pipe locks are easier to reason about when
+operator-visible pipe names matter; stripes are attractive only if lock count or
+pipe churn becomes a real concern.
+
+Do not split the lock before profiling. The current global lock is simple,
+keeps accepted-event metadata assignment easy to audit, and stays out of
+Starlark execution and websocket writes. Any future change should preserve
+these invariants:
+
+- per-pipe sequence numbers remain monotonic;
+- event payloads and headers are still copied before publication returns;
+- rejected publishes still skip event dispatch;
+- no lock is held while invoking Starlark handlers or writing websocket frames.
 
 ### Replay API
 
