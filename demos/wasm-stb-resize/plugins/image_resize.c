@@ -203,7 +203,8 @@ static int resize_image_bytes(
 	int *output_height,
 	output_format format,
 	int quality,
-	encoded_image *encoded
+	encoded_image *encoded,
+	qk_bench_timings *timings
 ) {
 	int input_width = 0;
 	int input_height = 0;
@@ -218,6 +219,9 @@ static int resize_image_bytes(
 	);
 	if (input_pixels == 0 || input_width <= 0 || input_height <= 0) {
 		return 0;
+	}
+	if (timings != 0) {
+		timings->decode_done_ms = qk_clock_now();
 	}
 
 	*output_width = clamp_dimension(*output_width, input_width);
@@ -246,14 +250,32 @@ static int resize_image_bytes(
 	if (resized == 0) {
 		return 0;
 	}
+	if (timings != 0) {
+		timings->resize_done_ms = qk_clock_now();
+	}
 
 	if (format == OUTPUT_FORMAT_JPG) {
-		return encode_jpg(output_pixels, *output_width, *output_height, quality, encoded);
+		int ok = encode_jpg(output_pixels, *output_width, *output_height, quality, encoded);
+		if (ok && timings != 0) {
+			timings->encode_done_ms = qk_clock_now();
+		}
+		return ok;
 	}
-	return encode_png(output_pixels, *output_width, *output_height, encoded);
+	int ok = encode_png(output_pixels, *output_width, *output_height, encoded);
+	if (ok && timings != 0) {
+		timings->encode_done_ms = qk_clock_now();
+	}
+	return ok;
 }
 
 QK_FUNC_JSON(resize_image, call) {
+	qk_bench_timings timings;
+	timings.call_start_ms = qk_clock_now();
+	timings.input_ready_ms = timings.call_start_ms;
+	timings.decode_done_ms = timings.call_start_ms;
+	timings.resize_done_ms = timings.call_start_ms;
+	timings.encode_done_ms = timings.call_start_ms;
+
 	qk_bytes input;
 	int output_width = 320;
 	int output_height = 0;
@@ -276,18 +298,21 @@ QK_FUNC_JSON(resize_image, call) {
 			return qk_return_error(QK_STATUS_DECODE_ERROR, "unsupported output format");
 		}
 	}
+	timings.input_ready_ms = qk_clock_now();
 
 	encoded_image encoded;
-	if (!resize_image_bytes(input.ptr, input.len, &output_width, &output_height, format, quality, &encoded)) {
+	if (!resize_image_bytes(input.ptr, input.len, &output_width, &output_height, format, quality, &encoded, &timings)) {
 		return qk_return_error(QK_STATUS_GUEST_ERROR, "stb failed to resize image");
 	}
 
-	return qk_return_image_base64_object(
+	return qk_return_image_base64_object_debug(
 		encoded.ptr,
 		encoded.len,
 		encoded.content_type,
 		output_width,
-		output_height
+		output_height,
+		input.len,
+		&timings
 	);
 }
 
@@ -309,7 +334,8 @@ static uint64_t resize_raw(
 		&output_height,
 		format,
 		(int)quality,
-		&encoded
+		&encoded,
+		0
 	)) {
 		return 0;
 	}

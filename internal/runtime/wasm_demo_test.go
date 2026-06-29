@@ -144,6 +144,9 @@ def handle(req):
 			"images": {
 				Path: "plugins/image_resize.wasm",
 				ABI:  "quack:wasm-v1",
+				Imports: []string{
+					"clock.now",
+				},
 				Limits: manifest.WASMLimits{
 					TimeoutMS:      250,
 					MemoryPages:    160,

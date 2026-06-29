@@ -4,6 +4,8 @@ wasm:
       path: plugins/image_resize.opt.wasm
       abi: quack:wasm-v1
       retain_instances: 1
+      imports:
+        - clock.now
       limits:
         timeout_ms: 1000
         memory_pages: 192

@@ -242,6 +242,13 @@ static uint32_t qk_write_i64(char *dst, int64_t value) {
     return n;
 }
 
+static int64_t qk_delta_ms(int64_t start, int64_t end) {
+	if (end < start) {
+		return 0;
+	}
+	return end - start;
+}
+
 uint32_t qk_alloc(uint32_t size) {
     size = (size + 7u) & ~7u;
     if (qk_heap_top + size > QK_HEAP_SIZE) {
@@ -379,6 +386,70 @@ uint64_t qk_return_image_base64_object(
 	qk_base64_encode(json + n, data, len);
 	n += encoded_len;
 	n += qk_write_str(json + n, "\"}");
+	return qk_return_json(QK_STATUS_OK, json, n);
+}
+
+uint64_t qk_return_image_base64_object_debug(
+	const uint8_t *data,
+	uint32_t len,
+	const char *content_type,
+	int width,
+	int height,
+	uint32_t input_len,
+	const qk_bench_timings *timings
+) {
+	uint32_t encoded_len = qk_base64_encoded_len(len);
+	uint32_t content_type_len = qk_strlen(content_type);
+	char width_buf[24];
+	char height_buf[24];
+	uint32_t width_len = qk_write_i64(width_buf, width);
+	uint32_t height_len = qk_write_i64(height_buf, height);
+	uint32_t json_len = 768u + encoded_len + content_type_len + width_len + height_len;
+	char *json = (char *)(uintptr_t)qk_alloc(json_len);
+	uint32_t n = 0;
+
+	n += qk_write_str(json + n, "{\"ok\":true,\"content_type\":\"");
+	n += qk_write_str(json + n, content_type);
+	n += qk_write_str(json + n, "\",\"width\":");
+	for (uint32_t i = 0; i < width_len; i++) {
+		json[n++] = width_buf[i];
+	}
+	n += qk_write_str(json + n, ",\"height\":");
+	for (uint32_t i = 0; i < height_len; i++) {
+		json[n++] = height_buf[i];
+	}
+	n += qk_write_str(json + n, ",\"output\":\"");
+
+	int64_t response_pack_start_ms = qk_clock_now();
+	qk_base64_encode(json + n, data, len);
+	n += encoded_len;
+	int64_t response_ready_ms = qk_clock_now();
+
+	n += qk_write_str(json + n, "\",\"debug\":{\"timing_ms\":{");
+	n += qk_write_str(json + n, "\"parse_input\":");
+	n += qk_write_i64(json + n, qk_delta_ms(timings->call_start_ms, timings->input_ready_ms));
+	n += qk_write_str(json + n, ",\"decode\":");
+	n += qk_write_i64(json + n, qk_delta_ms(timings->input_ready_ms, timings->decode_done_ms));
+	n += qk_write_str(json + n, ",\"resize\":");
+	n += qk_write_i64(json + n, qk_delta_ms(timings->decode_done_ms, timings->resize_done_ms));
+	n += qk_write_str(json + n, ",\"encode\":");
+	n += qk_write_i64(json + n, qk_delta_ms(timings->resize_done_ms, timings->encode_done_ms));
+	n += qk_write_str(json + n, ",\"compute_total\":");
+	n += qk_write_i64(json + n, qk_delta_ms(timings->input_ready_ms, timings->encode_done_ms));
+	n += qk_write_str(json + n, ",\"response_pack\":");
+	n += qk_write_i64(json + n, qk_delta_ms(response_pack_start_ms, response_ready_ms));
+	n += qk_write_str(json + n, ",\"guest_observed_total\":");
+	n += qk_write_i64(json + n, qk_delta_ms(timings->call_start_ms, response_ready_ms));
+	n += qk_write_str(json + n, "},\"bytes\":{\"input\":");
+	n += qk_write_i64(json + n, input_len);
+	n += qk_write_str(json + n, ",\"output\":");
+	n += qk_write_i64(json + n, len);
+	n += qk_write_str(json + n, "},\"unix_ms\":{\"call_start\":");
+	n += qk_write_i64(json + n, timings->call_start_ms);
+	n += qk_write_str(json + n, ",\"response_ready\":");
+	n += qk_write_i64(json + n, response_ready_ms);
+	n += qk_write_str(json + n, "},\"clock\":\"quack.clock.now_ms\"}}");
+
 	return qk_return_json(QK_STATUS_OK, json, n);
 }
 

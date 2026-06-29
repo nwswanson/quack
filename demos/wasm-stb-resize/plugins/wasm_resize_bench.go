@@ -45,6 +45,7 @@ func main() {
 		warmup        = flag.Int("warmup", 3, "warmup runs")
 		cold          = flag.Bool("cold", false, "instantiate a fresh module each run")
 		prebuildInput = flag.Bool("prebuild-input", false, "build JSON/base64 input once outside measured loop in quack mode")
+		printDebug    = flag.Bool("print-debug", false, "print first measured quack response with output bytes omitted")
 	)
 	flag.Parse()
 
@@ -64,6 +65,7 @@ func main() {
 
 	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
 	defer rt.Close(ctx)
+	check(instantiateQuackHost(ctx, rt))
 
 	t0 := time.Now()
 	compiled, err := rt.CompileModule(ctx, wasmBytes)
@@ -132,6 +134,9 @@ func main() {
 			t = time.Now()
 			outEnvelope, err := callQuack(ctx, mod, *fnName, input)
 			check(err)
+			if *printDebug && measured && len(samples) == 0 {
+				check(printQuackDebug(outEnvelope))
+			}
 			s.callMS = sinceMS(t)
 
 			t = time.Now()
@@ -196,6 +201,15 @@ func instantiate(ctx context.Context, rt wazero.Runtime, compiled wazero.Compile
 		return nil, errors.New("missing exported memory")
 	}
 	return mod, nil
+}
+
+func instantiateQuackHost(ctx context.Context, rt wazero.Runtime) error {
+	_, err := rt.NewHostModuleBuilder("quack").
+		NewFunctionBuilder().WithFunc(func() int64 {
+		return time.Now().UnixMilli()
+	}).Export("clock.now").
+		Instantiate(ctx)
+	return err
 }
 
 func buildQuackInput(image []byte, format string, width, height, quality int) ([]byte, error) {
@@ -298,6 +312,32 @@ func parseQuackOutput(envelope []byte) ([]byte, error) {
 		return payload, nil
 	}
 	return base64.StdEncoding.DecodeString(decoded.Output)
+}
+
+func printQuackDebug(envelope []byte) error {
+	if len(envelope) < 2 {
+		return errors.New("output envelope too short")
+	}
+	status, format := envelope[0], envelope[1]
+	if format != wasmFormatJSON {
+		return fmt.Errorf("unsupported output format 0x%02x", format)
+	}
+	if status != wasmStatusOK {
+		return fmt.Errorf("guest error status=0x%02x payload=%s", status, string(envelope[2:]))
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(envelope[2:], &decoded); err != nil {
+		return err
+	}
+	if output, ok := decoded["output"].(string); ok {
+		decoded["output"] = fmt.Sprintf("<base64 omitted: %d chars>", len(output))
+	}
+	formatted, err := json.MarshalIndent(decoded, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("response_debug=%s\n", formatted)
+	return nil
 }
 
 func callRaw(ctx context.Context, mod api.Module, export string, input []byte, width, height, quality uint32) ([]byte, error) {

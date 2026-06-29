@@ -6,8 +6,10 @@
 #ifndef QK_EXPORT_NAME
 #if defined(__wasm__) || defined(__wasm32__)
 #define QK_EXPORT_NAME(name) __attribute__((export_name(name)))
+#define QK_IMPORT_NAME(name) __attribute__((import_module("quack"), import_name(name)))
 #else
 #define QK_EXPORT_NAME(name)
+#define QK_IMPORT_NAME(name)
 #endif
 #endif
 
@@ -36,6 +38,14 @@ typedef struct qk_call {
 	const char *json;
 	uint32_t json_len;
 } qk_call;
+
+typedef struct qk_bench_timings {
+	int64_t call_start_ms;
+	int64_t input_ready_ms;
+	int64_t decode_done_ms;
+	int64_t resize_done_ms;
+	int64_t encode_done_ms;
+} qk_bench_timings;
 
 typedef int64_t (*qk_i64_i64_to_i64_fn)(int64_t, int64_t);
 typedef uint64_t (*qk_json_fn)(qk_call *call);
@@ -73,6 +83,9 @@ typedef struct qk_export {
 extern const qk_export qk_exports[];
 extern const uint32_t qk_export_count;
 
+QK_IMPORT_NAME("clock.now")
+int64_t qk_clock_now(void);
+
 uint32_t qk_alloc(uint32_t size);
 void qk_free(uint32_t ptr, uint32_t size);
 int qk_arg_i64(qk_call *call, const char *key, int64_t *out);
@@ -90,6 +103,15 @@ uint64_t qk_return_image_base64_object(
 	const char *content_type,
 	int width,
 	int height
+);
+uint64_t qk_return_image_base64_object_debug(
+	const uint8_t *data,
+	uint32_t len,
+	const char *content_type,
+	int width,
+	int height,
+	uint32_t input_len,
+	const qk_bench_timings *timings
 );
 uint64_t qk_return_raw_bytes_rewind(const uint8_t *data, uint32_t len);
 
