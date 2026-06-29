@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+#ifndef QK_EXPORT_NAME
+#if defined(__wasm__) || defined(__wasm32__)
+#define QK_EXPORT_NAME(name) __attribute__((export_name(name)))
+#else
+#define QK_EXPORT_NAME(name)
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,6 +91,7 @@ uint64_t qk_return_image_base64_object(
 	int width,
 	int height
 );
+uint64_t qk_return_raw_bytes_rewind(const uint8_t *data, uint32_t len);
 
 #ifdef __cplusplus
 }

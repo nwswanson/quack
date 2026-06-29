@@ -30,6 +30,8 @@ form.addEventListener("submit", async (event) => {
   const params = new URLSearchParams({
     w: widthInput.value || "320",
     h: heightInput.value || "0",
+    format: "jpg",
+    quality: "90",
   });
 
   let response;
@@ -57,5 +59,5 @@ form.addEventListener("submit", async (event) => {
   }
 
   after.src = dataUrl(result.content_type, result.output);
-  statusEl.textContent = `${result.width} x ${result.height} PNG returned from WASM`;
+  statusEl.textContent = `${result.width} x ${result.height} ${result.content_type} returned from WASM`;
 });

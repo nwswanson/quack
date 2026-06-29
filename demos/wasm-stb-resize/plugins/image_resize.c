@@ -104,42 +104,132 @@ static int clamp_dimension(int value, int fallback) {
 	return value;
 }
 
-QK_FUNC_JSON(resize_image, call) {
-	qk_bytes input;
-	int output_width = 320;
-	int output_height = 0;
-
-	if (!qk_arg_bytes_base64(call, "input", &input)) {
-		return qk_return_error(QK_STATUS_DECODE_ERROR, "expected image input bytes");
+static int clamp_quality(int value) {
+	if (value < 1) {
+		return 1;
 	}
-	(void)qk_arg_int(call, "width", &output_width);
-	(void)qk_arg_int(call, "height", &output_height);
+	if (value > 100) {
+		return 100;
+	}
+	return value;
+}
 
+static int string_equals(qk_string value, const char *want) {
+	uint32_t i = 0;
+	while (want[i] != 0) {
+		if (i >= value.len || value.ptr[i] != want[i]) {
+			return 0;
+		}
+		i++;
+	}
+	return i == value.len;
+}
+
+typedef enum output_format {
+	OUTPUT_FORMAT_PNG = 0,
+	OUTPUT_FORMAT_JPG = 1,
+} output_format;
+
+typedef struct encoded_image {
+	unsigned char *ptr;
+	uint32_t len;
+	const char *content_type;
+} encoded_image;
+
+typedef struct write_buffer {
+	unsigned char *ptr;
+	uint32_t len;
+	uint32_t cap;
+	int failed;
+} write_buffer;
+
+static void write_buffer_append(void *ctx, void *data, int size) {
+	write_buffer *buf = (write_buffer *)ctx;
+	if (buf->failed || size <= 0) {
+		return;
+	}
+	uint32_t n = (uint32_t)size;
+	if (n > buf->cap || buf->len > buf->cap - n) {
+		buf->failed = 1;
+		return;
+	}
+	memcpy(buf->ptr + buf->len, data, n);
+	buf->len += n;
+}
+
+static int encode_jpg(const unsigned char *pixels, int width, int height, int quality, encoded_image *out) {
+	uint32_t cap = (uint32_t)width * (uint32_t)height * 4u + 65536u;
+	write_buffer buf;
+	buf.ptr = (unsigned char *)(uintptr_t)qk_alloc(cap);
+	buf.len = 0;
+	buf.cap = cap;
+	buf.failed = buf.ptr == 0;
+	if (buf.failed) {
+		return 0;
+	}
+	int ok = stbi_write_jpg_to_func(write_buffer_append, &buf, width, height, 4, pixels, clamp_quality(quality));
+	if (!ok || buf.failed || buf.len == 0) {
+		return 0;
+	}
+	out->ptr = buf.ptr;
+	out->len = buf.len;
+	out->content_type = "image/jpeg";
+	return 1;
+}
+
+static int encode_png(const unsigned char *pixels, int width, int height, encoded_image *out) {
+	int png_len = 0;
+	unsigned char *png = stbi_write_png_to_mem(
+		pixels,
+		width * 4,
+		width,
+		height,
+		4,
+		&png_len
+	);
+	if (png == 0 || png_len <= 0) {
+		return 0;
+	}
+	out->ptr = png;
+	out->len = (uint32_t)png_len;
+	out->content_type = "image/png";
+	return 1;
+}
+
+static int resize_image_bytes(
+	const unsigned char *input_ptr,
+	uint32_t input_len,
+	int *output_width,
+	int *output_height,
+	output_format format,
+	int quality,
+	encoded_image *encoded
+) {
 	int input_width = 0;
 	int input_height = 0;
 	int channels = 0;
 	unsigned char *input_pixels = stbi_load_from_memory(
-		input.ptr,
-		(int)input.len,
+		input_ptr,
+		(int)input_len,
 		&input_width,
 		&input_height,
 		&channels,
 		4
 	);
 	if (input_pixels == 0 || input_width <= 0 || input_height <= 0) {
-		return qk_return_error(QK_STATUS_GUEST_ERROR, "stb failed to decode image");
+		return 0;
 	}
 
-	output_width = clamp_dimension(output_width, input_width);
-	if (output_height <= 0) {
-		output_height = (input_height * output_width) / input_width;
+	*output_width = clamp_dimension(*output_width, input_width);
+	if (*output_height <= 0) {
+		*output_height = (input_height * *output_width) / input_width;
 	}
-	output_height = clamp_dimension(output_height, input_height);
+	*output_height = clamp_dimension(*output_height, input_height);
 
-	uint32_t output_size = (uint32_t)output_width * (uint32_t)output_height * 4u;
+	uint32_t output_size = (uint32_t)*output_width * (uint32_t)*output_height * 4u;
 	unsigned char *output_pixels = (unsigned char *)(uintptr_t)qk_alloc(output_size);
 	if (output_pixels == 0) {
-		return qk_return_error(QK_STATUS_GUEST_ERROR, "failed to allocate resized image");
+		return 0;
 	}
 
 	unsigned char *resized = stbir_resize_uint8_srgb(
@@ -148,35 +238,93 @@ QK_FUNC_JSON(resize_image, call) {
 		input_height,
 		0,
 		output_pixels,
-		output_width,
-		output_height,
+		*output_width,
+		*output_height,
 		0,
 		STBIR_RGBA
 	);
 	if (resized == 0) {
+		return 0;
+	}
+
+	if (format == OUTPUT_FORMAT_JPG) {
+		return encode_jpg(output_pixels, *output_width, *output_height, quality, encoded);
+	}
+	return encode_png(output_pixels, *output_width, *output_height, encoded);
+}
+
+QK_FUNC_JSON(resize_image, call) {
+	qk_bytes input;
+	int output_width = 320;
+	int output_height = 0;
+	int quality = 90;
+	output_format format = OUTPUT_FORMAT_PNG;
+	qk_string format_arg;
+
+	if (!qk_arg_bytes_base64(call, "input", &input)) {
+		return qk_return_error(QK_STATUS_DECODE_ERROR, "expected image input bytes");
+	}
+	(void)qk_arg_int(call, "width", &output_width);
+	(void)qk_arg_int(call, "height", &output_height);
+	(void)qk_arg_int(call, "quality", &quality);
+	if (qk_arg_string(call, "format", &format_arg)) {
+		if (string_equals(format_arg, "jpg") || string_equals(format_arg, "jpeg")) {
+			format = OUTPUT_FORMAT_JPG;
+		} else if (string_equals(format_arg, "png")) {
+			format = OUTPUT_FORMAT_PNG;
+		} else {
+			return qk_return_error(QK_STATUS_DECODE_ERROR, "unsupported output format");
+		}
+	}
+
+	encoded_image encoded;
+	if (!resize_image_bytes(input.ptr, input.len, &output_width, &output_height, format, quality, &encoded)) {
 		return qk_return_error(QK_STATUS_GUEST_ERROR, "stb failed to resize image");
 	}
 
-	int png_len = 0;
-	unsigned char *png = stbi_write_png_to_mem(
-		output_pixels,
-		output_width * 4,
-		output_width,
-		output_height,
-		4,
-		&png_len
-	);
-	if (png == 0 || png_len <= 0) {
-		return qk_return_error(QK_STATUS_GUEST_ERROR, "stb failed to encode png");
-	}
-
 	return qk_return_image_base64_object(
-		png,
-		(uint32_t)png_len,
-		"image/png",
+		encoded.ptr,
+		encoded.len,
+		encoded.content_type,
 		output_width,
 		output_height
 	);
+}
+
+static uint64_t resize_raw(
+	uint32_t input_ptr,
+	uint32_t input_len,
+	uint32_t width,
+	uint32_t height,
+	uint32_t quality,
+	output_format format
+) {
+	int output_width = (int)width;
+	int output_height = (int)height;
+	encoded_image encoded;
+	if (!resize_image_bytes(
+		(const unsigned char *)(uintptr_t)input_ptr,
+		input_len,
+		&output_width,
+		&output_height,
+		format,
+		(int)quality,
+		&encoded
+	)) {
+		return 0;
+	}
+
+	return qk_return_raw_bytes_rewind(encoded.ptr, encoded.len);
+}
+
+QK_EXPORT_NAME("resize_png_raw")
+uint64_t resize_png_raw(uint32_t input_ptr, uint32_t input_len, uint32_t width, uint32_t height, uint32_t quality) {
+	return resize_raw(input_ptr, input_len, width, height, quality, OUTPUT_FORMAT_PNG);
+}
+
+QK_EXPORT_NAME("resize_jpg_raw")
+uint64_t resize_jpg_raw(uint32_t input_ptr, uint32_t input_len, uint32_t width, uint32_t height, uint32_t quality) {
+	return resize_raw(input_ptr, input_len, width, height, quality, OUTPUT_FORMAT_JPG);
 }
 
 QK_EXPORTS(

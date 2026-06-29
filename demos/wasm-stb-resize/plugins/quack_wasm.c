@@ -7,12 +7,6 @@
 #define QK_HEAP_SIZE (64u * 1024u)
 #endif
 
-#if defined(__wasm__) || defined(__wasm32__)
-#define QK_EXPORT_NAME(name) __attribute__((export_name(name)))
-#else
-#define QK_EXPORT_NAME(name)
-#endif
-
 static uint8_t qk_heap[QK_HEAP_SIZE];
 static uint32_t qk_heap_top = 0;
 static uint32_t qk_call_heap_mark = 0xffffffffu;
@@ -386,6 +380,20 @@ uint64_t qk_return_image_base64_object(
 	n += encoded_len;
 	n += qk_write_str(json + n, "\"}");
 	return qk_return_json(QK_STATUS_OK, json, n);
+}
+
+uint64_t qk_return_raw_bytes_rewind(const uint8_t *data, uint32_t len) {
+	uint32_t out_len = len == 0 ? 1u : len;
+	qk_heap_top = 0;
+	uint32_t out_ptr = qk_alloc(out_len);
+	if (out_ptr == 0) {
+		return 0;
+	}
+	uint8_t *dst = (uint8_t *)(uintptr_t)out_ptr;
+	for (uint32_t i = 0; i < len; i++) {
+		dst[i] = data[i];
+	}
+	return ((uint64_t)out_ptr << 32) | (uint64_t)len;
 }
 
 QK_EXPORT_NAME("alloc")
