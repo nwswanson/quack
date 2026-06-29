@@ -36,6 +36,8 @@ wasm:
       path: plugins/rules.wasm
       abi: quack:wasm-v1
       retain_instances: 4
+      execution:
+        interruptible: true
       limits:
         timeout_ms: 25
         memory_pages: 16
@@ -74,6 +76,21 @@ in the uploaded archive.
 `retain_instances` controls the concurrency model. Omit it or set it to zero
 to instantiate a fresh WASM instance per call. Set it to a positive value to
 retain up to that many guest instances in a pool.
+
+`execution.interruptible` controls whether Quack asks wazero to interrupt guest
+execution when the request context is canceled or the WASM call timeout expires.
+The default is `true`.
+
+Set `execution.interruptible: false` only for trusted modules. This opts the
+module into trusted fast execution, which removes wazero's close-on-context
+checks for that module's runtime. The admin policy
+`runtime.wasm.fast_execution` must also allow the site. If the policy is not
+allowed, Quack logs a warning and runs the module in safe interruptible mode
+instead of rejecting the site.
+
+Non-interruptible WASM can keep running after the request timeout and can pin
+CPU if the guest loops forever. Pair it with low route concurrency and small
+retained instance pools.
 
 `limits` are per WASM function call:
 
@@ -537,14 +554,15 @@ The compiled-module cache key includes:
 - ABI
 - retained instance setting
 - limits
+- effective execution mode
 - configured imports
 
 When file hashes are unavailable, Quack computes a SHA-256 of the WASM bytes
 and uses that as the content identity. This keeps local/dev loaders from
 accidentally reusing stale compiled modules.
 
-Wazero runtimes are shared by memory-page limit. Each runtime is configured
-with:
+Wazero runtimes are shared by memory-page limit and execution mode. Safe
+runtimes are configured with:
 
 ```text
 WithMemoryLimitPages(memory_pages)
@@ -553,6 +571,11 @@ WithCloseOnContextDone(true)
 
 `WithCloseOnContextDone(true)` lets the host interrupt guest execution when a
 WASM call times out or the parent invocation is canceled.
+
+Trusted fast runtimes omit `WithCloseOnContextDone(true)`. Function calls use a
+background execution context so request cancellation does not close the guest
+module while it is running. If the guest eventually returns after the request is
+gone, normal result validation and instance release/discard behavior applies.
 
 ## Concurrency Model
 

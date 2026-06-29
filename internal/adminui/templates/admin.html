@@ -743,6 +743,15 @@
               </select>
             </label>
             <input type="hidden" name="runtime_websocket_policy_reason" value="{{.RuntimeWebSocketPolicy.Reason}}">
+            <label>
+              Trusted fast WASM execution
+              <select name="runtime_wasm_fast_execution_policy_mode">
+                <option value="allow" {{if eq .RuntimeWASMFastExecutionPolicy.Mode "allow"}}selected{{end}}>allow</option>
+                <option value="deny" {{if eq .RuntimeWASMFastExecutionPolicy.Mode "deny"}}selected{{end}}>deny</option>
+              </select>
+            </label>
+            <p class="muted">Non-interruptible WASM can continue running after request timeout and can pin CPU if it loops.</p>
+            <input type="hidden" name="runtime_wasm_fast_execution_policy_reason" value="{{.RuntimeWASMFastExecutionPolicy.Reason}}">
             <button type="submit">Save policy</button>
           </form>
         </section>

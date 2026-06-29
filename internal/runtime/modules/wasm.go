@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -44,11 +45,13 @@ type ScriptOpener interface {
 }
 
 type WASMModuleOptions struct {
-	Site    string
-	Version int64
-	Files   []WASMFile
-	Modules map[string]manifest.WASMModule
-	Loader  ScriptOpener
+	Site                    string
+	Version                 int64
+	Files                   []WASMFile
+	Modules                 map[string]manifest.WASMModule
+	Loader                  ScriptOpener
+	FastExecutionAllowed    bool
+	FastExecutionDenyReason string
 }
 
 type WASMFile struct {
@@ -86,28 +89,37 @@ func (n *wasmNamespace) module(thread *starlark.Thread, fn *starlark.Builtin, ar
 		return nil, fmt.Errorf("%s: wasm module %q path %q was not found in bundle", fn.Name(), name, cfg.Path)
 	}
 	return globalWASM.get(threadContext(thread, n.ctx), wasmLoadRequest{
-		site:    n.opts.Site,
-		version: n.opts.Version,
-		name:    name,
-		file:    file,
-		cfg:     cfg,
-		loader:  n.opts.Loader,
+		site:                    n.opts.Site,
+		version:                 n.opts.Version,
+		name:                    name,
+		file:                    file,
+		cfg:                     cfg,
+		loader:                  n.opts.Loader,
+		fastExecutionAllowed:    n.opts.FastExecutionAllowed,
+		fastExecutionDenyReason: n.opts.FastExecutionDenyReason,
 	})
 }
 
 type wasmLoadRequest struct {
-	site    string
-	version int64
-	name    string
-	file    WASMFile
-	cfg     manifest.WASMModule
-	loader  ScriptOpener
+	site                    string
+	version                 int64
+	name                    string
+	file                    WASMFile
+	cfg                     manifest.WASMModule
+	loader                  ScriptOpener
+	fastExecutionAllowed    bool
+	fastExecutionDenyReason string
 }
 
 type wasmManager struct {
 	mu       sync.Mutex
-	runtimes map[uint32]*wasmRuntimeEntry
+	runtimes map[wasmRuntimeKey]*wasmRuntimeEntry
 	modules  map[string]*wasmModuleValue
+}
+
+type wasmRuntimeKey struct {
+	memoryPages   uint32
+	interruptible bool
 }
 
 type wasmRuntimeEntry struct {
@@ -115,12 +127,25 @@ type wasmRuntimeEntry struct {
 }
 
 var globalWASM = &wasmManager{
-	runtimes: map[uint32]*wasmRuntimeEntry{},
+	runtimes: map[wasmRuntimeKey]*wasmRuntimeEntry{},
 	modules:  map[string]*wasmModuleValue{},
 }
 
 func (m *wasmManager) get(ctx context.Context, req wasmLoadRequest) (*wasmModuleValue, error) {
 	limits := normalizeWASMLimits(req.cfg.Limits)
+	interruptible, fastRequested := wasmExecutionMode(req.cfg, req.fastExecutionAllowed)
+	if fastRequested && interruptible {
+		reason := strings.TrimSpace(req.fastExecutionDenyReason)
+		if reason == "" {
+			reason = "runtime.wasm.fast_execution is not allowed for this site"
+		}
+		slog.WarnContext(ctx, "wasm module requested non-interruptible execution; using safe mode",
+			"site", req.site,
+			"version", req.version,
+			"module", req.name,
+			"reason", reason,
+		)
+	}
 	key := wasmCacheKey(req, limits)
 	if req.file.FileSHA != "" {
 		m.mu.Lock()
@@ -131,7 +156,7 @@ func (m *wasmManager) get(ctx context.Context, req wasmLoadRequest) (*wasmModule
 		m.mu.Unlock()
 	}
 	m.mu.Lock()
-	rt, err := m.runtimeLocked(ctx, uint32(limits.memoryPages))
+	rt, err := m.runtimeLocked(ctx, wasmRuntimeKey{memoryPages: uint32(limits.memoryPages), interruptible: interruptible})
 	m.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -159,13 +184,14 @@ func (m *wasmManager) get(ctx context.Context, req wasmLoadRequest) (*wasmModule
 		return nil, err
 	}
 	module := &wasmModuleValue{
-		name:      req.name,
-		abi:       req.cfg.ABI,
-		contentID: contentID,
-		cfg:       req.cfg,
-		limits:    limits,
-		runtime:   rt.runtime,
-		compiled:  compiled,
+		name:          req.name,
+		abi:           req.cfg.ABI,
+		contentID:     contentID,
+		cfg:           req.cfg,
+		limits:        limits,
+		interruptible: interruptible,
+		runtime:       rt.runtime,
+		compiled:      compiled,
 	}
 	module.exports = exportedFunctionNames(compiled)
 	if req.cfg.RetainInstances > 0 {
@@ -206,19 +232,21 @@ func validateConfiguredImports(name string, compiled wazero.CompiledModule, impo
 	return nil
 }
 
-func (m *wasmManager) runtimeLocked(ctx context.Context, pages uint32) (*wasmRuntimeEntry, error) {
-	if rt := m.runtimes[pages]; rt != nil {
+func (m *wasmManager) runtimeLocked(ctx context.Context, key wasmRuntimeKey) (*wasmRuntimeEntry, error) {
+	if rt := m.runtimes[key]; rt != nil {
 		return rt, nil
 	}
 	config := wazero.NewRuntimeConfig().
-		WithMemoryLimitPages(pages).
-		WithCloseOnContextDone(true)
+		WithMemoryLimitPages(key.memoryPages)
+	if key.interruptible {
+		config = config.WithCloseOnContextDone(true)
+	}
 	rt := &wasmRuntimeEntry{runtime: wazero.NewRuntimeWithConfig(ctx, config)}
 	if err := instantiateQuackHost(ctx, rt.runtime); err != nil {
 		_ = rt.runtime.Close(ctx)
 		return nil, err
 	}
-	m.runtimes[pages] = rt
+	m.runtimes[key] = rt
 	return rt, nil
 }
 
@@ -254,6 +282,7 @@ func normalizeWASMLimits(in manifest.WASMLimits) wasmLimits {
 func wasmCacheKey(req wasmLoadRequest, limits wasmLimits) string {
 	imports := append([]string(nil), req.cfg.Imports...)
 	sort.Strings(imports)
+	interruptible, _ := wasmExecutionMode(req.cfg, req.fastExecutionAllowed)
 	return strings.Join([]string{
 		req.site,
 		fmt.Sprint(req.version),
@@ -266,8 +295,19 @@ func wasmCacheKey(req wasmLoadRequest, limits wasmLimits) string {
 		fmt.Sprint(limits.memoryPages),
 		fmt.Sprint(limits.maxInputBytes),
 		fmt.Sprint(limits.maxOutputBytes),
+		fmt.Sprint(interruptible),
 		strings.Join(imports, ","),
 	}, "\x00")
+}
+
+func wasmExecutionMode(cfg manifest.WASMModule, fastAllowed bool) (interruptible bool, fastRequested bool) {
+	if cfg.Execution.Interruptible == nil || *cfg.Execution.Interruptible {
+		return true, false
+	}
+	if !fastAllowed {
+		return true, true
+	}
+	return false, true
 }
 
 func readWASMBytes(ctx context.Context, req wasmLoadRequest) ([]byte, string, error) {
@@ -329,15 +369,16 @@ func instantiateQuackHost(ctx context.Context, rt wazero.Runtime) error {
 }
 
 type wasmModuleValue struct {
-	name      string
-	abi       string
-	contentID string
-	cfg       manifest.WASMModule
-	limits    wasmLimits
-	runtime   wazero.Runtime
-	compiled  wazero.CompiledModule
-	exports   []string
-	pool      *wasmInstancePool
+	name          string
+	abi           string
+	contentID     string
+	cfg           manifest.WASMModule
+	limits        wasmLimits
+	interruptible bool
+	runtime       wazero.Runtime
+	compiled      wazero.CompiledModule
+	exports       []string
+	pool          *wasmInstancePool
 }
 
 func (m *wasmModuleValue) String() string       { return fmt.Sprintf("<wasm.module %s>", m.name) }
@@ -408,7 +449,7 @@ func (m *wasmModuleValue) call(parent context.Context, name string, args starlar
 		if err != nil {
 			return nil, err
 		}
-		value, err := m.callInstance(ctx, inst.module, name, input)
+		value, err := m.callInstance(m.executionContext(ctx), inst.module, name, input)
 		if err != nil {
 			m.pool.discard(inst)
 			return nil, err
@@ -421,7 +462,14 @@ func (m *wasmModuleValue) call(parent context.Context, name string, args starlar
 		return nil, err
 	}
 	defer inst.Close(context.Background())
-	return m.callInstance(ctx, inst, name, input)
+	return m.callInstance(m.executionContext(ctx), inst, name, input)
+}
+
+func (m *wasmModuleValue) executionContext(ctx context.Context) context.Context {
+	if m.interruptible {
+		return ctx
+	}
+	return context.Background()
 }
 
 func wasmInput(args starlark.Tuple, abi string) ([]byte, error) {

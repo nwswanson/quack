@@ -225,7 +225,7 @@ func TestAdminPolicyUpdateSavesDatabaseAndRuntimeHTTPPolicies(t *testing.T) {
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
-	form := "database_policy_mode=deny&database_policy_reason=db+off&runtime_http_policy_mode=allow&runtime_http_policy_reason=runtime+ok&runtime_http_client_policy_mode=deny&runtime_websocket_policy_mode=deny"
+	form := "database_policy_mode=deny&database_policy_reason=db+off&runtime_http_policy_mode=allow&runtime_http_policy_reason=runtime+ok&runtime_http_client_policy_mode=deny&runtime_websocket_policy_mode=deny&runtime_wasm_fast_execution_policy_mode=allow&runtime_wasm_fast_execution_policy_reason=trusted"
 	req := httptest.NewRequest(http.MethodPost, "/policy", strings.NewReader(form))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -246,6 +246,9 @@ func TestAdminPolicyUpdateSavesDatabaseAndRuntimeHTTPPolicies(t *testing.T) {
 	}
 	if policy := got[appsettings.SettingRuntimeHTTPFeature]; policy.Mode != "allow" || policy.Reason != "runtime ok" {
 		t.Fatalf("runtime HTTP policy = %+v, want allow runtime ok", policy)
+	}
+	if policy := got[appsettings.SettingRuntimeWASMFastExecutionFeature]; policy.Mode != "allow" || policy.Reason != "trusted" {
+		t.Fatalf("runtime WASM fast execution policy = %+v, want allow trusted", policy)
 	}
 }
 

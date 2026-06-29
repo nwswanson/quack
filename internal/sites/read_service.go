@@ -33,6 +33,7 @@ type SiteReadService interface {
 	SystemRuntimeHTTPPolicy(ctx context.Context) (domain.PolicyRecord, error)
 	SystemRuntimeHTTPClientPolicy(ctx context.Context) (domain.PolicyRecord, error)
 	SystemRuntimeWebSocketPolicy(ctx context.Context) (domain.PolicyRecord, error)
+	SystemRuntimeWASMFastExecutionPolicy(ctx context.Context) (domain.PolicyRecord, error)
 }
 
 type ServeSiteFileStatus string
@@ -333,6 +334,10 @@ func (s siteReadService) SystemRuntimeHTTPClientPolicy(ctx context.Context) (dom
 
 func (s siteReadService) SystemRuntimeWebSocketPolicy(ctx context.Context) (domain.PolicyRecord, error) {
 	return s.systemPolicy(ctx, appsettings.SettingRuntimeWebSocketFeature)
+}
+
+func (s siteReadService) SystemRuntimeWASMFastExecutionPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return s.systemPolicy(ctx, appsettings.SettingRuntimeWASMFastExecutionFeature)
 }
 
 func (s siteReadService) systemPolicy(ctx context.Context, key string) (domain.PolicyRecord, error) {

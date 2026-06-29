@@ -66,11 +66,16 @@ type WASM struct {
 }
 
 type WASMModule struct {
-	Path            string     `json:"path" yaml:"path"`
-	ABI             string     `json:"abi" yaml:"abi"`
-	RetainInstances int        `json:"retain_instances,omitempty" yaml:"retain_instances,omitempty"`
-	Limits          WASMLimits `json:"limits,omitempty" yaml:"limits,omitempty"`
-	Imports         []string   `json:"imports,omitempty" yaml:"imports,omitempty"`
+	Path            string        `json:"path" yaml:"path"`
+	ABI             string        `json:"abi" yaml:"abi"`
+	RetainInstances int           `json:"retain_instances,omitempty" yaml:"retain_instances,omitempty"`
+	Execution       WASMExecution `json:"execution,omitempty" yaml:"execution,omitempty"`
+	Limits          WASMLimits    `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Imports         []string      `json:"imports,omitempty" yaml:"imports,omitempty"`
+}
+
+type WASMExecution struct {
+	Interruptible *bool `json:"interruptible,omitempty" yaml:"interruptible,omitempty"`
 }
 
 type WASMLimits struct {

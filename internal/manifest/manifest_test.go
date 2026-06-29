@@ -133,6 +133,80 @@ func TestParseAllowsWASMModules(t *testing.T) {
 	}
 }
 
+func TestParseAllowsWASMExecutionInterruptibleModes(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		body              string
+		wantSet           bool
+		wantInterruptible bool
+	}{
+		{
+			name: "omitted",
+			body: `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:json-v1
+`,
+		},
+		{
+			name: "true",
+			body: `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:json-v1
+      execution:
+        interruptible: true
+`,
+			wantSet:           true,
+			wantInterruptible: true,
+		},
+		{
+			name: "false",
+			body: `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:json-v1
+      execution:
+        interruptible: false
+`,
+			wantSet:           true,
+			wantInterruptible: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Parse(strings.NewReader(tc.body), int64(len(tc.body)))
+			if err != nil {
+				t.Fatalf("Parse error = %v", err)
+			}
+			interruptible := got.WASM.Modules["rules"].Execution.Interruptible
+			if (interruptible != nil) != tc.wantSet {
+				t.Fatalf("interruptible set = %v, want %v", interruptible != nil, tc.wantSet)
+			}
+			if interruptible != nil && *interruptible != tc.wantInterruptible {
+				t.Fatalf("interruptible = %v, want %v", *interruptible, tc.wantInterruptible)
+			}
+		})
+	}
+}
+
+func TestParseRejectsUnknownWASMExecutionFields(t *testing.T) {
+	body := `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:json-v1
+      execution:
+        trusted_fast: true
+`
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "field trusted_fast not found") {
+		t.Fatalf("Parse error = %v, want unknown execution field error", err)
+	}
+}
+
 func TestParseAllowsRouteLimits(t *testing.T) {
 	body := `routes:
   - path: /api

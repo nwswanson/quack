@@ -1632,6 +1632,63 @@ func TestServicePassesRuntimeBundleFilesToExecutor(t *testing.T) {
 	}
 }
 
+func TestServiceDefaultsWASMFastExecutionToSafeModeWithoutPolicy(t *testing.T) {
+	interruptible := false
+	executor := &recordingExecutor{resp: InvocationResponse{StatusCode: http.StatusOK, Body: []byte("ok")}}
+	svc := NewService(ServiceOptions{
+		Repository: newRuntimeRepo(RouteMetadata{
+			Site: "foo", SiteSHA: "foo-sha", Version: 3, RoutePath: "/api", RouteKind: RouteHTTP, RuntimeKind: RuntimeStarlark,
+			BundleObjectKey: "app.star", Methods: []string{http.MethodGet},
+			WASM: map[string]manifest.WASMModule{
+				"rules": {Path: "plugins/rules.wasm", ABI: "quack:json-v1", Execution: manifest.WASMExecution{Interruptible: &interruptible}},
+			},
+		}),
+		Policies:        allowRuntimeHTTPPolicy(),
+		Executor:        executor,
+		EnableExecution: true,
+	})
+
+	if _, err := svc.InvokeHTTP(context.Background(), InvocationRequest{Site: "foo", Version: 3, Route: "/api", Method: http.MethodGet}); err != nil {
+		t.Fatal(err)
+	}
+	if executor.bundle.WASMFastExecutionAllowed {
+		t.Fatal("WASMFastExecutionAllowed = true, want safe-mode fallback")
+	}
+	if executor.bundle.WASMFastExecutionDenyReason == "" {
+		t.Fatal("WASMFastExecutionDenyReason is empty, want policy denial reason")
+	}
+	if got := executor.bundle.WASM["rules"].Execution.Interruptible; got == nil || *got {
+		t.Fatalf("bundle wasm execution = %+v, want original fast execution request preserved", got)
+	}
+}
+
+func TestServiceAllowsWASMFastExecutionWithPolicy(t *testing.T) {
+	interruptible := false
+	executor := &recordingExecutor{resp: InvocationResponse{StatusCode: http.StatusOK, Body: []byte("ok")}}
+	svc := NewService(ServiceOptions{
+		Repository: newRuntimeRepo(RouteMetadata{
+			Site: "foo", SiteSHA: "foo-sha", Version: 3, RoutePath: "/api", RouteKind: RouteHTTP, RuntimeKind: RuntimeStarlark,
+			BundleObjectKey: "app.star", Methods: []string{http.MethodGet},
+			WASM: map[string]manifest.WASMModule{
+				"rules": {Path: "plugins/rules.wasm", ABI: "quack:json-v1", Execution: manifest.WASMExecution{Interruptible: &interruptible}},
+			},
+		}),
+		Policies: runtimePolicyLoader{policies: []domain.PolicyRecord{
+			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPFeature, Mode: "allow"},
+			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeWASMFastExecutionFeature, Mode: "allow"},
+		}},
+		Executor:        executor,
+		EnableExecution: true,
+	})
+
+	if _, err := svc.InvokeHTTP(context.Background(), InvocationRequest{Site: "foo", Version: 3, Route: "/api", Method: http.MethodGet}); err != nil {
+		t.Fatal(err)
+	}
+	if !executor.bundle.WASMFastExecutionAllowed {
+		t.Fatal("WASMFastExecutionAllowed = false, want policy-allowed fast mode")
+	}
+}
+
 func TestServiceDeniesRuntimeWithoutPolicy(t *testing.T) {
 	svc := NewService(ServiceOptions{
 		Repository: newRuntimeRepo(RouteMetadata{

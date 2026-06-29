@@ -109,6 +109,29 @@ func TestEvaluateRuntimeWebSocketAllowsExplicitPolicy(t *testing.T) {
 	}
 }
 
+func TestEvaluateRuntimeWASMFastExecutionDefaultsToDenied(t *testing.T) {
+	eval := Evaluate(nil, []CapabilityRequest{{Key: CapabilityRuntimeWASMFastExecution, Required: false, Value: "true"}})
+
+	if !eval.Allowed {
+		t.Fatal("optional runtime WASM fast execution violation should not block evaluation")
+	}
+	if len(eval.Violations) != 1 || eval.Violations[0].Key != CapabilityRuntimeWASMFastExecution {
+		t.Fatalf("violations = %+v, want runtime WASM fast execution violation", eval.Violations)
+	}
+}
+
+func TestEvaluateRuntimeWASMFastExecutionAllowsExplicitPolicy(t *testing.T) {
+	eval := Evaluate([]domain.PolicyRecord{{
+		ScopeType: domain.ScopeSystem,
+		Key:       appsettings.SettingRuntimeWASMFastExecutionFeature,
+		Mode:      "allow",
+	}}, []CapabilityRequest{{Key: CapabilityRuntimeWASMFastExecution, Required: false, Value: "true"}})
+
+	if !eval.Allowed || len(eval.Violations) != 0 {
+		t.Fatalf("evaluation = %+v, want allowed runtime WASM fast execution", eval)
+	}
+}
+
 func TestDatabaseAllowedUsesSystemPolicyAndDefault(t *testing.T) {
 	allowed, _, err := DatabaseAllowed(context.Background(), policyLoader{}, domain.AdminUser{}, "")
 	if err != nil {
@@ -190,6 +213,18 @@ func TestRequestsFromManifestConvertsAPIProxies(t *testing.T) {
 	})
 	if len(requests) != 1 || requests[0].Key != CapabilityRuntimeHTTPClient || !requests[0].Required {
 		t.Fatalf("requests = %+v, want required runtime HTTP client request", requests)
+	}
+}
+
+func TestRequestsFromManifestDoesNotUploadGateWASMFastExecution(t *testing.T) {
+	interruptible := false
+	requests := RequestsFromManifest(manifest.Manifest{
+		WASM: manifest.WASM{Modules: map[string]manifest.WASMModule{
+			"rules": {Path: "plugins/rules.wasm", ABI: "quack:json-v1", Execution: manifest.WASMExecution{Interruptible: &interruptible}},
+		}},
+	})
+	if len(requests) != 0 {
+		t.Fatalf("requests = %+v, want no upload-time runtime WASM fast execution request", requests)
 	}
 }
 

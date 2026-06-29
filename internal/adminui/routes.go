@@ -503,7 +503,12 @@ func (h Handler) handleAdminPolicy(w http.ResponseWriter, r *http.Request) {
 		redirectAdminMessage(w, r, "/policy", "error", "Starlark WebSocket routes must be allow or deny.")
 		return
 	}
-	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeHTTPClientPolicy, runtimeWebSocketPolicy} {
+	runtimeWASMFastExecutionPolicy, ok := policyFromForm(r, appsettings.SettingRuntimeWASMFastExecutionFeature, "runtime_wasm_fast_execution_policy", user.ID)
+	if !ok {
+		redirectAdminMessage(w, r, "/policy", "error", "Trusted fast WASM execution must be allow or deny.")
+		return
+	}
+	for _, record := range []domain.PolicyRecord{databasePolicy, runtimeHTTPPolicy, runtimeHTTPClientPolicy, runtimeWebSocketPolicy, runtimeWASMFastExecutionPolicy} {
 		if err := h.write.SavePolicy(r.Context(), record); err != nil {
 			slog.ErrorContext(r.Context(), "save policy failed", "username", user.Username, "key", record.Key, "error", err)
 			protocol.WriteError(w, http.StatusInternalServerError, "internal server error")
@@ -908,27 +913,28 @@ func (s adminSiteRow) IsUnpublished() bool {
 }
 
 type adminPageData struct {
-	User                    domain.AdminUser
-	Page                    string
-	Title                   string
-	Nav                     []adminNavItem
-	Error                   string
-	Message                 string
-	Sites                   []adminSiteRow
-	Users                   []domain.AdminUser
-	Settings                domain.ServerSettings
-	DatabasePolicy          domain.PolicyRecord
-	RuntimeHTTPPolicy       domain.PolicyRecord
-	RuntimeHTTPClientPolicy domain.PolicyRecord
-	RuntimeWebSocketPolicy  domain.PolicyRecord
-	CreatedUser             domain.CreatedUser
-	LogSite                 string
-	LogEvents               []logbuffer.Event
-	SecretsHasRootKey       bool
-	SecretsUnlocked         bool
-	HardwareDevices         []hardware.AdminDevice
-	HardwareSites           []domain.PublishedSite
-	HardwareKinds           []hardware.AdminKindInfo
+	User                           domain.AdminUser
+	Page                           string
+	Title                          string
+	Nav                            []adminNavItem
+	Error                          string
+	Message                        string
+	Sites                          []adminSiteRow
+	Users                          []domain.AdminUser
+	Settings                       domain.ServerSettings
+	DatabasePolicy                 domain.PolicyRecord
+	RuntimeHTTPPolicy              domain.PolicyRecord
+	RuntimeHTTPClientPolicy        domain.PolicyRecord
+	RuntimeWebSocketPolicy         domain.PolicyRecord
+	RuntimeWASMFastExecutionPolicy domain.PolicyRecord
+	CreatedUser                    domain.CreatedUser
+	LogSite                        string
+	LogEvents                      []logbuffer.Event
+	SecretsHasRootKey              bool
+	SecretsUnlocked                bool
+	HardwareDevices                []hardware.AdminDevice
+	HardwareSites                  []domain.PublishedSite
+	HardwareKinds                  []hardware.AdminKindInfo
 }
 
 func (d adminPageData) LoggedIn() bool {
@@ -1032,10 +1038,15 @@ func (h Handler) adminPageData(r *http.Request, user domain.AdminUser, page stri
 		if err != nil {
 			return adminPageData{}, err
 		}
+		runtimeWASMFastExecutionPolicy, err := h.read.SystemRuntimeWASMFastExecutionPolicy(r.Context())
+		if err != nil {
+			return adminPageData{}, err
+		}
 		data.DatabasePolicy = databasePolicy
 		data.RuntimeHTTPPolicy = runtimeHTTPPolicy
 		data.RuntimeHTTPClientPolicy = runtimeHTTPClientPolicy
 		data.RuntimeWebSocketPolicy = runtimeWebSocketPolicy
+		data.RuntimeWASMFastExecutionPolicy = runtimeWASMFastExecutionPolicy
 	case adminPageSecrets:
 		if h.secrets != nil {
 			hasKey, unlocked, err := h.secrets.Status(r.Context())

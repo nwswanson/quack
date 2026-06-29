@@ -18,9 +18,10 @@ const (
 	// secrets, writable temp storage, and database privileges. Do not let
 	// "runtime.http" become a broad permission to do everything user code might
 	// eventually request.
-	CapabilityRuntimeHTTP       = "runtime.http"
-	CapabilityRuntimeHTTPClient = "runtime.http_client"
-	CapabilityRuntimeWebSocket  = "runtime.websocket"
+	CapabilityRuntimeHTTP              = "runtime.http"
+	CapabilityRuntimeHTTPClient        = "runtime.http_client"
+	CapabilityRuntimeWebSocket         = "runtime.websocket"
+	CapabilityRuntimeWASMFastExecution = "runtime.wasm.fast_execution"
 )
 
 type CapabilityRequest struct {
@@ -161,6 +162,21 @@ func RuntimeWebSocketAllowedByRecords(policies []domain.PolicyRecord) (bool, str
 	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeWebSocketFeature, "dynamic WebSocket routes are disabled by administrator policy")
 }
 
+func RuntimeWASMFastExecutionAllowed(ctx context.Context, loader Loader, site string) (bool, string, error) {
+	if loader == nil {
+		return false, "non-interruptible WASM is disabled by administrator policy", nil
+	}
+	policies, err := loader.LoadPolicies(ctx, ScopesFor(domain.AdminUser{}, site))
+	if err != nil {
+		return false, "", err
+	}
+	return RuntimeWASMFastExecutionAllowedByRecords(policies)
+}
+
+func RuntimeWASMFastExecutionAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
+	return capabilityAllowedByRecords(policies, appsettings.SettingRuntimeWASMFastExecutionFeature, "non-interruptible WASM is disabled by administrator policy")
+}
+
 func HardwareCameraAllowedByRecords(policies []domain.PolicyRecord) (bool, string, error) {
 	return capabilityAllowedByRecords(policies, appsettings.SettingHardwareCameraFeature, "camera hardware is disabled by administrator policy")
 }
@@ -179,6 +195,8 @@ func Evaluate(policies []domain.PolicyRecord, requests []CapabilityRequest) Eval
 			allowed, reason, _ = RuntimeHTTPClientAllowedByRecords(policies)
 		case CapabilityRuntimeWebSocket:
 			allowed, reason, _ = RuntimeWebSocketAllowedByRecords(policies)
+		case CapabilityRuntimeWASMFastExecution:
+			allowed, reason, _ = RuntimeWASMFastExecutionAllowedByRecords(policies)
 		case CapabilityHardwareCamera:
 			allowed, reason, _ = HardwareCameraAllowedByRecords(policies)
 		default:

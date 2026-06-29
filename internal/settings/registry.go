@@ -71,6 +71,7 @@ const (
 	SettingRuntimeHTTPFeature                    = "features.runtime.http.enabled"
 	SettingRuntimeHTTPClientFeature              = "features.runtime.http_client.enabled"
 	SettingRuntimeWebSocketFeature               = "features.runtime.websocket.enabled"
+	SettingRuntimeWASMFastExecutionFeature       = "runtime.wasm.fast_execution"
 	SettingRuntimeMaxDurationMillis              = "runtime.max_duration_ms"
 	SettingRuntimeHTTPClientMaxBytes             = "runtime.http_client.max_bytes"
 	SettingRuntimeHTTPClientMaxTimeoutMS         = "runtime.http_client.max_timeout_ms"
@@ -162,6 +163,10 @@ var registry = map[string]SettingDefinition{
 	SettingRuntimeWebSocketFeature: {
 		Key: SettingRuntimeWebSocketFeature, Type: SettingTypeBool, DefaultValue: "false",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite, domain.ScopeUpload}, SiteEditable: true, AdminEditable: true, PolicyKind: PolicyKindCapability,
+	},
+	SettingRuntimeWASMFastExecutionFeature: {
+		Key: SettingRuntimeWASMFastExecutionFeature, Type: SettingTypeBool, DefaultValue: "false",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem, domain.ScopeUser, domain.ScopeSite}, AdminEditable: true, PolicyKind: PolicyKindCapability,
 	},
 	SettingRuntimeMaxDurationMillis: {
 		Key: SettingRuntimeMaxDurationMillis, Type: SettingTypeInt64, DefaultValue: "500",

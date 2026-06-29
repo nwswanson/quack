@@ -371,6 +371,10 @@ func cloneWASMModules(in map[string]manifest.WASMModule) map[string]manifest.WAS
 	out := make(map[string]manifest.WASMModule, len(in))
 	for name, module := range in {
 		module.Imports = append([]string(nil), module.Imports...)
+		if module.Execution.Interruptible != nil {
+			interruptible := *module.Execution.Interruptible
+			module.Execution.Interruptible = &interruptible
+		}
 		out[name] = module
 	}
 	return out

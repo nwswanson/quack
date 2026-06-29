@@ -230,11 +230,13 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 		Route:   route.Path,
 	})
 	out["wasm"] = modules.NewWASMModule(ctx, modules.WASMModuleOptions{
-		Site:    bundle.Site,
-		Version: bundle.Version,
-		Files:   wasmFiles(bundle.Files),
-		Modules: bundle.WASM,
-		Loader:  e.loader,
+		Site:                    bundle.Site,
+		Version:                 bundle.Version,
+		Files:                   wasmFiles(bundle.Files),
+		Modules:                 bundle.WASM,
+		Loader:                  e.loader,
+		FastExecutionAllowed:    bundle.WASMFastExecutionAllowed,
+		FastExecutionDenyReason: bundle.WASMFastExecutionDenyReason,
 	})
 	out["http"] = e.newHTTPModule(ctx, bundle, route)
 	out["secret"] = modules.NewSecretModule(ctx, bundle.Site, e.secrets)

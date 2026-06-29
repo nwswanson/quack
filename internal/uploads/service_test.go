@@ -385,6 +385,10 @@ func (r uploadServiceRead) SystemRuntimeWebSocketPolicy(ctx context.Context) (do
 	return domain.PolicyRecord{}, nil
 }
 
+func (r uploadServiceRead) SystemRuntimeWASMFastExecutionPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
 type uploadServiceWrite struct {
 	finished bool
 	settings map[string]string

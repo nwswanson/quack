@@ -44,6 +44,7 @@ func capabilityRequests(capabilities []string) ([]policy.CapabilityRequest, erro
 		if capability != policy.CapabilityRuntimeHTTP &&
 			capability != policy.CapabilityRuntimeHTTPClient &&
 			capability != policy.CapabilityRuntimeWebSocket &&
+			capability != policy.CapabilityRuntimeWASMFastExecution &&
 			capability != policy.CapabilityHardwareCamera {
 			return nil, fmt.Errorf("%w: unsupported runtime capability %s", ErrCapabilityDenied, capability)
 		}

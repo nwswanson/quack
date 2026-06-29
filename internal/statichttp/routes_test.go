@@ -222,6 +222,10 @@ func (r testReadService) SystemRuntimeWebSocketPolicy(ctx context.Context) (doma
 	return domain.PolicyRecord{}, nil
 }
 
+func (r testReadService) SystemRuntimeWASMFastExecutionPolicy(ctx context.Context) (domain.PolicyRecord, error) {
+	return domain.PolicyRecord{}, nil
+}
+
 type testStore struct {
 	appstorage.Storage
 	root string

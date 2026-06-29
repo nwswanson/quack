@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -194,6 +195,21 @@ func (s *service) runtimeBundle(ctx context.Context, route RouteMetadata, limits
 	}
 	bundle := route.bundle(limits, files)
 	bundle.APIProxies = apiProxies
+	if wasmRequestsFastExecution(bundle.WASM) {
+		allowed, reason, err := policy.RuntimeWASMFastExecutionAllowed(ctx, s.policies, route.Site)
+		if err != nil {
+			return Bundle{}, err
+		}
+		bundle.WASMFastExecutionAllowed = allowed
+		bundle.WASMFastExecutionDenyReason = reason
+		if !allowed {
+			slog.WarnContext(ctx, "wasm fast execution disabled by policy; using interruptible safe mode",
+				"site", route.Site,
+				"version", route.Version,
+				"reason", reason,
+			)
+		}
+	}
 	return bundle, nil
 }
 func (s *service) prepareHTTPInvocation(ctx context.Context, req InvocationRequest) (RouteMetadata, ResourceLimits, error) {
@@ -368,9 +384,22 @@ func cloneWASMModules(in map[string]manifest.WASMModule) map[string]manifest.WAS
 	out := make(map[string]manifest.WASMModule, len(in))
 	for name, module := range in {
 		module.Imports = append([]string(nil), module.Imports...)
+		if module.Execution.Interruptible != nil {
+			interruptible := *module.Execution.Interruptible
+			module.Execution.Interruptible = &interruptible
+		}
 		out[name] = module
 	}
 	return out
+}
+
+func wasmRequestsFastExecution(modules map[string]manifest.WASMModule) bool {
+	for _, module := range modules {
+		if module.Execution.Interruptible != nil && !*module.Execution.Interruptible {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) eventRoute(ctx context.Context, req EventInvocationRequest) (RouteMetadata, error) {

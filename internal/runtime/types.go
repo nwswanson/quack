@@ -40,13 +40,15 @@ const (
 )
 
 type Bundle struct {
-	Site       string
-	Version    int64
-	Routes     []Route
-	Files      []BundleFile
-	APIProxies []manifest.APIProxy
-	WASM       map[string]manifest.WASMModule
-	Limits     ResourceLimits
+	Site                        string
+	Version                     int64
+	Routes                      []Route
+	Files                       []BundleFile
+	APIProxies                  []manifest.APIProxy
+	WASM                        map[string]manifest.WASMModule
+	WASMFastExecutionAllowed    bool
+	WASMFastExecutionDenyReason string
+	Limits                      ResourceLimits
 }
 type BundleFile struct {
 	Path     string
