@@ -24,9 +24,18 @@ import (
 
 const (
 	quackJSONABI        = "quack:json-v1"
+	quackWASMABI        = "quack:wasm-v1"
 	defaultWASMTimeout  = 25 * time.Millisecond
 	defaultWASMPages    = 16
 	defaultWASMMaxBytes = 64 << 10
+
+	wasmFormatJSON = 0x00
+
+	wasmStatusOK              = 0x00
+	wasmStatusGuestError      = 0x01
+	wasmStatusDecodeError     = 0x02
+	wasmStatusUnknownFunction = 0x03
+	wasmStatusPanic           = 0x04
 )
 
 type ScriptOpener interface {
@@ -378,13 +387,13 @@ func (m *wasmModuleValue) exportsBuiltin(thread *starlark.Thread, fn *starlark.B
 }
 
 func (m *wasmModuleValue) call(parent context.Context, name string, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-	if m.abi != quackJSONABI {
+	if m.abi != quackJSONABI && m.abi != quackWASMABI {
 		return nil, fmt.Errorf("wasm module %q uses unsupported ABI %q", m.name, m.abi)
 	}
 	if len(kwargs) > 0 {
 		return nil, fmt.Errorf("%s.%s: keyword arguments are not supported", m.name, name)
 	}
-	input, err := wasmJSONInput(args)
+	input, err := wasmInput(args, m.abi)
 	if err != nil {
 		return nil, fmt.Errorf("%s.%s: %w", m.name, name, err)
 	}
@@ -414,7 +423,7 @@ func (m *wasmModuleValue) call(parent context.Context, name string, args starlar
 	return m.callInstance(ctx, inst, name, input)
 }
 
-func wasmJSONInput(args starlark.Tuple) ([]byte, error) {
+func wasmInput(args starlark.Tuple, abi string) ([]byte, error) {
 	var value starlark.Value = starlark.None
 	switch args.Len() {
 	case 0:
@@ -430,6 +439,9 @@ func wasmJSONInput(args starlark.Tuple) ([]byte, error) {
 	data, err := json.Marshal(goValue)
 	if err != nil {
 		return nil, fmt.Errorf("input is not JSON encodable: %w", err)
+	}
+	if abi == quackWASMABI {
+		data = append([]byte{wasmFormatJSON, 0x00}, data...)
 	}
 	return data, nil
 }
@@ -488,11 +500,54 @@ func (m *wasmModuleValue) callInstance(ctx context.Context, inst api.Module, nam
 	}
 	outputCopy := append([]byte(nil), output...)
 	m.freeGuestBytes(context.Background(), inst, outputPtr, outputLen)
+	if m.abi == quackWASMABI {
+		return m.decodeEnvelopedOutput(name, outputCopy)
+	}
 	var decoded any
 	if err := json.Unmarshal(outputCopy, &decoded); err != nil {
 		return nil, fmt.Errorf("%s.%s: wasm output is not valid JSON: %w", m.name, name, err)
 	}
 	return starlarkValueFromAnyValue(decoded), nil
+}
+
+func (m *wasmModuleValue) decodeEnvelopedOutput(name string, output []byte) (starlark.Value, error) {
+	if len(output) < 2 {
+		return nil, fmt.Errorf("%s.%s: wasm output envelope is too short", m.name, name)
+	}
+	status, format, payload := output[0], output[1], output[2:]
+	if format != wasmFormatJSON {
+		return nil, fmt.Errorf("%s.%s: wasm output uses unsupported format 0x%02x", m.name, name, format)
+	}
+	if status != wasmStatusOK {
+		message := wasmStatusMessage(status)
+		var decoded any
+		if err := json.Unmarshal(payload, &decoded); err == nil {
+			if text, ok := decoded.(string); ok {
+				return nil, fmt.Errorf("%s.%s: wasm %s: %s", m.name, name, message, text)
+			}
+		}
+		return nil, fmt.Errorf("%s.%s: wasm %s: %s", m.name, name, message, string(payload))
+	}
+	var decoded any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return nil, fmt.Errorf("%s.%s: wasm output JSON payload is invalid: %w", m.name, name, err)
+	}
+	return starlarkValueFromAnyValue(decoded), nil
+}
+
+func wasmStatusMessage(status byte) string {
+	switch status {
+	case wasmStatusGuestError:
+		return "guest error"
+	case wasmStatusDecodeError:
+		return "decode error"
+	case wasmStatusUnknownFunction:
+		return "unknown function"
+	case wasmStatusPanic:
+		return "panic"
+	default:
+		return fmt.Sprintf("error status 0x%02x", status)
+	}
 }
 
 func (m *wasmModuleValue) freeGuestBytes(ctx context.Context, inst api.Module, ptr, length uint32) {

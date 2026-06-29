@@ -133,6 +133,22 @@ func TestParseAllowsWASMModules(t *testing.T) {
 	}
 }
 
+func TestParseAllowsQuackWASMABI(t *testing.T) {
+	body := `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:wasm-v1
+`
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	if got.WASM.Modules["rules"].ABI != "quack:wasm-v1" {
+		t.Fatalf("abi = %q, want quack:wasm-v1", got.WASM.Modules["rules"].ABI)
+	}
+}
+
 func TestParseRejectsUnsupportedWASMImport(t *testing.T) {
 	body := `wasm:
   modules:

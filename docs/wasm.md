@@ -13,15 +13,17 @@ rules = wasm.module("rules")
 There is no `load("@quack/wasm.star", "wasm")`. Every Starlark HTTP,
 WebSocket, and event invocation receives the `wasm` module from the Go host.
 
-The current supported ABI is:
+The supported ABIs are:
 
 ```text
 quack:json-v1
+quack:wasm-v1
 ```
 
-It is designed for policy checks, validators, scoring functions, small
-transforms, and other extension logic where JSON-compatible values are a good
-boundary between Starlark and guest code.
+`quack:json-v1` is the original JSON-only ABI. `quack:wasm-v1` keeps the same
+core `alloc/free/call` pointer protocol but adds small input and result
+envelopes so more value encodings and structured guest errors can be added
+without changing the exported function shape.
 
 ## Manifest Declaration
 
@@ -32,7 +34,7 @@ wasm:
   modules:
     rules:
       path: plugins/rules.wasm
-      abi: quack:json-v1
+      abi: quack:wasm-v1
       retain_instances: 4
       limits:
         timeout_ms: 25
@@ -66,7 +68,8 @@ rules.wasm
 `path` is relative to the upload root. It must point to a `.wasm` file included
 in the uploaded archive.
 
-`abi` must currently be `quack:json-v1`.
+`abi` must be `quack:json-v1` or `quack:wasm-v1`. New modules should prefer
+`quack:wasm-v1`.
 
 `retain_instances` controls the concurrency model. Omit it or set it to zero
 to instantiate a fresh WASM instance per call. Set it to a positive value to
@@ -77,8 +80,10 @@ retain up to that many guest instances in a pool.
 - `timeout_ms`: wall-clock call timeout. Default is `25`.
 - `memory_pages`: max WASM memory pages per instance. One page is 64 KiB.
   Default is `16`.
-- `max_input_bytes`: max encoded JSON input size. Default is `65536`.
-- `max_output_bytes`: max encoded JSON output size. Default is `65536`.
+- `max_input_bytes`: max encoded input size after any ABI envelope is added.
+  Default is `65536`.
+- `max_output_bytes`: max returned output size before the host decodes it.
+  Default is `65536`.
 
 `imports` is an explicit host capability list. The current supported imports
 are:
@@ -169,9 +174,9 @@ rules.exports()
 This returns the low-level exported WASM function names, such as `alloc`,
 `free`, and `call`.
 
-## Quack JSON ABI
+## Core WASM ABI
 
-The guest module must export:
+Both supported ABIs use the same required core exports:
 
 ```text
 memory
@@ -185,13 +190,14 @@ The host call flow is:
 ```text
 Starlark value
   -> Go JSON bytes
+  -> optional ABI envelope
   -> guest alloc(input size)
   -> host writes JSON into guest memory
   -> guest call(function name, input bytes)
-  -> guest returns pointer/length to JSON output
-  -> host reads JSON output from guest memory
+  -> guest returns pointer/length to output bytes
+  -> host reads output from guest memory
   -> host free(...) for name, input, and output buffers
-  -> Go decodes JSON into Starlark values
+  -> host decodes output according to the ABI
 ```
 
 The `i64` returned by `call` packs the output pointer and length:
@@ -221,6 +227,71 @@ call("evaluate", {"topic": "orders.created"})
 This lets one WASM binary expose many logical functions through a single ABI
 dispatcher.
 
+## Quack WASM ABI v1
+
+`quack:wasm-v1` wraps the encoded argument and result bytes.
+
+Input bytes start with:
+
+```text
+byte 0: format
+byte 1: flags
+bytes 2..: payload
+```
+
+Currently supported input format:
+
+```text
+0x00 = JSON
+```
+
+`flags` must currently be `0`.
+
+Result bytes start with:
+
+```text
+byte 0: status
+byte 1: format
+bytes 2..: payload
+```
+
+Result status values:
+
+```text
+0 = ok
+1 = guest error
+2 = decode error
+3 = unknown function
+4 = panic
+```
+
+Currently supported result format:
+
+```text
+0x00 = JSON
+```
+
+On success, Quack decodes the JSON payload into Starlark values. On non-zero
+status, Quack fails the Starlark invocation with a runtime error. If the error
+payload is a JSON string, that string is included in the error message.
+
+Guests may also export optional metadata helpers:
+
+```text
+qk_abi_version() -> i32
+qk_manifest() -> i64
+```
+
+`qk_abi_version` should return `1`. `qk_manifest` returns a pointer/length pair
+using the same packed return convention as `call`; helper libraries may use it
+to describe exported functions.
+
+## Quack JSON ABI
+
+`quack:json-v1` is the compatibility ABI. It uses the same core exports but
+passes raw JSON input bytes to the guest and expects raw JSON output bytes back.
+It has no status byte or format byte.
+
 A common guest-side dispatch shape is:
 
 ```rust
@@ -244,8 +315,8 @@ pub extern "C" fn call(
 }
 ```
 
-Quack does not currently impose a guest error envelope. If you want structured
-application errors, return them as JSON values, for example:
+With `quack:json-v1`, Quack does not impose a guest error envelope. If you want
+structured application errors, return them as JSON values, for example:
 
 ```json
 {"ok": false, "error": {"code": "invalid_input", "message": "missing topic"}}
@@ -256,7 +327,7 @@ runtime errors and fail the Starlark invocation.
 
 ## Building Guest Modules
 
-Guest modules must target core WebAssembly and export the Quack JSON ABI. They
+Guest modules must target core WebAssembly and export the Quack WASM ABI. They
 should not require WASI filesystem or network access. Quack does not expose
 general WASI capabilities.
 
@@ -266,7 +337,7 @@ The important build properties are:
 target: wasm32
 exports: memory, alloc, free, call
 imports: only declared Quack host imports
-ABI: pointer/length JSON buffers
+ABI: pointer/length buffers
 ```
 
 ### Rust
@@ -320,7 +391,7 @@ pub extern "C" fn call(
     input_ptr: i32,
     input_len: i32,
 ) -> i64 {
-    // Decode name and input JSON, dispatch, encode output JSON,
+    // Decode name and input bytes, dispatch, encode output bytes,
     // and return packed pointer/length.
 }
 ```
@@ -343,7 +414,7 @@ Any language can work if it produces a core WASM module with:
 - an exported linear memory
 - exported `alloc`, `free`, and `call`
 - no undeclared imports
-- JSON byte buffers following the Quack layout
+- byte buffers following the selected Quack ABI layout
 
 Component Model and WIT modules are not supported by this runtime surface yet.
 
@@ -406,7 +477,7 @@ wasm:
   modules:
     rules:
       path: plugins/rules.wasm
-      abi: quack:json-v1
+      abi: quack:wasm-v1
 ```
 
 The uploaded archive must contain:
@@ -498,7 +569,7 @@ wasm:
   modules:
     rules:
       path: plugins/rules.wasm
-      abi: quack:json-v1
+      abi: quack:wasm-v1
 ```
 
 Each Starlark call creates a fresh WASM instance and closes it after the call.
@@ -537,9 +608,10 @@ instances can eventually exhaust their configured memory.
 
 WASM calls are bounded independently from Starlark execution limits.
 
-`max_input_bytes` applies after Quack JSON-encodes the Starlark argument.
+`max_input_bytes` applies after Quack JSON-encodes the Starlark argument and
+adds any ABI envelope.
 
-`max_output_bytes` applies to the guest-returned JSON byte buffer before Quack
+`max_output_bytes` applies to the guest-returned byte buffer before Quack
 decodes it.
 
 `timeout_ms` applies to the whole WASM call path after the Starlark function is
@@ -571,7 +643,7 @@ wasm:
   modules:
     rules:
       path: plugins/rules.wasm
-      abi: quack:json-v1
+      abi: quack:wasm-v1
       retain_instances: 4
       limits:
         timeout_ms: 25

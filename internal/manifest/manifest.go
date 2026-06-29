@@ -266,7 +266,7 @@ func validateWASM(wasm WASM) error {
 		wasm.Modules[name] = module
 
 		switch strings.TrimSpace(module.ABI) {
-		case "quack:json-v1":
+		case "quack:json-v1", "quack:wasm-v1":
 		default:
 			return fmt.Errorf("unsupported wasm.modules[%q].abi %q", name, module.ABI)
 		}

@@ -50,6 +50,83 @@ def handle(req):
 	}
 }
 
+func TestStarlarkWASMModuleQuackWASMABI(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"app.star": `
+rules = wasm.module("rules")
+
+def handle(req):
+    decision = rules.evaluate({"topic": "orders.created"})
+    return (200, {}, "%s %s" % (decision["allow"], decision["reason"]))
+`,
+		"plugins/rules.wasm": string(testQuackJSONWASM(envelopedJSON(0, []byte(`{"allow":true,"reason":"ok"}`)))),
+	})
+
+	resp, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo-errors", Version: 1,
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		Files: []BundleFile{
+			{Path: "app.star", BlobPath: "app.star", FileSHA: "app"},
+			{Path: "plugins/rules.wasm", BlobPath: "plugins/rules.wasm", FileSHA: "rules-error-v1"},
+		},
+		WASM: map[string]manifest.WASMModule{
+			"rules": {
+				Path: "plugins/rules.wasm",
+				ABI:  "quack:wasm-v1",
+				Limits: manifest.WASMLimits{
+					TimeoutMS:      25,
+					MemoryPages:    1,
+					MaxInputBytes:  1024,
+					MaxOutputBytes: 1024,
+				},
+			},
+		},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.Body) != "True ok" {
+		t.Fatalf("body = %q, want wasm decision", string(resp.Body))
+	}
+}
+
+func TestStarlarkWASMModuleQuackWASMABIGuestError(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{
+		"app.star": `
+rules = wasm.module("rules")
+
+def handle(req):
+    rules.missing()
+    return (200, {}, "unreachable")
+`,
+		"plugins/rules.wasm": string(testQuackJSONWASM(envelopedJSON(3, []byte(`"unknown function"`)))),
+	})
+
+	_, err := executor.Invoke(context.Background(), Bundle{
+		Site: "foo", Version: 1,
+		Routes: []Route{{Path: "/api", Kind: RouteHTTP, Entrypoint: "app.star"}},
+		Files: []BundleFile{
+			{Path: "app.star", BlobPath: "app.star", FileSHA: "app"},
+			{Path: "plugins/rules.wasm", BlobPath: "plugins/rules.wasm", FileSHA: "rules-v1"},
+		},
+		WASM: map[string]manifest.WASMModule{
+			"rules": {
+				Path: "plugins/rules.wasm",
+				ABI:  "quack:wasm-v1",
+				Limits: manifest.WASMLimits{
+					TimeoutMS:      25,
+					MemoryPages:    1,
+					MaxInputBytes:  1024,
+					MaxOutputBytes: 1024,
+				},
+			},
+		},
+	}, InvocationRequest{Method: http.MethodGet, Route: "/api"})
+	if err == nil || !strings.Contains(err.Error(), "wasm unknown function: unknown function") {
+		t.Fatalf("Invoke error = %v, want wasm unknown function", err)
+	}
+}
+
 func TestStarlarkWASMModuleUnknownNameFails(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
 def handle(req):
@@ -109,6 +186,11 @@ func testQuackJSONWASM(output []byte) []byte {
 	data = append(data, output...)
 	wasm = section(wasm, 11, data)
 	return wasm
+}
+
+func envelopedJSON(status byte, payload []byte) []byte {
+	out := []byte{status, 0}
+	return append(out, payload...)
 }
 
 func section(dst []byte, id byte, payload []byte) []byte {
