@@ -15,6 +15,7 @@
 
 static uint8_t qk_heap[QK_HEAP_SIZE];
 static uint32_t qk_heap_top = 0;
+static uint32_t qk_call_heap_mark = 0xffffffffu;
 
 static int qk_is_ws(char c) {
     return c == ' ' || c == '\n' || c == '\r' || c == '\t';
@@ -258,8 +259,18 @@ uint32_t qk_alloc(uint32_t size) {
 }
 
 void qk_free(uint32_t ptr, uint32_t size) {
-	(void)ptr;
-	(void)size;
+	if (ptr == 0 || size == 0) {
+		return;
+	}
+	uint32_t base = (uint32_t)(uintptr_t)&qk_heap[0];
+	if (ptr < base) {
+		return;
+	}
+	uint32_t offset = ptr - base;
+	size = (size + 7u) & ~7u;
+	if (offset + size == qk_heap_top) {
+		qk_heap_top = offset;
+	}
 }
 
 int qk_arg_i64(qk_call *call, const char *key, int64_t *out) {
@@ -288,14 +299,26 @@ int qk_arg_bytes_base64(qk_call *call, const char *key, qk_bytes *out) {
 }
 
 uint64_t qk_return_json(uint8_t status, const char *json, uint32_t len) {
-    uint32_t out_ptr = qk_alloc(len + 2u);
+    uint32_t out_len = len + 2u;
+    uint32_t out_ptr = 0;
+    if (qk_call_heap_mark != 0xffffffffu) {
+        uint32_t aligned = (out_len + 7u) & ~7u;
+        if (qk_call_heap_mark + aligned > QK_HEAP_SIZE) {
+            return 0;
+        }
+        out_ptr = (uint32_t)(uintptr_t)&qk_heap[qk_call_heap_mark];
+        qk_heap_top = qk_call_heap_mark + aligned;
+        qk_call_heap_mark = 0xffffffffu;
+    } else {
+        out_ptr = qk_alloc(out_len);
+    }
     char *dst = (char *)(uintptr_t)out_ptr;
     dst[0] = (char)status;
     dst[1] = (char)QK_FORMAT_JSON;
     for (uint32_t i = 0; i < len; i++) {
         dst[i + 2u] = json[i];
     }
-    return ((uint64_t)out_ptr << 32) | (uint64_t)(len + 2u);
+    return ((uint64_t)out_ptr << 32) | (uint64_t)out_len;
 }
 
 uint64_t qk_return_error(uint8_t status, const char *message) {
@@ -402,6 +425,7 @@ uint64_t call(uint32_t name_ptr, uint32_t name_len, uint32_t input_ptr, uint32_t
 
     const char *json = (const char *)(uintptr_t)(input_ptr + 2u);
     uint32_t json_len = input_len - 2u;
+    qk_call_heap_mark = qk_heap_top;
 
     for (uint32_t i = 0; i < qk_export_count; i++) {
         const qk_export *exp = &qk_exports[i];
