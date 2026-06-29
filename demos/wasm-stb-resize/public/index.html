@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quack STB WASM Resize</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <section class="panel">
+        <div>
+          <p class="eyebrow">WASM + STB</p>
+          <h1>Resize an image in a C guest module</h1>
+          <p class="lede">Choose a PNG or JPEG. Quack sends the bytes into WebAssembly, STB decodes and resizes it, and the route returns a PNG.</p>
+        </div>
+        <form id="resize-form">
+          <label>
+            Image
+            <input id="file" type="file" accept="image/png,image/jpeg" required>
+          </label>
+          <div class="grid">
+            <label>
+              Width
+              <input id="width" type="number" min="1" max="1024" value="320">
+            </label>
+            <label>
+              Height
+              <input id="height" type="number" min="0" max="1024" value="0">
+            </label>
+          </div>
+          <button type="submit">Resize</button>
+        </form>
+      </section>
+      <section class="preview">
+        <figure>
+          <figcaption>Original</figcaption>
+          <img id="before" alt="">
+        </figure>
+        <figure>
+          <figcaption>Resized PNG</figcaption>
+          <img id="after" alt="">
+        </figure>
+      </section>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

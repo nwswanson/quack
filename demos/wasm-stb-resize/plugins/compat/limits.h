@@ -1,0 +1,11 @@
+#ifndef QUACK_STB_COMPAT_LIMITS_H
+#define QUACK_STB_COMPAT_LIMITS_H
+
+#define CHAR_BIT 8
+#define SHRT_MAX 32767
+#define SHRT_MIN (-32768)
+#define INT_MAX 2147483647
+#define INT_MIN (-2147483647 - 1)
+#define UINT_MAX 4294967295U
+
+#endif

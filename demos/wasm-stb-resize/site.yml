@@ -1,0 +1,21 @@
+wasm:
+  modules:
+    images:
+      path: plugins/image_resize.wasm
+      abi: quack:wasm-v1
+      limits:
+        timeout_ms: 250
+        memory_pages: 160
+        max_input_bytes: 4194304
+        max_output_bytes: 4194304
+
+routes:
+  - path: /
+    kind: static
+    root: public
+  - path: /api/resize
+    kind: http
+    runtime: starlark
+    entrypoint: api/resize.star
+    methods: [POST]
+    expose_errors: true
