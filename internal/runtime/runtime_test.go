@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -905,6 +906,67 @@ def on_event(ctx, event):
 	}
 	if len(effects) != 1 || effects[0].Type != WebSocketEffectSend || string(effects[0].Payload) != `{"payload":{"ok":true},"topic":"doc:123","type":"event"}` {
 		t.Fatalf("event effects = %#v payload=%s, want send effect", effects, effects[0].Payload)
+	}
+}
+
+func TestStarlarkExecutorEventsPublishRejectsReservedTopics(t *testing.T) {
+	for _, topic := range []string{
+		"hardware.serial.meter.read",
+		"runtime.websocket",
+		"system.audit",
+		"internal.pipeline",
+		" hardware.serial.meter.read ",
+	} {
+		t.Run(topic, func(t *testing.T) {
+			executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": fmt.Sprintf(`
+def on_message(ctx, msg):
+    return events.publish(%q, {"ok": True})
+`, topic)})
+			_, err := executor.InvokeWebSocket(context.Background(), Bundle{
+				Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+			}, WebSocketEvent{
+				Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+				Message: []byte(`{}`),
+			})
+			if err == nil || !strings.Contains(err.Error(), "reserved topic") {
+				t.Fatalf("err = %v, want reserved topic error", err)
+			}
+		})
+	}
+}
+
+func TestStarlarkExecutorEventsPublishRejectsReservedTopicRawEffect(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_message(ctx, msg):
+    return {"type": "events.publish", "topic": "hardware.serial.meter.read", "payload": {"ok": True}}
+`})
+	_, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "reserved topic") {
+		t.Fatalf("err = %v, want reserved topic error", err)
+	}
+}
+
+func TestStarlarkExecutorEventsPublishAllowsNonReservedPrefix(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_message(ctx, msg):
+    return events.publish("hardware-demo.serial.meter.read", {"ok": True})
+`})
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].Topic != "hardware-demo.serial.meter.read" {
+		t.Fatalf("effects = %#v, want publish to non-reserved prefix", effects)
 	}
 }
 

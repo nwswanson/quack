@@ -181,6 +181,9 @@ return events.publish("app.room.7", {
 `events.publish` returns a declarative effect. Starlark does not synchronously
 write to subscribers and does not directly mutate the pipe store. After the
 handler returns, the Go host applies the effect by dispatching the event.
+User Starlark cannot publish into host-reserved namespaces. Topics equal to or
+under `hardware`, `runtime`, `system`, or `internal` are reserved for host
+subsystems.
 
 Hardware events also publish into pipes. The server runs a hardware event stream
 loop, receives mapped `hardware.HardwareEvent` values, and calls

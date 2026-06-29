@@ -271,6 +271,9 @@ func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
 		if effect.Topic == "" {
 			return WebSocketEffect{}, fmt.Errorf("%w: %s requires topic", ErrInvocationFailure, effect.Type)
 		}
+		if effect.Type == WebSocketEffectPublish && isReservedPublishTopic(effect.Topic) {
+			return WebSocketEffect{}, fmt.Errorf("%w: events.publish cannot publish to reserved topic %q", ErrInvocationFailure, effect.Topic)
+		}
 	case WebSocketEffectSubscribe, WebSocketEffectUnsubscribe:
 		if effect.ConnID == "" || effect.Topic == "" {
 			return WebSocketEffect{}, fmt.Errorf("%w: %s requires conn_id and topic", ErrInvocationFailure, effect.Type)
@@ -283,6 +286,16 @@ func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
 		return WebSocketEffect{}, fmt.Errorf("%w: unknown websocket effect %s", ErrInvocationFailure, effect.Type)
 	}
 	return effect, nil
+}
+
+func isReservedPublishTopic(topic string) bool {
+	topic = strings.TrimSpace(topic)
+	for _, namespace := range []string{"hardware", "runtime", "system", "internal"} {
+		if topic == namespace || strings.HasPrefix(topic, namespace+".") {
+			return true
+		}
+	}
+	return false
 }
 
 var (
