@@ -81,6 +81,10 @@ type ServerSettings struct {
 	HTTPClientAllowInsecureSSL     bool
 	MaxWebSocketConnections        int64
 	MaxWebSocketConnectionsPerSite int64
+	MaxPipesPerSite                int64
+	MaxTopicsPerSite               int64
+	MaxRetainedEventsPerSite       int64
+	MaxRetainedBytesPerSite        int64
 	HTTPCacheMode                  string
 	HTTPCacheMaxAgeSeconds         int64
 	MemoryPersistenceMode          string

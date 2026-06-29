@@ -637,6 +637,22 @@
               <input name="max_websocket_connections_per_site" type="number" min="0" value="{{.Settings.MaxWebSocketConnectionsPerSite}}" required>
             </label>
             <label>
+              Max pipes per site
+              <input name="max_pipes_per_site" type="number" min="0" value="{{.Settings.MaxPipesPerSite}}" required>
+            </label>
+            <label>
+              Max topics per site
+              <input name="max_topics_per_site" type="number" min="0" value="{{.Settings.MaxTopicsPerSite}}" required>
+            </label>
+            <label>
+              Max retained events per site
+              <input name="max_retained_events_per_site" type="number" min="0" value="{{.Settings.MaxRetainedEventsPerSite}}" required>
+            </label>
+            <label>
+              Max retained bytes per site
+              <input name="max_retained_bytes_per_site" type="number" min="0" value="{{.Settings.MaxRetainedBytesPerSite}}" required>
+            </label>
+            <label>
               HTTP cache mode
               <select name="http_cache_mode">
                 <option value="revalidate" {{if eq .Settings.HTTPCacheMode "revalidate"}}selected{{end}}>revalidate</option>

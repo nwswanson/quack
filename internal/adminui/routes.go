@@ -1250,6 +1250,34 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 	if err != nil {
 		return domain.ServerSettings{}, err
 	}
+	maxPipesPerSite, err := parseNonNegativeInt64(r.Form.Get("max_pipes_per_site"), "max pipes per site")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if maxPipesPerSite == 0 {
+		maxPipesPerSite = parseDefaultInt64(appsettings.SettingRuntimePipesMaxPipesPerSite)
+	}
+	maxTopicsPerSite, err := parseNonNegativeInt64(r.Form.Get("max_topics_per_site"), "max topics per site")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if maxTopicsPerSite == 0 {
+		maxTopicsPerSite = parseDefaultInt64(appsettings.SettingRuntimePipesMaxTopicsPerSite)
+	}
+	maxRetainedEventsPerSite, err := parseNonNegativeInt64(r.Form.Get("max_retained_events_per_site"), "max retained events per site")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if maxRetainedEventsPerSite == 0 {
+		maxRetainedEventsPerSite = parseDefaultInt64(appsettings.SettingRuntimePipesMaxRetainedEventsPerSite)
+	}
+	maxRetainedBytesPerSite, err := parseNonNegativeInt64(r.Form.Get("max_retained_bytes_per_site"), "max retained bytes per site")
+	if err != nil {
+		return domain.ServerSettings{}, err
+	}
+	if maxRetainedBytesPerSite == 0 {
+		maxRetainedBytesPerSite = parseDefaultInt64(appsettings.SettingRuntimePipesMaxRetainedBytesPerSite)
+	}
 	memoryPersistenceModeValue := strings.TrimSpace(r.Form.Get("memory_persistence_mode"))
 	if memoryPersistenceModeValue == "" {
 		memoryPersistenceModeValue = appsettings.Default(appsettings.SettingRuntimeMemoryPersistenceMode)
@@ -1330,6 +1358,10 @@ func parseServerSettingsForm(r *http.Request) (domain.ServerSettings, error) {
 		HTTPClientAllowInsecureSSL:     r.Form.Get("http_client_allow_insecure_ssl") == "on",
 		MaxWebSocketConnections:        maxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: maxWebSocketConnectionsPerSite,
+		MaxPipesPerSite:                maxPipesPerSite,
+		MaxTopicsPerSite:               maxTopicsPerSite,
+		MaxRetainedEventsPerSite:       maxRetainedEventsPerSite,
+		MaxRetainedBytesPerSite:        maxRetainedBytesPerSite,
 		HTTPCacheMode:                  httpCacheMode,
 		HTTPCacheMaxAgeSeconds:         httpCacheMaxAgeSeconds,
 		MemoryPersistenceMode:          memoryPersistenceMode,

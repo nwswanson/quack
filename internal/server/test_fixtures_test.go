@@ -367,6 +367,10 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSet
 			MaxUploadBytes:           DefaultMaxUploadBytes,
 			MaxUploadFiles:           DefaultMaxUploadFiles,
 			MaxRuntimeDurationMillis: appsettings.DefaultRuntimeMaxDurationMillis,
+			MaxPipesPerSite:          appsettings.DefaultMaxPipesPerSite,
+			MaxTopicsPerSite:         appsettings.DefaultMaxTopicsPerSite,
+			MaxRetainedEventsPerSite: appsettings.DefaultMaxRetainedEventsPerSite,
+			MaxRetainedBytesPerSite:  appsettings.DefaultMaxRetainedBytesPerSite,
 			HTTPCacheMode:            "revalidate",
 			HTTPCacheMaxAgeSeconds:   3600,
 			LogBufferCount:           appsettings.DefaultLogBufferCount,
@@ -385,6 +389,18 @@ func (db *fakeDatabase) GetServerSettings(ctx context.Context) (domain.ServerSet
 	if db.settings.MaxRuntimeDurationMillis == 0 {
 		db.settings.MaxRuntimeDurationMillis = appsettings.DefaultRuntimeMaxDurationMillis
 	}
+	if db.settings.MaxPipesPerSite == 0 {
+		db.settings.MaxPipesPerSite = appsettings.DefaultMaxPipesPerSite
+	}
+	if db.settings.MaxTopicsPerSite == 0 {
+		db.settings.MaxTopicsPerSite = appsettings.DefaultMaxTopicsPerSite
+	}
+	if db.settings.MaxRetainedEventsPerSite == 0 {
+		db.settings.MaxRetainedEventsPerSite = appsettings.DefaultMaxRetainedEventsPerSite
+	}
+	if db.settings.MaxRetainedBytesPerSite == 0 {
+		db.settings.MaxRetainedBytesPerSite = appsettings.DefaultMaxRetainedBytesPerSite
+	}
 	if db.settings.LogBufferCount == 0 {
 		db.settings.LogBufferCount = appsettings.DefaultLogBufferCount
 	}
@@ -396,6 +412,10 @@ func testServerSettings(allowedHosts ...string) domain.ServerSettings {
 		MaxUploadBytes:           DefaultMaxUploadBytes,
 		MaxUploadFiles:           DefaultMaxUploadFiles,
 		MaxRuntimeDurationMillis: appsettings.DefaultRuntimeMaxDurationMillis,
+		MaxPipesPerSite:          appsettings.DefaultMaxPipesPerSite,
+		MaxTopicsPerSite:         appsettings.DefaultMaxTopicsPerSite,
+		MaxRetainedEventsPerSite: appsettings.DefaultMaxRetainedEventsPerSite,
+		MaxRetainedBytesPerSite:  appsettings.DefaultMaxRetainedBytesPerSite,
 		HTTPCacheMode:            "revalidate",
 		HTTPCacheMaxAgeSeconds:   3600,
 		LogBufferCount:           appsettings.DefaultLogBufferCount,

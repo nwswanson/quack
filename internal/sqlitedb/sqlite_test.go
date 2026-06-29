@@ -1065,6 +1065,10 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	if settings.MaxRuntimeDurationMillis != appsettings.DefaultRuntimeMaxDurationMillis {
 		t.Fatalf("max runtime duration = %d, want default", settings.MaxRuntimeDurationMillis)
 	}
+	if settings.MaxPipesPerSite != appsettings.DefaultMaxPipesPerSite || settings.MaxTopicsPerSite != appsettings.DefaultMaxTopicsPerSite ||
+		settings.MaxRetainedEventsPerSite != appsettings.DefaultMaxRetainedEventsPerSite || settings.MaxRetainedBytesPerSite != appsettings.DefaultMaxRetainedBytesPerSite {
+		t.Fatalf("pipe settings = (%d, %d, %d, %d), want defaults", settings.MaxPipesPerSite, settings.MaxTopicsPerSite, settings.MaxRetainedEventsPerSite, settings.MaxRetainedBytesPerSite)
+	}
 	if settings.HTTPCacheMode != "revalidate" || settings.HTTPCacheMaxAgeSeconds != 3600 {
 		t.Fatalf("http cache settings = (%q, %d), want revalidate and 3600", settings.HTTPCacheMode, settings.HTTPCacheMaxAgeSeconds)
 	}
@@ -1082,6 +1086,10 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 		MaxUploadBytes:           2048,
 		MaxUploadFiles:           8,
 		MaxRuntimeDurationMillis: 2500,
+		MaxPipesPerSite:          44,
+		MaxTopicsPerSite:         55,
+		MaxRetainedEventsPerSite: 66,
+		MaxRetainedBytesPerSite:  777,
 		HTTPCacheMode:            "max_age",
 		HTTPCacheMaxAgeSeconds:   14400,
 		AllowedHosts:             []string{"*.example.com", "admin.example.com"},
@@ -1100,6 +1108,9 @@ func TestCreateUserTokenAndSettings(t *testing.T) {
 	}
 	if settings.MaxRuntimeDurationMillis != 2500 {
 		t.Fatalf("max runtime duration = %d, want 2500", settings.MaxRuntimeDurationMillis)
+	}
+	if settings.MaxPipesPerSite != 44 || settings.MaxTopicsPerSite != 55 || settings.MaxRetainedEventsPerSite != 66 || settings.MaxRetainedBytesPerSite != 777 {
+		t.Fatalf("pipe settings = (%d, %d, %d, %d), want 44, 55, 66, 777", settings.MaxPipesPerSite, settings.MaxTopicsPerSite, settings.MaxRetainedEventsPerSite, settings.MaxRetainedBytesPerSite)
 	}
 }
 

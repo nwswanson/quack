@@ -16,6 +16,10 @@ const (
 	DefaultRuntimeMaxDurationMillis       int64 = 500
 	DefaultMaxWebSocketConnections        int64 = 1024
 	DefaultMaxWebSocketConnectionsPerSite int64 = 128
+	DefaultMaxPipesPerSite                int64 = 10000
+	DefaultMaxTopicsPerSite               int64 = 100000
+	DefaultMaxRetainedEventsPerSite       int64 = 1000000
+	DefaultMaxRetainedBytesPerSite        int64 = 1 << 30
 	DefaultHTTPClientMaxBytes             int64 = 1 << 20
 	DefaultHTTPClientMaxTimeoutMS         int64 = 1000
 	DefaultHTTPCacheMaxAgeSeconds         int64 = 3600
@@ -82,6 +86,10 @@ const (
 	SettingRuntimeMemoryShutdownFlushTimeoutMS   = "runtime.memory.shutdown_flush_timeout_ms"
 	SettingRuntimeWebSocketMaxConnections        = "runtime.websocket.max_connections"
 	SettingRuntimeWebSocketMaxConnectionsPerSite = "runtime.websocket.max_connections_per_site"
+	SettingRuntimePipesMaxPipesPerSite           = "runtime.pipes.max_pipes_per_site"
+	SettingRuntimePipesMaxTopicsPerSite          = "runtime.pipes.max_topics_per_site"
+	SettingRuntimePipesMaxRetainedEventsPerSite  = "runtime.pipes.max_retained_events_per_site"
+	SettingRuntimePipesMaxRetainedBytesPerSite   = "runtime.pipes.max_retained_bytes_per_site"
 	SettingRuntimePipes                          = "runtime.pipes"
 	SettingRuntimeEvents                         = "runtime.events"
 	// Deprecated: static.root is kept only for current releases uploaded before
@@ -209,6 +217,22 @@ var registry = map[string]SettingDefinition{
 	},
 	SettingRuntimeWebSocketMaxConnectionsPerSite: {
 		Key: SettingRuntimeWebSocketMaxConnectionsPerSite, Type: SettingTypeInt64, DefaultValue: "128",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimePipesMaxPipesPerSite: {
+		Key: SettingRuntimePipesMaxPipesPerSite, Type: SettingTypeInt64, DefaultValue: "10000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimePipesMaxTopicsPerSite: {
+		Key: SettingRuntimePipesMaxTopicsPerSite, Type: SettingTypeInt64, DefaultValue: "100000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimePipesMaxRetainedEventsPerSite: {
+		Key: SettingRuntimePipesMaxRetainedEventsPerSite, Type: SettingTypeInt64, DefaultValue: "1000000",
+		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
+	},
+	SettingRuntimePipesMaxRetainedBytesPerSite: {
+		Key: SettingRuntimePipesMaxRetainedBytesPerSite, Type: SettingTypeInt64, DefaultValue: "1073741824",
 		AllowedScopes: []domain.ScopeType{domain.ScopeSystem}, AdminEditable: true, PolicyKind: PolicyKindNumericCap,
 	},
 	// Deprecated: legacy upload setting retained for old release compatibility.

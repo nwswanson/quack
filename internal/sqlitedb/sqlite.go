@@ -889,6 +889,10 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 		HTTPClientMaxTimeoutMS:         appsettings.DefaultHTTPClientMaxTimeoutMS,
 		MaxWebSocketConnections:        appsettings.DefaultMaxWebSocketConnections,
 		MaxWebSocketConnectionsPerSite: appsettings.DefaultMaxWebSocketConnectionsPerSite,
+		MaxPipesPerSite:                appsettings.DefaultMaxPipesPerSite,
+		MaxTopicsPerSite:               appsettings.DefaultMaxTopicsPerSite,
+		MaxRetainedEventsPerSite:       appsettings.DefaultMaxRetainedEventsPerSite,
+		MaxRetainedBytesPerSite:        appsettings.DefaultMaxRetainedBytesPerSite,
 		HTTPCacheMode:                  appsettings.Default(appsettings.SettingHTTPCacheMode),
 		HTTPCacheMaxAgeSeconds:         mustParseDefaultInt64(appsettings.SettingHTTPCacheMaxAgeSeconds),
 		MemoryPersistenceMode:          appsettings.Default(appsettings.SettingRuntimeMemoryPersistenceMode),
@@ -981,6 +985,30 @@ func (d *Database) GetServerSettings(ctx context.Context) (domain.ServerSettings
 				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
 			}
 			settings.MaxWebSocketConnectionsPerSite = n
+		case appsettings.SettingRuntimePipesMaxPipesPerSite:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxPipesPerSite = n
+		case appsettings.SettingRuntimePipesMaxTopicsPerSite:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxTopicsPerSite = n
+		case appsettings.SettingRuntimePipesMaxRetainedEventsPerSite:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxRetainedEventsPerSite = n
+		case appsettings.SettingRuntimePipesMaxRetainedBytesPerSite:
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return domain.ServerSettings{}, fmt.Errorf("parse server setting %s: %w", key, err)
+			}
+			settings.MaxRetainedBytesPerSite = n
 		case appsettings.SettingHTTPCacheMode:
 			settings.HTTPCacheMode = appsettings.ParseHTTPCacheMode(value)
 		case appsettings.SettingHTTPCacheMaxAgeSeconds:
@@ -1060,6 +1088,18 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	if settings.MaxWebSocketConnectionsPerSite < 0 {
 		return fmt.Errorf("max websocket connections per site must be >= 0")
 	}
+	if settings.MaxPipesPerSite < 0 {
+		return fmt.Errorf("max pipes per site must be >= 0")
+	}
+	if settings.MaxTopicsPerSite < 0 {
+		return fmt.Errorf("max topics per site must be >= 0")
+	}
+	if settings.MaxRetainedEventsPerSite < 0 {
+		return fmt.Errorf("max retained events per site must be >= 0")
+	}
+	if settings.MaxRetainedBytesPerSite < 0 {
+		return fmt.Errorf("max retained bytes per site must be >= 0")
+	}
 	if settings.HTTPCacheMaxAgeSeconds < 0 {
 		return fmt.Errorf("http cache max age seconds must be >= 0")
 	}
@@ -1090,23 +1130,27 @@ func (d *Database) SaveServerSettings(ctx context.Context, settings domain.Serve
 	defer tx.Rollback()
 
 	values := map[string]string{
-		"max_upload_bytes":                                     strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
-		appsettings.SettingRuntimeMaxDurationMillis:            strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
-		appsettings.SettingRuntimeHTTPClientMaxBytes:           strconv.FormatInt(settings.HTTPClientMaxBytes, 10),
-		appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:       strconv.FormatInt(settings.HTTPClientMaxTimeoutMS, 10),
-		appsettings.SettingRuntimeHTTPClientAllowedCIDRs:       appsettings.FormatHTTPClientAllowedCIDRs(settings.HTTPClientAllowedCIDRs),
-		appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:   strconv.FormatBool(settings.HTTPClientAllowInsecureSSL),
-		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
-		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
-		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
-		appsettings.SettingHTTPCacheMaxAgeSeconds:              strconv.FormatInt(settings.HTTPCacheMaxAgeSeconds, 10),
-		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
-		appsettings.SettingRuntimeMemorySnapshotSave:           strings.TrimSpace(settings.MemorySnapshotSave),
-		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
-		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
-		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
+		"max_upload_bytes":                                      strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":                                      strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions":                                 strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		appsettings.SettingRuntimeMaxDurationMillis:             strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
+		appsettings.SettingRuntimeHTTPClientMaxBytes:            strconv.FormatInt(settings.HTTPClientMaxBytes, 10),
+		appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:        strconv.FormatInt(settings.HTTPClientMaxTimeoutMS, 10),
+		appsettings.SettingRuntimeHTTPClientAllowedCIDRs:        appsettings.FormatHTTPClientAllowedCIDRs(settings.HTTPClientAllowedCIDRs),
+		appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:    strconv.FormatBool(settings.HTTPClientAllowInsecureSSL),
+		"runtime.websocket.max_connections":                     strconv.FormatInt(settings.MaxWebSocketConnections, 10),
+		"runtime.websocket.max_connections_per_site":            strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		appsettings.SettingRuntimePipesMaxPipesPerSite:          strconv.FormatInt(settings.MaxPipesPerSite, 10),
+		appsettings.SettingRuntimePipesMaxTopicsPerSite:         strconv.FormatInt(settings.MaxTopicsPerSite, 10),
+		appsettings.SettingRuntimePipesMaxRetainedEventsPerSite: strconv.FormatInt(settings.MaxRetainedEventsPerSite, 10),
+		appsettings.SettingRuntimePipesMaxRetainedBytesPerSite:  strconv.FormatInt(settings.MaxRetainedBytesPerSite, 10),
+		appsettings.SettingHTTPCacheMode:                        settings.HTTPCacheMode,
+		appsettings.SettingHTTPCacheMaxAgeSeconds:               strconv.FormatInt(settings.HTTPCacheMaxAgeSeconds, 10),
+		appsettings.SettingRuntimeMemoryPersistenceMode:         settings.MemoryPersistenceMode,
+		appsettings.SettingRuntimeMemorySnapshotSave:            strings.TrimSpace(settings.MemorySnapshotSave),
+		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:   strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
+		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency:  strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
+		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS:  strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
 		"default_site":                    strings.TrimSpace(settings.DefaultSite),
 		"allowed_hosts":                   appsettings.FormatAllowedHosts(settings.AllowedHosts),
 		"log_level":                       settings.LogLevel,
@@ -1162,6 +1206,18 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	if settings.MaxWebSocketConnectionsPerSite < 0 {
 		return fmt.Errorf("max websocket connections per site must be >= 0")
 	}
+	if settings.MaxPipesPerSite < 0 {
+		return fmt.Errorf("max pipes per site must be >= 0")
+	}
+	if settings.MaxTopicsPerSite < 0 {
+		return fmt.Errorf("max topics per site must be >= 0")
+	}
+	if settings.MaxRetainedEventsPerSite < 0 {
+		return fmt.Errorf("max retained events per site must be >= 0")
+	}
+	if settings.MaxRetainedBytesPerSite < 0 {
+		return fmt.Errorf("max retained bytes per site must be >= 0")
+	}
 	if settings.HTTPCacheMaxAgeSeconds < 0 {
 		return fmt.Errorf("http cache max age seconds must be >= 0")
 	}
@@ -1186,23 +1242,27 @@ func (d *Database) InitializeServerSettings(ctx context.Context, settings domain
 	defer d.writeMu.Unlock()
 
 	for key, value := range map[string]string{
-		"max_upload_bytes":                                     strconv.FormatInt(settings.MaxUploadBytes, 10),
-		"max_upload_files":                                     strconv.FormatInt(settings.MaxUploadFiles, 10),
-		"max_retained_versions":                                strconv.FormatInt(settings.MaxRetainedVersions, 10),
-		appsettings.SettingRuntimeMaxDurationMillis:            strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
-		appsettings.SettingRuntimeHTTPClientMaxBytes:           strconv.FormatInt(settings.HTTPClientMaxBytes, 10),
-		appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:       strconv.FormatInt(settings.HTTPClientMaxTimeoutMS, 10),
-		appsettings.SettingRuntimeHTTPClientAllowedCIDRs:       appsettings.FormatHTTPClientAllowedCIDRs(settings.HTTPClientAllowedCIDRs),
-		appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:   strconv.FormatBool(settings.HTTPClientAllowInsecureSSL),
-		"runtime.websocket.max_connections":                    strconv.FormatInt(settings.MaxWebSocketConnections, 10),
-		"runtime.websocket.max_connections_per_site":           strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
-		appsettings.SettingHTTPCacheMode:                       settings.HTTPCacheMode,
-		appsettings.SettingHTTPCacheMaxAgeSeconds:              strconv.FormatInt(settings.HTTPCacheMaxAgeSeconds, 10),
-		appsettings.SettingRuntimeMemoryPersistenceMode:        settings.MemoryPersistenceMode,
-		appsettings.SettingRuntimeMemorySnapshotSave:           strings.TrimSpace(settings.MemorySnapshotSave),
-		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:  strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
-		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency: strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
-		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS: strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
+		"max_upload_bytes":                                      strconv.FormatInt(settings.MaxUploadBytes, 10),
+		"max_upload_files":                                      strconv.FormatInt(settings.MaxUploadFiles, 10),
+		"max_retained_versions":                                 strconv.FormatInt(settings.MaxRetainedVersions, 10),
+		appsettings.SettingRuntimeMaxDurationMillis:             strconv.FormatInt(settings.MaxRuntimeDurationMillis, 10),
+		appsettings.SettingRuntimeHTTPClientMaxBytes:            strconv.FormatInt(settings.HTTPClientMaxBytes, 10),
+		appsettings.SettingRuntimeHTTPClientMaxTimeoutMS:        strconv.FormatInt(settings.HTTPClientMaxTimeoutMS, 10),
+		appsettings.SettingRuntimeHTTPClientAllowedCIDRs:        appsettings.FormatHTTPClientAllowedCIDRs(settings.HTTPClientAllowedCIDRs),
+		appsettings.SettingRuntimeHTTPClientAllowInsecureSSL:    strconv.FormatBool(settings.HTTPClientAllowInsecureSSL),
+		"runtime.websocket.max_connections":                     strconv.FormatInt(settings.MaxWebSocketConnections, 10),
+		"runtime.websocket.max_connections_per_site":            strconv.FormatInt(settings.MaxWebSocketConnectionsPerSite, 10),
+		appsettings.SettingRuntimePipesMaxPipesPerSite:          strconv.FormatInt(settings.MaxPipesPerSite, 10),
+		appsettings.SettingRuntimePipesMaxTopicsPerSite:         strconv.FormatInt(settings.MaxTopicsPerSite, 10),
+		appsettings.SettingRuntimePipesMaxRetainedEventsPerSite: strconv.FormatInt(settings.MaxRetainedEventsPerSite, 10),
+		appsettings.SettingRuntimePipesMaxRetainedBytesPerSite:  strconv.FormatInt(settings.MaxRetainedBytesPerSite, 10),
+		appsettings.SettingHTTPCacheMode:                        settings.HTTPCacheMode,
+		appsettings.SettingHTTPCacheMaxAgeSeconds:               strconv.FormatInt(settings.HTTPCacheMaxAgeSeconds, 10),
+		appsettings.SettingRuntimeMemoryPersistenceMode:         settings.MemoryPersistenceMode,
+		appsettings.SettingRuntimeMemorySnapshotSave:            strings.TrimSpace(settings.MemorySnapshotSave),
+		appsettings.SettingRuntimeMemorySnapshotMinIntervalMS:   strconv.FormatInt(settings.MemorySnapshotMinIntervalMS, 10),
+		appsettings.SettingRuntimeMemorySnapshotMaxConcurrency:  strconv.FormatInt(settings.MemorySnapshotMaxConcurrency, 10),
+		appsettings.SettingRuntimeMemoryShutdownFlushTimeoutMS:  strconv.FormatInt(settings.MemoryShutdownFlushTimeoutMS, 10),
 		"default_site":                    strings.TrimSpace(settings.DefaultSite),
 		"allowed_hosts":                   appsettings.FormatAllowedHosts(settings.AllowedHosts),
 		"log_level":                       settings.LogLevel,
@@ -1228,6 +1288,18 @@ func normalizeRuntimeServerSettings(settings *domain.ServerSettings) {
 	}
 	if settings.LogBufferCount <= 0 {
 		settings.LogBufferCount = appsettings.DefaultLogBufferCount
+	}
+	if settings.MaxPipesPerSite <= 0 {
+		settings.MaxPipesPerSite = appsettings.DefaultMaxPipesPerSite
+	}
+	if settings.MaxTopicsPerSite <= 0 {
+		settings.MaxTopicsPerSite = appsettings.DefaultMaxTopicsPerSite
+	}
+	if settings.MaxRetainedEventsPerSite <= 0 {
+		settings.MaxRetainedEventsPerSite = appsettings.DefaultMaxRetainedEventsPerSite
+	}
+	if settings.MaxRetainedBytesPerSite <= 0 {
+		settings.MaxRetainedBytesPerSite = appsettings.DefaultMaxRetainedBytesPerSite
 	}
 }
 

@@ -110,6 +110,73 @@ func TestStorePublishWildcardTopicPolicyCanDropNewTopics(t *testing.T) {
 	}
 }
 
+func TestStorePublishRejectsWhenSitePipeLimitExceeded(t *testing.T) {
+	store := NewStore()
+	limits := Limits{MaxPipes: 1}
+	if _, ok := store.Publish(Config{Name: "one", SiteLimits: limits}, Event{Site: "site", Topic: "one", Payload: []byte("1")}); !ok {
+		t.Fatal("first pipe publish rejected")
+	}
+	if _, ok := store.Publish(Config{Name: "two", SiteLimits: limits}, Event{Site: "site", Topic: "two", Payload: []byte("2")}); ok {
+		t.Fatal("second pipe publish accepted, want site pipe limit rejection")
+	}
+}
+
+func TestStorePublishRejectsWhenSiteTopicLimitExceededForSelectorPipe(t *testing.T) {
+	store := NewStore()
+	config := Config{
+		Name: "chat.room.*", Selector: "chat.room.*", KeyBy: KeyBySelector, SiteLimits: Limits{MaxTopics: 1},
+	}
+	if _, ok := store.Publish(config, Event{Site: "site", Topic: "chat.room.1", Payload: []byte("1")}); !ok {
+		t.Fatal("first topic publish rejected")
+	}
+	if _, ok := store.Publish(config, Event{Site: "site", Topic: "chat.room.2", Payload: []byte("2")}); ok {
+		t.Fatal("second topic publish accepted, want site topic limit rejection")
+	}
+	if got := payloads(store.Recent("site", Config{Name: "chat.room.*"})); got != "1" {
+		t.Fatalf("selector pipe payloads = %q, want only first topic retained", got)
+	}
+}
+
+func TestStorePublishPrunesOldestRetainedEventsPerSite(t *testing.T) {
+	store := NewStore()
+	limits := Limits{MaxRetainedEvents: 2}
+	for _, step := range []struct {
+		pipe    string
+		payload string
+	}{
+		{"one", "1"},
+		{"two", "2"},
+		{"one", "3"},
+	} {
+		if _, ok := store.Publish(Config{Name: step.pipe, Retain: 3, SiteLimits: limits}, Event{Site: "site", Topic: step.pipe, Payload: []byte(step.payload)}); !ok {
+			t.Fatalf("%s publish rejected", step.payload)
+		}
+	}
+	if got := payloads(store.Recent("site", Config{Name: "one"})); got != "3" {
+		t.Fatalf("one payloads = %q, want oldest site event pruned", got)
+	}
+	if got := payloads(store.Recent("site", Config{Name: "two"})); got != "2" {
+		t.Fatalf("two payloads = %q, want retained second event", got)
+	}
+}
+
+func TestStorePublishPrunesOldestRetainedBytesPerSite(t *testing.T) {
+	store := NewStore()
+	limits := Limits{MaxRetainedBytes: 60}
+	if _, ok := store.Publish(Config{Name: "one", Retain: 2, SiteLimits: limits}, Event{Site: "site", Topic: "one", Payload: []byte("large-first-payload")}); !ok {
+		t.Fatal("first publish rejected")
+	}
+	if _, ok := store.Publish(Config{Name: "two", Retain: 2, SiteLimits: limits}, Event{Site: "site", Topic: "two", Payload: []byte("large-second-payload")}); !ok {
+		t.Fatal("second publish rejected")
+	}
+	if got := payloads(store.Recent("site", Config{Name: "one"})); got != "" {
+		t.Fatalf("one payloads = %q, want pruned by byte cap", got)
+	}
+	if got := payloads(store.Recent("site", Config{Name: "two"})); got != "large-second-payload" {
+		t.Fatalf("two payloads = %q, want newest event retained", got)
+	}
+}
+
 func payloads(events []Event) string {
 	out := make([]byte, 0, len(events))
 	for _, event := range events {

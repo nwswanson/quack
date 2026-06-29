@@ -166,6 +166,18 @@ The store defensively copies payload bytes and headers on publish and on recent
 event retrieval. That prevents a caller from mutating retained event contents
 after publication.
 
+Server settings bound site-level pipe growth:
+
+- `runtime.pipes.max_pipes_per_site`
+- `runtime.pipes.max_topics_per_site`
+- `runtime.pipes.max_retained_events_per_site`
+- `runtime.pipes.max_retained_bytes_per_site`
+
+`key_by: selector` can make many concrete topics share one retained pipe, but
+those concrete topics still count toward the per-site topic cap. Retained event
+and byte caps apply across all retained pipes for the site and prune the oldest
+retained events first.
+
 ## Publishing
 
 Starlark publishes through the `events` module:
@@ -663,8 +675,9 @@ Include domain sequence numbers when order matters. Pipe `seq` is useful for
 host-local observation, but application-level sequencing should live in the
 payload.
 
-Avoid publish cycles. The current implementation supports chained publishes but
-does not provide cycle detection or a maximum event graph depth.
+Avoid publish cycles. The dispatch path has a small in-process trace guard for
+accidental loops, but it is not durable graph analysis and should not be treated
+as workflow orchestration.
 
 Treat unlimited pipes as hazardous. They are acceptable only when the event
 cardinality is known to be small or when another layer bounds production.
@@ -717,7 +730,7 @@ platform:
 - no per-subscriber offsets
 - no exactly-once delivery
 - no stable ordering across independent subscribers
-- no cycle detection for chained publishes
+- no configurable dispatch trace limits
 - no configurable websocket queue depth
 
 Those limitations should be treated as part of the operational contract. Pipes
@@ -892,21 +905,22 @@ reconnect if the application needs that behavior.
 
 ### Cycle Detection
 
-Cycle detection is a high-value, low-footprint improvement. The dispatch path
-should carry a small trace context through nested publishes:
+The dispatch path carries a small trace context through nested publishes:
 
 ```text
 root_event_id
 depth
-visited route/topic edges
+visited handler/topic edges
 ```
 
-A reasonable default policy is:
+The current fixed policy is:
 
-- reject dispatch when depth exceeds a small limit such as 32
-- reject an immediate repeated edge such as the same handler publishing back to
-  the same topic in one trace
-- emit a structured runtime error event or log entry with the trace
+- reject dispatch when depth exceeds 32
+- reject more than 256 publishes from one root event
+- reject a repeated edge where the same handler publishes to the same topic
+  twice in one trace
+- emit a structured runtime log entry such as `runtime.event_cycle_detected`,
+  `runtime.event_depth_exceeded`, or `runtime.event_publish_limit_exceeded`
 
 This does not require graph analysis or durable topology state. It only
 protects the process from accidental recursive publish loops in one dispatch

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 
 	"quack/internal/domain"
 	"quack/internal/eventpipe"
+	"quack/internal/logbuffer"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
@@ -33,6 +35,14 @@ const (
 	websocketWriteTimeout       = 5 * time.Second
 	websocketBackpressureStatus = 1013
 	websocketMaxEventFanout     = 1024
+	dispatchMaxDepth            = 32
+	dispatchMaxPublishes        = 256
+)
+
+var (
+	errEventCycleDetected        = errors.New("runtime.event_cycle_detected")
+	errEventDepthExceeded        = errors.New("runtime.event_depth_exceeded")
+	errEventPublishLimitExceeded = errors.New("runtime.event_publish_limit_exceeded")
 )
 
 func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req appruntime.WebSocketInvocationRequest) {
@@ -89,7 +99,7 @@ func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	h.sockets.attach(connID, netConn)
-	if err := h.applyEffects(r.Context(), req.Site, effects); err != nil {
+	if err := h.applyEffectsFromHandler(r.Context(), req.Site, effects, websocketHandlerEdge(req.Route, "on_connect")); err != nil {
 		_ = writeCloseFrame(netConn, 1011, "runtime effect failed")
 		_ = netConn.Close()
 		return
@@ -150,7 +160,7 @@ func (h Handler) readWebSocketLoop(ctx context.Context, reader *bufio.Reader, co
 				h.invokeDisconnect(ctx, req)
 				return
 			}
-			if err := h.applyEffects(ctx, req.Site, effects); err != nil {
+			if err := h.applyEffectsFromHandler(ctx, req.Site, effects, websocketHandlerEdge(req.Route, "on_message")); err != nil {
 				_ = h.sockets.close(connID, 1011, "runtime effect failed")
 				h.invokeDisconnect(ctx, req)
 				return
@@ -176,11 +186,18 @@ func (h Handler) invokeDisconnect(ctx context.Context, req appruntime.WebSocketI
 	req.Event = appruntime.WebSocketServerEvent{}
 	effects, err := h.runtime.InvokeWebSocket(ctx, req)
 	if err == nil {
-		_ = h.applyEffects(ctx, req.Site, effects)
+		_ = h.applyEffectsFromHandler(ctx, req.Site, effects, websocketHandlerEdge(req.Route, "on_disconnect"))
 	}
 }
 
 func (h Handler) applyEffects(ctx context.Context, site string, effects []appruntime.WebSocketEffect) error {
+	return h.applyEffectsFromHandler(ctx, site, effects, "")
+}
+
+func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effects []appruntime.WebSocketEffect, handler string) error {
+	if dispatchTraceFromContext(ctx) == nil {
+		ctx = context.WithValue(ctx, dispatchTraceContextKey{}, newDispatchTrace())
+	}
 	for _, effect := range effects {
 		switch effect.Type {
 		case appruntime.WebSocketEffectAccept:
@@ -197,7 +214,7 @@ func (h Handler) applyEffects(ctx context.Context, site string, effects []apprun
 		case appruntime.WebSocketEffectUnsubscribeAll:
 			h.sockets.unsubscribeAll(effect.ConnID)
 		case appruntime.WebSocketEffectPublish:
-			if err := h.dispatchEvent(ctx, site, effect.Topic, effect.Payload); err != nil {
+			if err := h.dispatchEventFromHandler(ctx, site, effect.Topic, effect.Payload, handler); err != nil {
 				return err
 			}
 		case appruntime.WebSocketEffectSetTimer:
@@ -219,15 +236,41 @@ func (h Handler) applyEffects(ctx context.Context, site string, effects []apprun
 }
 
 func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, payload []byte) error {
-	return h.dispatchEventWithSource(ctx, site, topic, payload, "runtime", "events.publish", nil)
+	return h.dispatchEventFromHandler(ctx, site, topic, payload, "")
+}
+
+func (h Handler) dispatchEventFromHandler(ctx context.Context, site string, topic string, payload []byte, handler string) error {
+	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, "runtime", "events.publish", nil, handler)
 }
 
 func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string) error {
+	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, sourceKind, sourceName, headers, "")
+}
+
+func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string, handler string) error {
 	settings, err := h.siteEventSettings(ctx, site)
 	if err != nil {
 		return err
 	}
 	topic = strings.TrimSpace(topic)
+	trace := dispatchTraceFromContext(ctx)
+	if trace == nil {
+		trace = newDispatchTrace()
+		ctx = context.WithValue(ctx, dispatchTraceContextKey{}, trace)
+	}
+	if err := trace.enter(); err != nil {
+		h.logDispatchGuard(ctx, site, settings.version, trace, topic, handler, "runtime.event_depth_exceeded", err)
+		return err
+	}
+	defer trace.leave()
+	if err := trace.recordPublish(handler, topic); err != nil {
+		kind := "runtime.event_publish_limit_exceeded"
+		if errors.Is(err, errEventCycleDetected) {
+			kind = "runtime.event_cycle_detected"
+		}
+		h.logDispatchGuard(ctx, site, settings.version, trace, topic, handler, kind, err)
+		return err
+	}
 	config := settings.pipe(topic)
 	event, accepted := h.pipes.Publish(config, eventpipe.Event{
 		Site: site, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName, Payload: payload, Headers: headers,
@@ -235,6 +278,7 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 	if !accepted {
 		return nil
 	}
+	trace.setRootEventID(event.ID)
 	for _, route := range settings.matchingRoutes(event.Topic) {
 		entrypoint, handler, err := manifest.SplitEventHandler(route.OnEvent)
 		if err != nil {
@@ -257,7 +301,7 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 		if err != nil {
 			continue
 		}
-		if err := h.applyEffects(ctx, site, effects); err != nil {
+		if err := h.applyEffectsFromHandler(ctx, site, effects, route.OnEvent); err != nil {
 			return err
 		}
 	}
@@ -271,7 +315,7 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event invocation failed")
 			continue
 		}
-		if err := h.applyEffects(ctx, snapshot.site, effects); err != nil {
+		if err := h.applyEffectsFromHandler(ctx, snapshot.site, effects, websocketHandlerEdge(snapshot.route, "on_event")); err != nil {
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event effect failed")
 			continue
 		}
@@ -279,19 +323,71 @@ func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic
 	return nil
 }
 
+func websocketHandlerEdge(route string, handler string) string {
+	route = strings.TrimSpace(route)
+	handler = strings.TrimSpace(handler)
+	if route == "" || handler == "" {
+		return ""
+	}
+	return "websocket:" + route + ":" + handler
+}
+
+func (h Handler) logDispatchGuard(ctx context.Context, site string, version int64, trace *dispatchTrace, topic string, handler string, kind string, err error) {
+	attrs := []slog.Attr{
+		slog.String("site", site),
+		slog.Int64("version", version),
+		slog.String("topic", topic),
+		slog.String("handler", handler),
+		slog.String("root_event_id", trace.rootEventID),
+		slog.Int("depth", trace.depth),
+		slog.Int("publish_count", trace.publishCount),
+		slog.String("error_kind", kind),
+		slog.String("error", err.Error()),
+	}
+	slog.LogAttrs(ctx, slog.LevelError, kind, attrs...)
+	if h.logs == nil {
+		return
+	}
+	h.logs.Add(logbuffer.Event{
+		Level:   "error",
+		Source:  "runtime_error",
+		Site:    site,
+		Version: version,
+		Message: kind,
+		Attributes: map[string]string{
+			"topic":         topic,
+			"handler":       handler,
+			"root_event_id": trace.rootEventID,
+			"depth":         fmt.Sprintf("%d", trace.depth),
+			"publish_count": fmt.Sprintf("%d", trace.publishCount),
+			"error_kind":    kind,
+			"error":         err.Error(),
+		},
+	})
+}
+
 func eventLaneKey(site string, version int64, route manifest.EventRoute, topic string) string {
 	return fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s", site, version, strings.TrimSpace(route.Selector), strings.TrimSpace(route.OnEvent), topic)
+}
+
+func positiveOrInt64(value int64, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 type eventSettings struct {
 	version int64
 	pipes   []manifest.Pipe
 	events  []manifest.EventRoute
+	limits  eventpipe.Limits
 }
 
 func (h Handler) siteEventSettings(ctx context.Context, site string) (eventSettings, error) {
+	defaultSettings := eventSettings{limits: h.eventPipeLimits(ctx)}
 	if h.events == nil {
-		return eventSettings{}, nil
+		return defaultSettings, nil
 	}
 	manifests, err := h.events.ListCurrentSiteManifests(ctx)
 	if err != nil {
@@ -301,7 +397,7 @@ func (h Handler) siteEventSettings(ctx context.Context, site string) (eventSetti
 		if current.Site != site {
 			continue
 		}
-		settings := eventSettings{version: current.Version}
+		settings := eventSettings{version: current.Version, limits: h.eventPipeLimits(ctx)}
 		if raw := strings.TrimSpace(current.Settings[appsettings.SettingRuntimePipes]); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &settings.pipes); err != nil {
 				return eventSettings{}, err
@@ -314,7 +410,27 @@ func (h Handler) siteEventSettings(ctx context.Context, site string) (eventSetti
 		}
 		return settings, nil
 	}
-	return eventSettings{}, nil
+	return defaultSettings, nil
+}
+
+func (h Handler) eventPipeLimits(ctx context.Context) eventpipe.Limits {
+	settings := domain.ServerSettings{
+		MaxPipesPerSite:          appsettings.DefaultMaxPipesPerSite,
+		MaxTopicsPerSite:         appsettings.DefaultMaxTopicsPerSite,
+		MaxRetainedEventsPerSite: appsettings.DefaultMaxRetainedEventsPerSite,
+		MaxRetainedBytesPerSite:  appsettings.DefaultMaxRetainedBytesPerSite,
+	}
+	if h.settings != nil {
+		if current, err := h.settings.GetServerSettings(ctx); err == nil {
+			settings = current
+		}
+	}
+	return eventpipe.Limits{
+		MaxPipes:          positiveOrInt64(settings.MaxPipesPerSite, appsettings.DefaultMaxPipesPerSite),
+		MaxTopics:         positiveOrInt64(settings.MaxTopicsPerSite, appsettings.DefaultMaxTopicsPerSite),
+		MaxRetainedEvents: positiveOrInt64(settings.MaxRetainedEventsPerSite, appsettings.DefaultMaxRetainedEventsPerSite),
+		MaxRetainedBytes:  positiveOrInt64(settings.MaxRetainedBytesPerSite, appsettings.DefaultMaxRetainedBytesPerSite),
+	}
 }
 
 func (s eventSettings) pipe(name string) eventpipe.Config {
@@ -334,7 +450,7 @@ func (s eventSettings) pipe(name string) eventpipe.Config {
 		bestLen = specificity
 	}
 	if best == nil {
-		return eventpipe.Config{Name: name}
+		return eventpipe.Config{Name: name, SiteLimits: s.limits}
 	}
 	selector := pipeSelector(*best)
 	keyBy := strings.TrimSpace(best.KeyBy)
@@ -348,7 +464,7 @@ func (s eventSettings) pipe(name string) eventpipe.Config {
 	return eventpipe.Config{
 		Name: configName, Selector: selector, Retain: best.Retain, Unlimited: best.Unlimited,
 		Overflow: best.Overflow, KeyBy: keyBy, MaxTopics: best.MaxTopics,
-		TopicOverflow: best.TopicOverflow,
+		TopicOverflow: best.TopicOverflow, SiteLimits: s.limits,
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"quack/internal/domain"
 	"quack/internal/eventpipe"
+	"quack/internal/logbuffer"
 	"quack/internal/manifest"
 	appruntime "quack/internal/runtime"
 	appsettings "quack/internal/settings"
@@ -434,6 +435,124 @@ func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
 	}
 }
 
+func TestHandlerAppliesSiteTopicLimitFromServerSettings(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{
+		settings: domain.ServerSettings{MaxTopicsPerSite: 1},
+		manifests: []domain.CurrentSiteManifest{{
+			Site:    "foo",
+			SiteSHA: "foo-sha",
+			Version: 3,
+			Settings: map[string]string{
+				appsettings.SettingRuntimePipes: `[{"selector":"chat.room.*","key_by":"selector","retain":4}]`,
+			},
+		}},
+	}))
+
+	if err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "chat.room.1",
+		Payload: []byte(`{"room":1}`),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "chat.room.2",
+		Payload: []byte(`{"room":2}`),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "chat.room.*"})
+	if len(recent) != 1 || recent[0].Topic != "chat.room.1" {
+		t.Fatalf("recent = %#v, want second topic rejected by site topic limit", recent)
+	}
+}
+
+func TestHandlerDetectsRepeatedHandlerTopicPublishEdge(t *testing.T) {
+	logs := logbuffer.New(10)
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		return []appruntime.WebSocketEffect{{
+			Type:    appruntime.WebSocketEffectPublish,
+			Topic:   req.Topic,
+			Payload: req.Payload,
+		}}, nil
+	}}
+	handler := New(runtime, WithLogBuffer(logs), WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimeEvents: `[{"selector":"loop","on_event":"app/loop.star:on_event"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "loop",
+		Payload: []byte(`{"type":"loop"}`),
+	}})
+	if !errors.Is(err, errEventCycleDetected) {
+		t.Fatalf("applyEffects error = %v, want cycle detection", err)
+	}
+	if len(runtime.eventRequests) != 2 {
+		t.Fatalf("event requests = %#v, want initial handler and one nested handler before duplicate edge", runtime.eventRequests)
+	}
+	assertRuntimeGuardLog(t, logs, "runtime.event_cycle_detected")
+}
+
+func TestHandlerCapsDispatchDepth(t *testing.T) {
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		next := strings.TrimPrefix(req.Topic, "chain.")
+		var n int
+		if _, err := fmt.Sscanf(next, "%d", &n); err != nil {
+			t.Fatal(err)
+		}
+		return []appruntime.WebSocketEffect{{
+			Type:    appruntime.WebSocketEffectPublish,
+			Topic:   fmt.Sprintf("chain.%d", n+1),
+			Payload: req.Payload,
+		}}, nil
+	}}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimeEvents: `[{"selector":"chain.*","on_event":"app/chain.star:on_event"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "chain.0",
+		Payload: []byte(`{"type":"chain"}`),
+	}})
+	if !errors.Is(err, errEventDepthExceeded) {
+		t.Fatalf("applyEffects error = %v, want depth limit", err)
+	}
+	if len(runtime.eventRequests) != dispatchMaxDepth {
+		t.Fatalf("event requests = %d, want %d before depth rejection", len(runtime.eventRequests), dispatchMaxDepth)
+	}
+}
+
+func TestHandlerCapsPublishesPerRootEvent(t *testing.T) {
+	effects := make([]appruntime.WebSocketEffect, 0, dispatchMaxPublishes+1)
+	for i := 0; i < dispatchMaxPublishes+1; i++ {
+		effects = append(effects, appruntime.WebSocketEffect{
+			Type:    appruntime.WebSocketEffectPublish,
+			Topic:   fmt.Sprintf("bulk.%d", i),
+			Payload: []byte(`{"type":"bulk"}`),
+		})
+	}
+	handler := New(&recordingRuntime{})
+
+	err := handler.applyEffects(context.Background(), "foo", effects)
+	if !errors.Is(err, errEventPublishLimitExceeded) {
+		t.Fatalf("applyEffects error = %v, want publish limit", err)
+	}
+}
+
 func TestEventSettingsPipeUsesExactThenLongestPrefixSelector(t *testing.T) {
 	settings := eventSettings{pipes: []manifest.Pipe{
 		{Selector: "room.*", Retain: 64, KeyBy: "selector"},
@@ -449,6 +568,16 @@ func TestEventSettingsPipeUsesExactThenLongestPrefixSelector(t *testing.T) {
 	if got := settings.pipe("room.chat"); got.Name != "room.*" || got.Retain != 64 {
 		t.Fatalf("room pipe config = %+v, want broad selector", got)
 	}
+}
+
+func assertRuntimeGuardLog(t *testing.T, logs *logbuffer.Service, message string) {
+	t.Helper()
+	for _, event := range logs.Tail(logbuffer.Filter{Site: "foo"}, 10) {
+		if event.Message == message {
+			return
+		}
+	}
+	t.Fatalf("runtime logs = %#v, want message %q", logs.Tail(logbuffer.Filter{Site: "foo"}, 10), message)
 }
 
 func TestHandlerSelectorPipeCanRetainBySelector(t *testing.T) {
@@ -737,11 +866,12 @@ type recordingRuntime struct {
 }
 
 type eventSettingsFixture struct {
+	settings  domain.ServerSettings
 	manifests []domain.CurrentSiteManifest
 }
 
 func (f eventSettingsFixture) GetServerSettings(ctx context.Context) (domain.ServerSettings, error) {
-	return domain.ServerSettings{}, nil
+	return f.settings, nil
 }
 
 func (f eventSettingsFixture) ListCurrentSiteManifests(ctx context.Context) ([]domain.CurrentSiteManifest, error) {

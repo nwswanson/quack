@@ -17,6 +17,10 @@ func TestValidateSettingValue(t *testing.T) {
 		"valid runtime duration":   {key: SettingRuntimeMaxDurationMillis, value: "1000"},
 		"valid websocket max":      {key: SettingRuntimeWebSocketMaxConnections, value: "32"},
 		"valid websocket site max": {key: SettingRuntimeWebSocketMaxConnectionsPerSite, value: "8"},
+		"valid pipe site max":      {key: SettingRuntimePipesMaxPipesPerSite, value: "1024"},
+		"valid topic site max":     {key: SettingRuntimePipesMaxTopicsPerSite, value: "4096"},
+		"valid retained events":    {key: SettingRuntimePipesMaxRetainedEventsPerSite, value: "100000"},
+		"valid retained bytes":     {key: SettingRuntimePipesMaxRetainedBytesPerSite, value: "1048576"},
 		"valid http cache mode":    {key: SettingHTTPCacheMode, value: "anti_cache"},
 		"invalid http cache mode": {
 			key: SettingHTTPCacheMode, value: "sometimes", wantErr: true,

@@ -24,6 +24,14 @@ type Config struct {
 	KeyBy         string `json:"key_by,omitempty"`
 	MaxTopics     int    `json:"max_topics,omitempty"`
 	TopicOverflow string `json:"topic_overflow,omitempty"`
+	SiteLimits    Limits `json:"-"`
+}
+
+type Limits struct {
+	MaxPipes          int64
+	MaxTopics         int64
+	MaxRetainedEvents int64
+	MaxRetainedBytes  int64
 }
 
 type Event struct {
@@ -43,11 +51,17 @@ type Store struct {
 	mu       sync.Mutex
 	pipes    map[string]*pipe
 	policies map[string]*topicIndex
+	sites    map[string]*siteIndex
 }
 
 type topicIndex struct {
 	topics map[string]struct{}
 	lru    []string
+}
+
+type siteIndex struct {
+	pipes  map[string]struct{}
+	topics map[string]struct{}
 }
 
 type pipe struct {
@@ -60,7 +74,7 @@ type pipe struct {
 }
 
 func NewStore() *Store {
-	return &Store{pipes: map[string]*pipe{}, policies: map[string]*topicIndex{}}
+	return &Store{pipes: map[string]*pipe{}, policies: map[string]*topicIndex{}, sites: map[string]*siteIndex{}}
 }
 
 func (s *Store) Publish(config Config, event Event) (Event, bool) {
@@ -74,9 +88,16 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	if config.Name == "" {
 		return event, false
 	}
+	event.Site = strings.TrimSpace(event.Site)
+	event.Topic = nonEmpty(event.Topic, config.Name)
 	key := scopedKey(event.Site, config.Name)
 	s.mu.Lock()
+	if !s.admitSiteLocked(event.Site, config.Name, event.Topic, config.SiteLimits) {
+		s.mu.Unlock()
+		return event, false
+	}
 	if !s.admitTopicLocked(event.Site, config, strings.TrimSpace(event.Topic)) {
+		s.rollbackSiteLocked(event.Site, config.Name, event.Topic)
 		s.mu.Unlock()
 		return event, false
 	}
@@ -88,17 +109,18 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	s.mu.Unlock()
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.config != config {
 		p.setConfig(config)
 	}
 	if !p.config.Unlimited && p.config.Overflow == DropNew && p.count >= p.config.Retain {
+		p.mu.Unlock()
+		s.mu.Lock()
+		s.rollbackSiteLocked(event.Site, config.Name, event.Topic)
+		s.mu.Unlock()
 		return event, false
 	}
 	p.next++
-	event.Site = strings.TrimSpace(event.Site)
 	event.Pipe = config.Name
-	event.Topic = nonEmpty(event.Topic, config.Name)
 	event.Seq = p.next
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
@@ -109,7 +131,150 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	event.Payload = append([]byte(nil), event.Payload...)
 	event.Headers = cloneHeaders(event.Headers)
 	p.append(event)
+	limits := p.config.SiteLimits
+	p.mu.Unlock()
+	s.pruneSite(event.Site, limits)
 	return event, true
+}
+
+func (s *Store) admitSiteLocked(site string, pipeName string, topic string, limits Limits) bool {
+	index := s.sites[site]
+	if index == nil {
+		index = &siteIndex{pipes: map[string]struct{}{}, topics: map[string]struct{}{}}
+		s.sites[site] = index
+	}
+	if _, ok := index.pipes[pipeName]; !ok && limits.MaxPipes > 0 && int64(len(index.pipes)) >= limits.MaxPipes {
+		return false
+	}
+	if _, ok := index.topics[topic]; !ok && limits.MaxTopics > 0 && int64(len(index.topics)) >= limits.MaxTopics {
+		return false
+	}
+	index.pipes[pipeName] = struct{}{}
+	index.topics[topic] = struct{}{}
+	return true
+}
+
+func (s *Store) rollbackSiteLocked(site string, pipeName string, topic string) {
+	index := s.sites[site]
+	if index == nil {
+		return
+	}
+	key := scopedKey(site, pipeName)
+	if _, ok := s.pipes[key]; !ok {
+		delete(index.pipes, pipeName)
+	}
+	if !s.topicRetainedLocked(site, topic) {
+		delete(index.topics, topic)
+	}
+}
+
+func (s *Store) topicRetainedLocked(site string, topic string) bool {
+	for key, p := range s.pipes {
+		if !strings.HasPrefix(key, site+"\x00") {
+			continue
+		}
+		p.mu.Lock()
+		events := p.orderedEvents()
+		found := false
+		for _, event := range events {
+			if event.Topic == topic {
+				found = true
+				break
+			}
+		}
+		p.mu.Unlock()
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) pruneSite(site string, limits Limits) {
+	if limits.MaxRetainedEvents <= 0 && limits.MaxRetainedBytes <= 0 {
+		return
+	}
+	for {
+		events, bytes := s.siteRetainedUsage(site)
+		if (limits.MaxRetainedEvents <= 0 || events <= limits.MaxRetainedEvents) &&
+			(limits.MaxRetainedBytes <= 0 || bytes <= limits.MaxRetainedBytes) {
+			return
+		}
+		if !s.dropOldestSiteEvent(site) {
+			return
+		}
+	}
+}
+
+func (s *Store) siteRetainedUsage(site string) (int64, int64) {
+	var events int64
+	var bytes int64
+	for _, p := range s.sitePipes(site) {
+		p.mu.Lock()
+		for _, event := range p.orderedEvents() {
+			events++
+			bytes += retainedEventBytes(event)
+		}
+		p.mu.Unlock()
+	}
+	return events, bytes
+}
+
+func (s *Store) dropOldestSiteEvent(site string) bool {
+	var oldestPipe *pipe
+	var oldest Event
+	for _, p := range s.sitePipes(site) {
+		p.mu.Lock()
+		events := p.orderedEvents()
+		if len(events) > 0 && (oldestPipe == nil || events[0].CreatedAt.Before(oldest.CreatedAt) || (events[0].CreatedAt.Equal(oldest.CreatedAt) && events[0].Seq < oldest.Seq)) {
+			oldestPipe = p
+			oldest = events[0]
+		}
+		p.mu.Unlock()
+	}
+	if oldestPipe == nil {
+		return false
+	}
+	oldestPipe.mu.Lock()
+	defer oldestPipe.mu.Unlock()
+	return oldestPipe.dropOldest()
+}
+
+func (s *Store) sitePipes(site string) []*pipe {
+	prefix := strings.TrimSpace(site) + "\x00"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*pipe, 0, len(s.pipes))
+	for key, p := range s.pipes {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func retainedEventBytes(event Event) int64 {
+	n := len(event.Payload) + len(event.ID) + len(event.Site) + len(event.Pipe) + len(event.Topic) + len(event.SourceKind) + len(event.SourceName)
+	for key, value := range event.Headers {
+		n += len(key) + len(value)
+	}
+	return int64(n)
+}
+
+func (p *pipe) dropOldest() bool {
+	if p.count == 0 {
+		return false
+	}
+	if p.config.Unlimited {
+		copy(p.events, p.events[1:])
+		p.events = p.events[:len(p.events)-1]
+		p.count = len(p.events)
+		return true
+	}
+	p.events[p.start] = Event{}
+	p.start = (p.start + 1) % len(p.events)
+	p.count--
+	return true
 }
 
 func (s *Store) admitTopicLocked(site string, config Config, topic string) bool {
@@ -136,6 +301,9 @@ func (s *Store) admitTopicLocked(site string, config Config, topic string) bool 
 		evicted := index.evictLRU()
 		if evicted != "" {
 			delete(s.pipes, scopedKey(site, evicted))
+			if siteIndex := s.sites[site]; siteIndex != nil {
+				delete(siteIndex.pipes, evicted)
+			}
 		}
 	}
 	index.topics[topic] = struct{}{}

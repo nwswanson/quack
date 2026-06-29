@@ -362,7 +362,7 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
-	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12&max_runtime_duration_millis=2500&http_cache_mode=anti_cache&http_cache_max_age_seconds=14400"))
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader("max_upload_bytes=1024&max_upload_files=12&max_runtime_duration_millis=2500&max_pipes_per_site=44&max_topics_per_site=55&max_retained_events_per_site=66&max_retained_bytes_per_site=777&http_cache_mode=anti_cache&http_cache_max_age_seconds=14400"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
@@ -381,6 +381,9 @@ func TestAdminSettingsUpdate(t *testing.T) {
 	}
 	if db.settings.MaxRuntimeDurationMillis != 2500 {
 		t.Fatalf("max runtime duration = %d, want 2500", db.settings.MaxRuntimeDurationMillis)
+	}
+	if db.settings.MaxPipesPerSite != 44 || db.settings.MaxTopicsPerSite != 55 || db.settings.MaxRetainedEventsPerSite != 66 || db.settings.MaxRetainedBytesPerSite != 777 {
+		t.Fatalf("pipe settings = (%d, %d, %d, %d), want 44, 55, 66, 777", db.settings.MaxPipesPerSite, db.settings.MaxTopicsPerSite, db.settings.MaxRetainedEventsPerSite, db.settings.MaxRetainedBytesPerSite)
 	}
 	if db.settings.HTTPCacheMode != "anti_cache" || db.settings.HTTPCacheMaxAgeSeconds != 14400 {
 		t.Fatalf("http cache settings = (%q, %d), want anti_cache and 14400", db.settings.HTTPCacheMode, db.settings.HTTPCacheMaxAgeSeconds)
