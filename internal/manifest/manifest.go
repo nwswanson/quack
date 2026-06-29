@@ -21,6 +21,7 @@ type Manifest struct {
 	Features     Features     `json:"features" yaml:"features"`
 	Capabilities Capabilities `json:"capabilities" yaml:"capabilities"`
 	Exclude      []string     `json:"exclude" yaml:"exclude"`
+	WASM         WASM         `json:"wasm" yaml:"wasm"`
 	Routes       []Route      `json:"routes" yaml:"routes"`
 	APIProxies   []APIProxy   `json:"api_proxies" yaml:"api_proxies"`
 	Pipes        []Pipe       `json:"pipes" yaml:"pipes"`
@@ -58,6 +59,25 @@ type CameraCapabilityLimits struct {
 	MaxFPS               int `json:"max_fps" yaml:"max_fps"`
 	MaxDurationSeconds   int `json:"max_duration_seconds" yaml:"max_duration_seconds"`
 	MaxCapturesPerMinute int `json:"max_captures_per_minute" yaml:"max_captures_per_minute"`
+}
+
+type WASM struct {
+	Modules map[string]WASMModule `json:"modules" yaml:"modules"`
+}
+
+type WASMModule struct {
+	Path            string     `json:"path" yaml:"path"`
+	ABI             string     `json:"abi" yaml:"abi"`
+	RetainInstances int        `json:"retain_instances,omitempty" yaml:"retain_instances,omitempty"`
+	Limits          WASMLimits `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Imports         []string   `json:"imports,omitempty" yaml:"imports,omitempty"`
+}
+
+type WASMLimits struct {
+	TimeoutMS      int `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	MemoryPages    int `json:"memory_pages,omitempty" yaml:"memory_pages,omitempty"`
+	MaxInputBytes  int `json:"max_input_bytes,omitempty" yaml:"max_input_bytes,omitempty"`
+	MaxOutputBytes int `json:"max_output_bytes,omitempty" yaml:"max_output_bytes,omitempty"`
 }
 
 type RouteKind string
@@ -153,6 +173,9 @@ func Parse(r io.Reader, size int64) (Manifest, error) {
 	if err := validateCapabilities(manifest.Capabilities); err != nil {
 		return Manifest{}, err
 	}
+	if err := validateWASM(manifest.WASM); err != nil {
+		return Manifest{}, err
+	}
 	if err := validateAPIProxies(manifest.APIProxies); err != nil {
 		return Manifest{}, err
 	}
@@ -214,6 +237,60 @@ func SanitizeFilesystemRoot(root string) (string, error) {
 		return "", fmt.Errorf("invalid filesystem.root: %w", err)
 	}
 	return sanitized, nil
+}
+
+var wasmModuleNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func validateWASM(wasm WASM) error {
+	seenPaths := map[string]string{}
+	for name, module := range wasm.Modules {
+		if !wasmModuleNamePattern.MatchString(name) {
+			return fmt.Errorf("wasm.modules[%q] name must be a Starlark identifier", name)
+		}
+		module.Path = strings.TrimSpace(module.Path)
+		if module.Path == "" {
+			return fmt.Errorf("wasm.modules[%q].path is required", name)
+		}
+		pathValue, err := SanitizeStaticFile(module.Path)
+		if err != nil {
+			return fmt.Errorf("invalid wasm.modules[%q].path: %w", name, err)
+		}
+		if !strings.HasSuffix(pathValue, ".wasm") {
+			return fmt.Errorf("wasm.modules[%q].path must be a .wasm file", name)
+		}
+		module.Path = pathValue
+		if prior := seenPaths[pathValue]; prior != "" {
+			return fmt.Errorf("wasm.modules[%q].path duplicates wasm.modules[%q].path", name, prior)
+		}
+		seenPaths[pathValue] = name
+		wasm.Modules[name] = module
+
+		switch strings.TrimSpace(module.ABI) {
+		case "quack:json-v1":
+		default:
+			return fmt.Errorf("unsupported wasm.modules[%q].abi %q", name, module.ABI)
+		}
+		if module.RetainInstances < 0 {
+			return fmt.Errorf("wasm.modules[%q].retain_instances cannot be negative", name)
+		}
+		if module.RetainInstances > 64 {
+			return fmt.Errorf("wasm.modules[%q].retain_instances cannot exceed 64", name)
+		}
+		if module.Limits.TimeoutMS < 0 || module.Limits.MemoryPages < 0 || module.Limits.MaxInputBytes < 0 || module.Limits.MaxOutputBytes < 0 {
+			return fmt.Errorf("wasm.modules[%q].limits cannot contain negative values", name)
+		}
+		if module.Limits.MemoryPages > 65536 {
+			return fmt.Errorf("wasm.modules[%q].limits.memory_pages cannot exceed 65536", name)
+		}
+		for _, imp := range module.Imports {
+			switch strings.TrimSpace(imp) {
+			case "clock.now", "random.bytes":
+			default:
+				return fmt.Errorf("unsupported wasm.modules[%q].imports entry %q", name, imp)
+			}
+		}
+	}
+	return nil
 }
 
 func validateRoutes(routes []Route) error {

@@ -312,6 +312,7 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 			FilesystemEnabled:    filesystemEnabled,
 			FilesystemRoot:       filesystemRoot,
 			RequiredCapabilities: runtimeCapabilities(route.Kind, siteManifest),
+			WASM:                 cloneWASMModules(siteManifest.WASM.Modules),
 			ResourceLimits: appruntime.ResourceLimits{
 				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,
 				MaxResponseBytes:  appruntime.DefaultMaxResponseBytes,
@@ -324,6 +325,18 @@ func RuntimeRoutesFromManifest(upload domain.UploadRecord, siteManifest manifest
 		})
 	}
 	return out, nil
+}
+
+func cloneWASMModules(in map[string]manifest.WASMModule) map[string]manifest.WASMModule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]manifest.WASMModule, len(in))
+	for name, module := range in {
+		module.Imports = append([]string(nil), module.Imports...)
+		out[name] = module
+	}
+	return out
 }
 
 func uploadedFileByPath(files []domain.UploadFileRecord, path string) (domain.UploadFileRecord, bool) {

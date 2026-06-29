@@ -104,6 +104,50 @@ func TestParseAllowsExcludePatterns(t *testing.T) {
 	}
 }
 
+func TestParseAllowsWASMModules(t *testing.T) {
+	body := `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:json-v1
+      retain_instances: 4
+      limits:
+        timeout_ms: 25
+        memory_pages: 16
+        max_input_bytes: 65536
+        max_output_bytes: 65536
+      imports:
+        - clock.now
+        - random.bytes
+`
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	module := got.WASM.Modules["rules"]
+	if module.Path != "plugins/rules.wasm" || module.ABI != "quack:json-v1" || module.RetainInstances != 4 {
+		t.Fatalf("wasm module = %+v, want rules module", module)
+	}
+	if module.Limits.MemoryPages != 16 || strings.Join(module.Imports, ",") != "clock.now,random.bytes" {
+		t.Fatalf("wasm module = %+v, want limits and imports", module)
+	}
+}
+
+func TestParseRejectsUnsupportedWASMImport(t *testing.T) {
+	body := `wasm:
+  modules:
+    rules:
+      path: plugins/rules.wasm
+      abi: quack:json-v1
+      imports:
+        - fs.read
+`
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "unsupported wasm.modules") {
+		t.Fatalf("Parse error = %v, want unsupported wasm import", err)
+	}
+}
+
 func TestParseAllowsSerialByTopicEventConcurrency(t *testing.T) {
 	body := `events:
   - selector: "room.*"

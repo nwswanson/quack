@@ -249,6 +249,7 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 			FilesystemEnabled:    filesystemEnabled,
 			FilesystemRoot:       filesystemRoot,
 			RequiredCapabilities: runtimeCapabilities(route.Kind, source.Manifest),
+			WASM:                 cloneWASMModules(source.Manifest.WASM.Modules),
 			ResourceLimits: appruntime.ResourceLimits{
 				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,
 				MaxResponseBytes:  appruntime.DefaultMaxResponseBytes,
@@ -262,6 +263,18 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 		})
 	}
 	return out, nil
+}
+
+func cloneWASMModules(in map[string]manifest.WASMModule) map[string]manifest.WASMModule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]manifest.WASMModule, len(in))
+	for name, module := range in {
+		module.Imports = append([]string(nil), module.Imports...)
+		out[name] = module
+	}
+	return out
 }
 
 func runtimeCapabilities(kind manifest.RouteKind, siteManifest manifest.Manifest) []string {

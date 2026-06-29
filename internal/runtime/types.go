@@ -45,6 +45,7 @@ type Bundle struct {
 	Routes     []Route
 	Files      []BundleFile
 	APIProxies []manifest.APIProxy
+	WASM       map[string]manifest.WASMModule
 	Limits     ResourceLimits
 }
 type BundleFile struct {
@@ -88,6 +89,7 @@ type RouteMetadata struct {
 	FilesystemEnabled    bool
 	FilesystemRoot       string
 	RequiredCapabilities []string
+	WASM                 map[string]manifest.WASMModule
 	ResourceLimits       ResourceLimits
 	CreatedAt            string
 }

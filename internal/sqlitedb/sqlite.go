@@ -221,6 +221,7 @@ func (d *Database) init(ctx context.Context) error {
 			filesystem_enabled INTEGER NOT NULL DEFAULT 0,
 			filesystem_root TEXT NOT NULL DEFAULT '',
 			required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+			wasm_modules_json TEXT NOT NULL DEFAULT '{}',
 			resource_limits_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (site_sha, upload_version, route_path, route_kind),
@@ -314,6 +315,9 @@ func (d *Database) init(ctx context.Context) error {
 	}
 	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE runtime_routes ADD COLUMN filesystem_root TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("migrate sqlite runtime route filesystem root: %w", err)
+	}
+	if _, err := d.writeDB.ExecContext(ctx, `ALTER TABLE runtime_routes ADD COLUMN wasm_modules_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate sqlite runtime route wasm modules: %w", err)
 	}
 	hardwareDeviceColumns := []struct {
 		name string
@@ -1750,9 +1754,9 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 		INSERT INTO runtime_routes (
 			site_sha, upload_version, route_path, route_kind, runtime_kind,
 			entrypoint, bundle_object_key, methods_json, expose_errors, filesystem_enabled, filesystem_root,
-			required_capabilities_json, resource_limits_json
+			required_capabilities_json, wasm_modules_json, resource_limits_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare runtime route insert: %w", err)
@@ -1782,6 +1786,10 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 		if err != nil {
 			return fmt.Errorf("marshal runtime route capabilities: %w", err)
 		}
+		wasmJSON, err := json.Marshal(route.WASM)
+		if err != nil {
+			return fmt.Errorf("marshal runtime route wasm modules: %w", err)
+		}
 		limitsJSON, err := json.Marshal(route.ResourceLimits)
 		if err != nil {
 			return fmt.Errorf("marshal runtime route limits: %w", err)
@@ -1799,6 +1807,7 @@ func (d *Database) SaveRuntimeRoutes(ctx context.Context, siteSHA string, versio
 			boolInt(route.FilesystemEnabled),
 			route.FilesystemRoot,
 			string(capabilitiesJSON),
+			string(wasmJSON),
 			string(limitsJSON),
 		); err != nil {
 			return fmt.Errorf("save runtime route %s: %w", route.RoutePath, err)
@@ -1835,6 +1844,7 @@ func (d *Database) ListRuntimeRoutes(ctx context.Context, siteSHA string, versio
 			rr.filesystem_enabled,
 			rr.filesystem_root,
 			rr.required_capabilities_json,
+			rr.wasm_modules_json,
 			rr.resource_limits_json,
 			rr.created_at
 		FROM runtime_routes rr
@@ -1928,6 +1938,7 @@ func (d *Database) ListCurrentRuntimeRoutes(ctx context.Context) ([]appruntime.R
 			rr.filesystem_enabled,
 			rr.filesystem_root,
 			rr.required_capabilities_json,
+			rr.wasm_modules_json,
 			rr.resource_limits_json,
 			rr.created_at
 		FROM sites s
@@ -1958,6 +1969,7 @@ func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
 		var exposeErrors int
 		var filesystemEnabled int
 		var capabilitiesJSON string
+		var wasmJSON string
 		var limitsJSON string
 		if err := rows.Scan(
 			&route.Site,
@@ -1973,6 +1985,7 @@ func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
 			&filesystemEnabled,
 			&route.FilesystemRoot,
 			&capabilitiesJSON,
+			&wasmJSON,
 			&limitsJSON,
 			&route.CreatedAt,
 		); err != nil {
@@ -1987,6 +2000,11 @@ func scanRuntimeRoutes(rows *sql.Rows) ([]appruntime.RouteMetadata, error) {
 		}
 		if err := json.Unmarshal([]byte(capabilitiesJSON), &route.RequiredCapabilities); err != nil {
 			return nil, fmt.Errorf("decode runtime route capabilities: %w", err)
+		}
+		if strings.TrimSpace(wasmJSON) != "" {
+			if err := json.Unmarshal([]byte(wasmJSON), &route.WASM); err != nil {
+				return nil, fmt.Errorf("decode runtime route wasm modules: %w", err)
+			}
 		}
 		if err := json.Unmarshal([]byte(limitsJSON), &route.ResourceLimits); err != nil {
 			return nil, fmt.Errorf("decode runtime route limits: %w", err)

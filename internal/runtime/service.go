@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"quack/internal/domain"
+	"quack/internal/manifest"
 	"quack/internal/policy"
 )
 
@@ -355,8 +356,21 @@ func (r RouteMetadata) bundle(limits ResourceLimits, files []domain.UploadFileRe
 			FilesystemRoot:    r.FilesystemRoot,
 		}},
 		Files:  bundleFiles(files),
+		WASM:   cloneWASMModules(r.WASM),
 		Limits: limits,
 	}
+}
+
+func cloneWASMModules(in map[string]manifest.WASMModule) map[string]manifest.WASMModule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]manifest.WASMModule, len(in))
+	for name, module := range in {
+		module.Imports = append([]string(nil), module.Imports...)
+		out[name] = module
+	}
+	return out
 }
 
 func (s *service) eventRoute(ctx context.Context, req EventInvocationRequest) (RouteMetadata, error) {

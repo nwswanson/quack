@@ -229,6 +229,13 @@ func (e *StarlarkExecutor) predeclareds(ctx context.Context, bundle Bundle, rout
 		Version: bundle.Version,
 		Route:   route.Path,
 	})
+	out["wasm"] = modules.NewWASMModule(ctx, modules.WASMModuleOptions{
+		Site:    bundle.Site,
+		Version: bundle.Version,
+		Files:   wasmFiles(bundle.Files),
+		Modules: bundle.WASM,
+		Loader:  e.loader,
+	})
 	out["http"] = e.newHTTPModule(ctx, bundle, route)
 	out["secret"] = modules.NewSecretModule(ctx, bundle.Site, e.secrets)
 	if e.hardware != nil {
@@ -258,6 +265,18 @@ func (e *StarlarkExecutor) memoryModule(site string, quota int64) *starlarkstruc
 	module = modules.NewMemoryModule(site, quota)
 	e.memoryModules[key] = module
 	return module
+}
+
+func wasmFiles(files []BundleFile) []modules.WASMFile {
+	out := make([]modules.WASMFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, modules.WASMFile{
+			Path:     file.Path,
+			BlobPath: file.BlobPath,
+			FileSHA:  file.FileSHA,
+		})
+	}
+	return out
 }
 
 func fsFiles(files []BundleFile, root string) []modules.FSFile {
