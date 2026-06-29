@@ -44,6 +44,7 @@ func main() {
 		runs          = flag.Int("runs", 20, "measured runs")
 		warmup        = flag.Int("warmup", 3, "warmup runs")
 		cold          = flag.Bool("cold", false, "instantiate a fresh module each run")
+		closeOnDone   = flag.Bool("close-on-context-done", false, "enable wazero close-on-context-done checks like Quack runtime")
 		prebuildInput = flag.Bool("prebuild-input", false, "build JSON/base64 input once outside measured loop in quack mode")
 		printDebug    = flag.Bool("print-debug", false, "print first measured quack response with output bytes omitted")
 	)
@@ -63,7 +64,11 @@ func main() {
 	imageBytes, err := os.ReadFile(*inputPath)
 	check(err)
 
-	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
+	config := wazero.NewRuntimeConfigCompiler()
+	if *closeOnDone {
+		config = config.WithCloseOnContextDone(true)
+	}
+	rt := wazero.NewRuntimeWithConfig(ctx, config)
 	defer rt.Close(ctx)
 	check(instantiateQuackHost(ctx, rt))
 
