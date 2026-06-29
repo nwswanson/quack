@@ -1,0 +1,18 @@
+wasm:
+  modules:
+    calculator:
+      path: plugins/add.wasm
+      abi: quack:json-v1
+      limits:
+        timeout_ms: 25
+        memory_pages: 1
+        max_input_bytes: 1024
+        max_output_bytes: 1024
+
+routes:
+  - path: /
+    kind: http
+    runtime: starlark
+    entrypoint: api/home.star
+    methods: [GET]
+    expose_errors: true
