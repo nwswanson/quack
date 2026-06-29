@@ -149,7 +149,9 @@ supported. The argument must be JSON-compatible:
 - `None`
 - booleans
 - strings
-- bytes, encoded as a JSON string
+- bytes. With `quack:json-v1`, bytes are encoded as a JSON string for
+  compatibility. With `quack:wasm-v1` JSON format `0x00`, bytes are encoded as
+  a standard base64 JSON string so binary data can cross the JSON value layer.
 - ints that fit in signed 64-bit
 - finite floats
 - lists and tuples containing JSON-compatible values

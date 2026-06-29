@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -432,7 +433,7 @@ func wasmInput(args starlark.Tuple, abi string) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("got %d arguments, want at most 1", args.Len())
 	}
-	goValue, err := anyFromStarlarkValue(value)
+	goValue, err := anyFromStarlarkValueForABI(value, abi)
 	if err != nil {
 		return nil, err
 	}
@@ -649,6 +650,14 @@ func exportedFunctionNames(compiled wazero.CompiledModule) []string {
 }
 
 func anyFromStarlarkValue(v starlark.Value) (any, error) {
+	return anyFromStarlarkValueWithBytes(v, false)
+}
+
+func anyFromStarlarkValueForABI(v starlark.Value, abi string) (any, error) {
+	return anyFromStarlarkValueWithBytes(v, abi == quackWASMABI)
+}
+
+func anyFromStarlarkValueWithBytes(v starlark.Value, encodeBytesBase64 bool) (any, error) {
 	switch value := v.(type) {
 	case starlark.NoneType:
 		return nil, nil
@@ -657,6 +666,9 @@ func anyFromStarlarkValue(v starlark.Value) (any, error) {
 	case starlark.String:
 		return string(value), nil
 	case starlark.Bytes:
+		if encodeBytesBase64 {
+			return base64.StdEncoding.EncodeToString([]byte(string(value))), nil
+		}
 		return string(value), nil
 	case starlark.Int:
 		if n, ok := value.Int64(); ok {
@@ -671,7 +683,7 @@ func anyFromStarlarkValue(v starlark.Value) (any, error) {
 		defer iter.Done()
 		var item starlark.Value
 		for iter.Next(&item) {
-			goItem, err := anyFromStarlarkValue(item)
+			goItem, err := anyFromStarlarkValueWithBytes(item, encodeBytesBase64)
 			if err != nil {
 				return nil, err
 			}
@@ -681,7 +693,7 @@ func anyFromStarlarkValue(v starlark.Value) (any, error) {
 	case starlark.Tuple:
 		out := make([]any, 0, value.Len())
 		for _, item := range value {
-			goItem, err := anyFromStarlarkValue(item)
+			goItem, err := anyFromStarlarkValueWithBytes(item, encodeBytesBase64)
 			if err != nil {
 				return nil, err
 			}
@@ -695,7 +707,7 @@ func anyFromStarlarkValue(v starlark.Value) (any, error) {
 			if !ok {
 				return nil, fmt.Errorf("dict keys must be strings")
 			}
-			goItem, err := anyFromStarlarkValue(item[1])
+			goItem, err := anyFromStarlarkValueWithBytes(item[1], encodeBytesBase64)
 			if err != nil {
 				return nil, err
 			}
