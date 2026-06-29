@@ -70,6 +70,37 @@ valid and `hardware.*.read`, `*.read`, `hardware*`, and `*` are not.
 final-segment prefix selector. A selector is a policy matcher for published
 topics; it does not expand into possible topic names.
 
+Current pipe configuration shape:
+
+```yaml
+pipes:
+  - selector: "room.*"          # exact selector or final-segment wildcard
+    retain: 64
+    unlimited: false
+    overflow: drop_oldest       # drop_oldest | drop_new
+    key_by: topic               # topic | selector
+    max_topics: 256             # required for wildcard + key_by: topic
+    topic_overflow: evict_lru   # evict_lru | drop_new
+```
+
+Legacy exact-name pipe declarations are still accepted:
+
+```yaml
+pipes:
+  - name: "room.42"
+    retain: 64
+```
+
+Selector rules:
+
+- `room.*` is valid.
+- `room.42` is a valid exact selector.
+- `room.*.message`, `*.message`, `room*`, and `*` are invalid.
+- Exact selectors win first; otherwise the longest matching prefix selector
+  wins.
+- `key_by: topic` retains bounded per-topic buffers.
+- `key_by: selector` retains one aggregate buffer under the selector name.
+
 `on_event` must be formatted as:
 
 ```text
