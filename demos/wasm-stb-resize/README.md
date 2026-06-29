@@ -15,6 +15,20 @@ The C wrapper avoids WASI and filesystem APIs. It decodes with
 `stbi_load_from_memory`, resizes with `stbir_resize_uint8_srgb`, and encodes
 with `stbi_write_png_to_mem`.
 
+The route accepts request bodies up to 10 MiB:
+
+```yaml
+routes:
+  - path: /api/resize
+    limits:
+      max_request_bytes: 10485760
+      max_response_bytes: 16777216
+      max_duration_ms: 2000
+```
+
+The WASM input limit is larger because `quack:wasm-v1` base64-encodes Starlark
+`bytes` inside the JSON envelope before calling the guest.
+
 Build the guest with a wasm-capable Clang:
 
 ```sh

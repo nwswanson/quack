@@ -250,19 +250,56 @@ func runtimeRoutes(source *DevSiteSource) ([]appruntime.RouteMetadata, error) {
 			FilesystemRoot:       filesystemRoot,
 			RequiredCapabilities: runtimeCapabilities(route.Kind, source.Manifest),
 			WASM:                 cloneWASMModules(source.Manifest.WASM.Modules),
-			ResourceLimits: appruntime.ResourceLimits{
-				MaxRequestBytes:   appruntime.DefaultMaxRequestBytes,
-				MaxResponseBytes:  appruntime.DefaultMaxResponseBytes,
-				MaxDurationMillis: appruntime.DefaultMaxDuration.Milliseconds(),
-				MaxMemoryBytes:    appruntime.DefaultMaxMemoryBytes,
-				MaxConcurrency:    appruntime.DefaultMaxConcurrentInvocations,
-				MaxExecutionSteps: appruntime.DefaultMaxExecutionSteps,
-				MaxScriptBytes:    appruntime.DefaultMaxScriptBytes,
-			},
-			CreatedAt: source.LoadedAt.Format(time.RFC3339),
+			ResourceLimits:       routeResourceLimits(route.Limits),
+			CreatedAt:            source.LoadedAt.Format(time.RFC3339),
 		})
 	}
 	return out, nil
+}
+
+func routeResourceLimits(limits *manifest.RouteLimits) appruntime.ResourceLimits {
+	out := appruntime.ResourceLimits{
+		MaxRequestBytes:                appruntime.DefaultMaxRequestBytes,
+		MaxResponseBytes:               appruntime.DefaultMaxResponseBytes,
+		MaxDurationMillis:              appruntime.DefaultMaxDuration.Milliseconds(),
+		MaxMemoryBytes:                 appruntime.DefaultMaxMemoryBytes,
+		MaxConcurrency:                 appruntime.DefaultMaxConcurrentInvocations,
+		MaxExecutionSteps:              appruntime.DefaultMaxExecutionSteps,
+		MaxScriptBytes:                 appruntime.DefaultMaxScriptBytes,
+		MaxWebSocketConnections:        appruntime.DefaultMaxWebSocketConnections,
+		MaxWebSocketConnectionsPerSite: appruntime.DefaultMaxWebSocketConnectionsPerSite,
+	}
+	if limits == nil {
+		return out
+	}
+	if limits.MaxRequestBytes > 0 {
+		out.MaxRequestBytes = limits.MaxRequestBytes
+	}
+	if limits.MaxResponseBytes > 0 {
+		out.MaxResponseBytes = limits.MaxResponseBytes
+	}
+	if limits.MaxDurationMS > 0 {
+		out.MaxDurationMillis = limits.MaxDurationMS
+	}
+	if limits.MaxMemoryBytes > 0 {
+		out.MaxMemoryBytes = limits.MaxMemoryBytes
+	}
+	if limits.MaxConcurrency > 0 {
+		out.MaxConcurrency = limits.MaxConcurrency
+	}
+	if limits.MaxExecutionSteps > 0 {
+		out.MaxExecutionSteps = limits.MaxExecutionSteps
+	}
+	if limits.MaxScriptBytes > 0 {
+		out.MaxScriptBytes = limits.MaxScriptBytes
+	}
+	if limits.MaxWebSocketConnections > 0 {
+		out.MaxWebSocketConnections = limits.MaxWebSocketConnections
+	}
+	if limits.MaxWebSocketConnectionsPerSite > 0 {
+		out.MaxWebSocketConnectionsPerSite = limits.MaxWebSocketConnectionsPerSite
+	}
+	return out
 }
 
 func cloneWASMModules(in map[string]manifest.WASMModule) map[string]manifest.WASMModule {

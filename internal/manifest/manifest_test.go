@@ -133,6 +133,55 @@ func TestParseAllowsWASMModules(t *testing.T) {
 	}
 }
 
+func TestParseAllowsRouteLimits(t *testing.T) {
+	body := `routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    limits:
+      max_request_bytes: 10485760
+      max_response_bytes: 20971520
+      max_duration_ms: 2000
+      max_memory_bytes: 67108864
+      max_concurrency: 2
+      max_execution_steps: 100000
+      max_script_bytes: 524288
+`
+	got, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	limits := got.Routes[0].Limits
+	if limits == nil {
+		t.Fatal("route limits were not parsed")
+	}
+	if limits.MaxRequestBytes != 10485760 ||
+		limits.MaxResponseBytes != 20971520 ||
+		limits.MaxDurationMS != 2000 ||
+		limits.MaxMemoryBytes != 67108864 ||
+		limits.MaxConcurrency != 2 ||
+		limits.MaxExecutionSteps != 100000 ||
+		limits.MaxScriptBytes != 524288 {
+		t.Fatalf("limits = %+v, want parsed route limits", limits)
+	}
+}
+
+func TestParseRejectsNegativeRouteLimits(t *testing.T) {
+	body := `routes:
+  - path: /api
+    kind: http
+    runtime: starlark
+    entrypoint: api/app.star
+    limits:
+      max_request_bytes: -1
+`
+	_, err := Parse(strings.NewReader(body), int64(len(body)))
+	if err == nil || !strings.Contains(err.Error(), "route.limits cannot contain negative values") {
+		t.Fatalf("Parse error = %v, want negative route limits error", err)
+	}
+}
+
 func TestParseAllowsQuackWASMABI(t *testing.T) {
 	body := `wasm:
   modules:

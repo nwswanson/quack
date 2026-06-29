@@ -231,8 +231,33 @@ For a Starlark HTTP route:
 1. The `entrypoint` path is sanitized.
 2. The entrypoint file must exist in the uploaded files.
 3. The route stores the entrypoint blob path as `BundleObjectKey`.
-4. Runtime limits are initialized from runtime defaults.
+4. Runtime limits are initialized from route `limits` with runtime defaults as
+   fallback.
 5. Required capabilities are stored with the route metadata.
+
+Route limits are optional:
+
+```yaml
+routes:
+  - path: /api/upload
+    kind: http
+    runtime: starlark
+    entrypoint: api/upload.star
+    methods: [POST]
+    limits:
+      max_request_bytes: 10485760
+      max_response_bytes: 16777216
+      max_duration_ms: 2000
+      max_memory_bytes: 67108864
+      max_concurrency: 2
+      max_execution_steps: 100000
+      max_script_bytes: 524288
+```
+
+`max_request_bytes` is enforced before the Starlark route runs. For WASM routes
+that pass binary data through JSON, remember that bytes may expand inside the
+WASM ABI envelope, so `wasm.modules.<name>.limits.max_input_bytes` may need to
+be larger than `max_request_bytes`.
 
 For a Starlark WebSocket route, the same metadata path is used, but the required
 capability is `runtime.websocket` and public dispatch goes through the

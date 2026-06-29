@@ -209,7 +209,7 @@ func TestServiceUploadArchivePersistsStarlarkRuntimeBundleMetadata(t *testing.T)
 			MaxUploadFiles: domain.EffectiveValue[int64]{Value: 10},
 		},
 		Body: tarArchive(t, map[string]string{
-			"site.yaml":    "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: api/app.star\n    methods: [GET]\n    filesystem:\n      root: data\n",
+			"site.yaml":    "routes:\n  - path: /api\n    kind: http\n    runtime: starlark\n    entrypoint: api/app.star\n    methods: [GET]\n    filesystem:\n      root: data\n    limits:\n      max_request_bytes: 10485760\n      max_response_bytes: 20971520\n      max_duration_ms: 2000\n      max_memory_bytes: 67108864\n      max_concurrency: 2\n      max_execution_steps: 100000\n      max_script_bytes: 524288\n",
 			"api/app.star": "def handle(req): return (200, {}, 'ok')\n",
 		}),
 	})
@@ -226,13 +226,14 @@ func TestServiceUploadArchivePersistsStarlarkRuntimeBundleMetadata(t *testing.T)
 	if !route.FilesystemEnabled || route.FilesystemRoot != "data" {
 		t.Fatalf("runtime route filesystem = (%v, %q), want enabled data root", route.FilesystemEnabled, route.FilesystemRoot)
 	}
-	if route.ResourceLimits.MaxRequestBytes != appruntime.DefaultMaxRequestBytes ||
-		route.ResourceLimits.MaxResponseBytes != appruntime.DefaultMaxResponseBytes ||
-		route.ResourceLimits.MaxDurationMillis != appruntime.DefaultMaxDuration.Milliseconds() ||
-		route.ResourceLimits.MaxMemoryBytes != appruntime.DefaultMaxMemoryBytes ||
-		route.ResourceLimits.MaxConcurrency != appruntime.DefaultMaxConcurrentInvocations ||
-		route.ResourceLimits.MaxExecutionSteps != appruntime.DefaultMaxExecutionSteps {
-		t.Fatalf("resource limits = %#v, want runtime defaults", route.ResourceLimits)
+	if route.ResourceLimits.MaxRequestBytes != 10485760 ||
+		route.ResourceLimits.MaxResponseBytes != 20971520 ||
+		route.ResourceLimits.MaxDurationMillis != 2000 ||
+		route.ResourceLimits.MaxMemoryBytes != 67108864 ||
+		route.ResourceLimits.MaxConcurrency != 2 ||
+		route.ResourceLimits.MaxExecutionSteps != 100000 ||
+		route.ResourceLimits.MaxScriptBytes != 524288 {
+		t.Fatalf("resource limits = %#v, want manifest route limits", route.ResourceLimits)
 	}
 }
 

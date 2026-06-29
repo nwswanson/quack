@@ -98,10 +98,23 @@ type Route struct {
 	Methods      []string         `json:"methods,omitempty" yaml:"methods,omitempty"`
 	ExposeErrors *bool            `json:"expose_errors,omitempty" yaml:"expose_errors,omitempty"`
 	Filesystem   *RouteFilesystem `json:"filesystem,omitempty" yaml:"filesystem,omitempty"`
+	Limits       *RouteLimits     `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 
 type RouteFilesystem struct {
 	Root string `json:"root,omitempty" yaml:"root,omitempty"`
+}
+
+type RouteLimits struct {
+	MaxRequestBytes                int64  `json:"max_request_bytes,omitempty" yaml:"max_request_bytes,omitempty"`
+	MaxResponseBytes               int64  `json:"max_response_bytes,omitempty" yaml:"max_response_bytes,omitempty"`
+	MaxDurationMS                  int64  `json:"max_duration_ms,omitempty" yaml:"max_duration_ms,omitempty"`
+	MaxMemoryBytes                 int64  `json:"max_memory_bytes,omitempty" yaml:"max_memory_bytes,omitempty"`
+	MaxConcurrency                 int64  `json:"max_concurrency,omitempty" yaml:"max_concurrency,omitempty"`
+	MaxExecutionSteps              uint64 `json:"max_execution_steps,omitempty" yaml:"max_execution_steps,omitempty"`
+	MaxScriptBytes                 int64  `json:"max_script_bytes,omitempty" yaml:"max_script_bytes,omitempty"`
+	MaxWebSocketConnections        int64  `json:"max_websocket_connections,omitempty" yaml:"max_websocket_connections,omitempty"`
+	MaxWebSocketConnectionsPerSite int64  `json:"max_websocket_connections_per_site,omitempty" yaml:"max_websocket_connections_per_site,omitempty"`
 }
 
 type APIProxy struct {
@@ -307,6 +320,16 @@ func validateRoutes(routes []Route) error {
 		case "", "starlark":
 		default:
 			return fmt.Errorf("unsupported route runtime %q", route.Runtime)
+		}
+		if route.Limits != nil && (route.Limits.MaxRequestBytes < 0 ||
+			route.Limits.MaxResponseBytes < 0 ||
+			route.Limits.MaxDurationMS < 0 ||
+			route.Limits.MaxMemoryBytes < 0 ||
+			route.Limits.MaxConcurrency < 0 ||
+			route.Limits.MaxScriptBytes < 0 ||
+			route.Limits.MaxWebSocketConnections < 0 ||
+			route.Limits.MaxWebSocketConnectionsPerSite < 0) {
+			return fmt.Errorf("route.limits cannot contain negative values")
 		}
 		if strings.TrimSpace(route.Root) != "" && route.Kind != "" && route.Kind != RouteStatic {
 			return fmt.Errorf("route.root is only supported for static routes")
