@@ -32,6 +32,12 @@ routes:
 The WASM input limit is larger because `quack:wasm-v1` base64-encodes Starlark
 `bytes` inside the JSON envelope before calling the guest.
 
+The manifest sets `execution.interruptible: false` for the image module so this
+demo uses trusted fast WASM execution. The dev server allows that policy by
+default. On a normal Quack server, an administrator must allow
+`runtime.wasm.fast_execution`; otherwise Quack logs a warning and runs the demo
+in safe interruptible mode.
+
 Build the guest with a wasm-capable Clang:
 
 ```sh

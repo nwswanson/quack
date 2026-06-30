@@ -28,6 +28,7 @@ func NewRepository(settings domain.ServerSettings) *Repository {
 			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPFeature, Mode: "allow", Value: "true", Reason: "allowed by dev-server"},
 			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeHTTPClientFeature, Mode: "allow", Value: "true", Reason: "allowed by dev-server"},
 			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeWebSocketFeature, Mode: "allow", Value: "true", Reason: "allowed by dev-server"},
+			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingRuntimeWASMFastExecutionFeature, Mode: "allow", Value: "true", Reason: "allowed by dev-server"},
 			{ScopeType: domain.ScopeSystem, Key: appsettings.SettingDatabaseFeature, Mode: "allow", Value: "true", Reason: "allowed by dev-server"},
 		},
 	}
