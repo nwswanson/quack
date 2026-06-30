@@ -22,13 +22,6 @@ def _clamp(value, low, high):
         return high
     return value
 
-def _settings_from_query(query):
-    push_ms = _clamp(_int(memory.get(PUSH_MS_KEY, DEFAULT_PUSH_MS), DEFAULT_PUSH_MS), 1, 1000)
-    window_ms = _clamp(_int(memory.get(WINDOW_MS_KEY, DEFAULT_WINDOW_MS), DEFAULT_WINDOW_MS), 100, 10000)
-    memory.set(PUSH_MS_KEY, push_ms)
-    memory.set(WINDOW_MS_KEY, window_ms)
-    return push_ms, window_ms
-
 def _samples():
     samples = memory.get(SAMPLES_KEY, [])
     if type(samples) != "list":
@@ -108,32 +101,9 @@ def _record_sample(push_ms, window_ms):
     memory.set(SAMPLES_KEY, samples)
     return _snapshot({"last": sample})
 
-def handle(req):
-    method, path, query, headers, body = req
-    total = memory.incr(TOTAL_KEY, 1)
-    push_ms, window_ms = _settings_from_query(query)
-    html = """<!doctype html>
-<html>
-<head><title>Quack timer bench</title></head>
-<body>
-<h1>ok</h1>
-<p>total=%d</p>
-<p>push_ms=%d window_ms=%d</p>
-</body>
-</html>
-""" % (total, push_ms, window_ms)
-    return (
-        200,
-        {
-            "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-store",
-            "x-quack-demo": "timer-throttle-bench",
-        },
-        html,
-    )
-
 def on_connect(ctx):
-    push_ms, window_ms = _settings_from_query(ctx.query)
+    push_ms = memory.get(PUSH_MS_KEY, DEFAULT_PUSH_MS)
+    window_ms = memory.get(WINDOW_MS_KEY, DEFAULT_WINDOW_MS)
     return [
         ws.subscribe(ctx.conn_id, STATS_TOPIC),
         ws.send(ctx.conn_id, _snapshot({"connected": True})),
