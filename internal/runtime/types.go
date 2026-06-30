@@ -274,15 +274,24 @@ const (
 	WebSocketEffectUnsubscribeAll WebSocketEffectType = "ws.unsubscribe_all"
 	WebSocketEffectPublish        WebSocketEffectType = "events.publish"
 	WebSocketEffectSetTimer       WebSocketEffectType = "timers.set"
+	WebSocketEffectTimerAfter     WebSocketEffectType = "timers.after"
+	WebSocketEffectTimerAt        WebSocketEffectType = "timers.at"
+	WebSocketEffectTimerEvery     WebSocketEffectType = "timers.every"
+	WebSocketEffectTimerCancel    WebSocketEffectType = "timers.cancel"
 )
 
 type WebSocketEffect struct {
-	Type    WebSocketEffectType
-	ConnID  string
-	Topic   string
-	Payload []byte
-	Code    int
-	Reason  string
-	Key     string
-	After   string
+	Type     WebSocketEffectType
+	ConnID   string
+	Topic    string
+	Payload  []byte
+	Code     int
+	Reason   string
+	Key      string
+	After    string
+	ID       string
+	Mode     string
+	MS       int64
+	UnixMS   int64
+	JitterMS int64
 }

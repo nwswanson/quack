@@ -473,6 +473,130 @@ func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
 	}
 }
 
+func TestHandlerTimerAfterPublishesDelayedEvent(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"timer.flush","retain":4}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectTimerAfter,
+		ID:      "tmr-1",
+		MS:      10,
+		Topic:   "timer.flush",
+		Payload: []byte(`{"state_key":"state:1"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	event := waitForRecentEvent(t, handler, "foo", "timer.flush", 500*time.Millisecond)
+	if event.Source != "runtime:timers" || string(event.Payload) != `{"state_key":"state:1"}` || event.Headers["timer.id"] != "tmr-1" {
+		t.Fatalf("timer event = %#v payload=%s", event, event.Payload)
+	}
+}
+
+func TestHandlerTimerKeepExistingCoalescesByKey(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"timer.flush","retain":4}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{
+		{Type: appruntime.WebSocketEffectTimerAfter, ID: "tmr-1", MS: 15, Topic: "timer.flush", Key: "drag:1", Mode: "keep_existing", Payload: []byte(`{"n":1}`)},
+		{Type: appruntime.WebSocketEffectTimerAfter, ID: "tmr-2", MS: 200, Topic: "timer.flush", Key: "drag:1", Mode: "keep_existing", Payload: []byte(`{"n":2}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	event := waitForRecentEvent(t, handler, "foo", "timer.flush", 500*time.Millisecond)
+	if string(event.Payload) != `{"n":2}` {
+		t.Fatalf("timer payload = %s, want latest payload on original deadline", event.Payload)
+	}
+	time.Sleep(80 * time.Millisecond)
+	recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "timer.flush"})
+	if len(recent) != 1 {
+		t.Fatalf("recent events = %#v, want one coalesced timer", recent)
+	}
+}
+
+func TestHandlerTimerCancelByKey(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"timer.flush","retain":4}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{
+		{Type: appruntime.WebSocketEffectTimerAfter, ID: "tmr-cancel", MS: 20, Topic: "timer.flush", Key: "drag:cancel", Mode: "replace", Payload: []byte(`{"n":1}`)},
+		{Type: appruntime.WebSocketEffectTimerCancel, Key: "drag:cancel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	if recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "timer.flush"}); len(recent) != 0 {
+		t.Fatalf("recent events = %#v, want canceled timer to stay silent", recent)
+	}
+}
+
+func TestHandlerTimerCancelByKeyIsSiteScoped(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{
+		{
+			Site:    "foo",
+			SiteSHA: "foo-sha",
+			Version: 3,
+			Settings: map[string]string{
+				appsettings.SettingRuntimePipes: `[{"name":"timer.flush","retain":4}]`,
+			},
+		},
+		{
+			Site:    "bar",
+			SiteSHA: "bar-sha",
+			Version: 4,
+			Settings: map[string]string{
+				appsettings.SettingRuntimePipes: `[{"name":"timer.flush","retain":4}]`,
+			},
+		},
+	}}))
+
+	if err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{
+		{Type: appruntime.WebSocketEffectTimerAfter, ID: "tmr-foo", MS: 20, Topic: "timer.flush", Key: "shared", Mode: "replace", Payload: []byte(`{"site":"foo"}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.applyEffects(context.Background(), "bar", []appruntime.WebSocketEffect{
+		{Type: appruntime.WebSocketEffectTimerAfter, ID: "tmr-bar", MS: 20, Topic: "timer.flush", Key: "shared", Mode: "replace", Payload: []byte(`{"site":"bar"}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{
+		{Type: appruntime.WebSocketEffectTimerCancel, Key: "shared"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	event := waitForRecentEvent(t, handler, "bar", "timer.flush", 500*time.Millisecond)
+	if string(event.Payload) != `{"site":"bar"}` {
+		t.Fatalf("bar timer payload = %s", event.Payload)
+	}
+	if recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "timer.flush"}); len(recent) != 0 {
+		t.Fatalf("foo events = %#v, want canceled timer to stay site-scoped", recent)
+	}
+}
+
 func TestHandlerNestedPublishCarriesCausationAndCorrelation(t *testing.T) {
 	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
 		if req.Topic == "chain.start" {
@@ -1127,6 +1251,20 @@ func (r *recordingRuntime) InvokeEvent(ctx context.Context, req appruntime.Event
 
 func (r *recordingRuntime) PumpWebSockets(ctx context.Context) error {
 	return nil
+}
+
+func waitForRecentEvent(t *testing.T, handler Handler, site string, pipe string, timeout time.Duration) eventpipe.Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		recent := handler.pipes.Recent(site, eventpipe.Config{Name: pipe})
+		if len(recent) > 0 {
+			return recent[len(recent)-1]
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for event on %s", pipe)
+	return eventpipe.Event{}
 }
 
 type blockingConn struct {

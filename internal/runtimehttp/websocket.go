@@ -235,6 +235,13 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 		case appruntime.WebSocketEffectSetTimer:
 			// Stub for the future heartbeat/background pump. Timers are accepted as
 			// durable intents here, but scheduling will be implemented by the host.
+		case appruntime.WebSocketEffectTimerAfter, appruntime.WebSocketEffectTimerAt, appruntime.WebSocketEffectTimerEvery:
+			if err := validateTimerEffect(effect); err != nil {
+				return err
+			}
+			h.timers.schedule(site, effect, time.Now().UTC())
+		case appruntime.WebSocketEffectTimerCancel:
+			h.timers.cancel(site, effect.Key, effect.ID)
 		case appruntime.WebSocketEffectClose:
 			code := effect.Code
 			if code == 0 {
@@ -246,6 +253,25 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 		default:
 			return fmt.Errorf("%w: unknown websocket effect %s", appruntime.ErrInvocationFailure, effect.Type)
 		}
+	}
+	return nil
+}
+
+func validateTimerEffect(effect appruntime.WebSocketEffect) error {
+	mode := strings.TrimSpace(effect.Mode)
+	if mode == "" {
+		mode = "new"
+	}
+	switch mode {
+	case "new", "replace", "keep_existing":
+	default:
+		return fmt.Errorf("%w: unsupported timer mode %q", appruntime.ErrInvocationFailure, effect.Mode)
+	}
+	if mode != "new" && strings.TrimSpace(effect.Key) == "" {
+		return fmt.Errorf("%w: timer mode %s requires key", appruntime.ErrInvocationFailure, mode)
+	}
+	if effect.Type == appruntime.WebSocketEffectTimerEvery && strings.TrimSpace(effect.Key) == "" {
+		return fmt.Errorf("%w: timers.every requires key", appruntime.ErrInvocationFailure)
 	}
 	return nil
 }

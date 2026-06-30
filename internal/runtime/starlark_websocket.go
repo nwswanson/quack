@@ -287,10 +287,27 @@ func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
 	effect.Key, _ = dictOptionalString(dict, "key")
 	effect.After, _ = dictOptionalString(dict, "after")
 	effect.Reason, _ = dictOptionalString(dict, "reason")
+	effect.ID, _ = dictOptionalString(dict, "id")
+	effect.Mode, _ = dictOptionalString(dict, "mode")
 	if code, ok, err := dictOptionalInt(dict, "code"); err != nil {
 		return WebSocketEffect{}, err
 	} else if ok {
 		effect.Code = code
+	}
+	if ms, ok, err := dictOptionalInt64(dict, "ms"); err != nil {
+		return WebSocketEffect{}, err
+	} else if ok {
+		effect.MS = ms
+	}
+	if unixMS, ok, err := dictOptionalInt64(dict, "unix_ms"); err != nil {
+		return WebSocketEffect{}, err
+	} else if ok {
+		effect.UnixMS = unixMS
+	}
+	if jitterMS, ok, err := dictOptionalInt64(dict, "jitter_ms"); err != nil {
+		return WebSocketEffect{}, err
+	} else if ok {
+		effect.JitterMS = jitterMS
 	}
 	if payload, ok, err := dictPayloadBytes(dict, "payload"); err != nil {
 		return WebSocketEffect{}, err
@@ -318,6 +335,34 @@ func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
 	case WebSocketEffectSetTimer:
 		if effect.Key == "" || effect.After == "" {
 			return WebSocketEffect{}, fmt.Errorf("%w: timers.set requires key and after", ErrInvocationFailure)
+		}
+	case WebSocketEffectTimerAfter:
+		if effect.Topic == "" {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.after requires topic", ErrInvocationFailure)
+		}
+		if effect.MS < 0 {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.after ms must be non-negative", ErrInvocationFailure)
+		}
+	case WebSocketEffectTimerAt:
+		if effect.Topic == "" {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.at requires topic", ErrInvocationFailure)
+		}
+		if effect.UnixMS < 0 {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.at unix_ms must be non-negative", ErrInvocationFailure)
+		}
+	case WebSocketEffectTimerEvery:
+		if effect.Topic == "" || effect.Key == "" {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.every requires topic and key", ErrInvocationFailure)
+		}
+		if effect.MS <= 0 {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.every ms must be positive", ErrInvocationFailure)
+		}
+		if effect.JitterMS < 0 {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.every jitter_ms must be non-negative", ErrInvocationFailure)
+		}
+	case WebSocketEffectTimerCancel:
+		if effect.Key == "" && effect.ID == "" {
+			return WebSocketEffect{}, fmt.Errorf("%w: timers.cancel requires key or id", ErrInvocationFailure)
 		}
 	default:
 		return WebSocketEffect{}, fmt.Errorf("%w: unknown websocket effect %s", ErrInvocationFailure, effect.Type)
@@ -350,9 +395,7 @@ var (
 		"publish": starlark.NewBuiltin("events.publish", makeEffectBuiltin(WebSocketEffectPublish, []string{"topic", "payload"})),
 	}})
 
-	sharedTimersModule = frozenModule(&starlarkstruct.Module{Name: "timers", Members: starlark.StringDict{
-		"set": starlark.NewBuiltin("timers.set", makeEffectBuiltin(WebSocketEffectSetTimer, []string{"key", "after", "event?"})),
-	}})
+	sharedTimersModule = frozenModule(modules.NewTimersModule())
 )
 
 func frozenModule(module *starlarkstruct.Module) *starlarkstruct.Module {
@@ -466,6 +509,27 @@ func dictOptionalInt(dict *starlark.Dict, key string) (int, bool, error) {
 		return 0, false, fmt.Errorf("%w: effect %s must be int", ErrInvocationFailure, key)
 	}
 	return int(n), true, nil
+}
+
+func dictOptionalInt64(dict *starlark.Dict, key string) (int64, bool, error) {
+	value, ok, err := dict.Get(starlark.String(key))
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	switch v := value.(type) {
+	case starlark.Int:
+		n, ok := v.Int64()
+		if !ok {
+			return 0, false, fmt.Errorf("%w: effect %s must fit int64", ErrInvocationFailure, key)
+		}
+		return n, true, nil
+	default:
+		n, err := starlark.AsInt32(value)
+		if err != nil {
+			return 0, false, fmt.Errorf("%w: effect %s must be int", ErrInvocationFailure, key)
+		}
+		return int64(n), true, nil
+	}
 }
 
 func dictPayloadBytes(dict *starlark.Dict, key string) ([]byte, bool, error) {

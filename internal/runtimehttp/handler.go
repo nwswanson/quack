@@ -22,6 +22,7 @@ type Handler struct {
 	pipes    *eventpipe.Store
 	sockets  *socketManager
 	lanes    *eventLaneRegistry
+	timers   *timerScheduler
 	logs     *logbuffer.Service
 }
 
@@ -61,6 +62,12 @@ func New(runtime appruntime.Service, opts ...Option) Handler {
 	for _, opt := range opts {
 		opt(&h)
 	}
+	h.timers = newTimerScheduler(func(ctx context.Context, timer scheduledTimer) error {
+		return h.dispatchEventWithSource(ctx, timer.Site, timer.Topic, timer.Payload, "runtime", "timers", map[string]string{
+			"timer.id":  timer.ID,
+			"timer.key": timer.Key,
+		})
+	})
 	return h
 }
 

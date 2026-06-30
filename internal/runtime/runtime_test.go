@@ -954,6 +954,49 @@ def on_event(ctx, event):
 	}
 }
 
+func TestStarlarkExecutorTimersModuleReturnsScheduleEffects(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_message(ctx, msg):
+    return [
+        timers.after(
+            ms = 25,
+            key = "throttle:" + msg["name"],
+            mode = "keep_existing",
+            topic = "__throttle.flush." + msg["name"] + "." + msg["key"],
+            payload = {"state_key": msg["state_key"]},
+        ),
+        timers.at(unix_ms=1780000000000, topic="timer.absolute", payload=None, key="absolute", mode="replace"),
+        timers.every(ms=1000, topic="timer.tick", payload={"ok": True}, key="tick", jitter_ms=50),
+        timers.cancel(key="old"),
+    ]
+`})
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"name":"drag","key":"card.1","state_key":"state:1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 4 {
+		t.Fatalf("effects = %#v, want four timer effects", effects)
+	}
+	if effects[0].Type != WebSocketEffectTimerAfter || effects[0].MS != 25 || effects[0].Key != "throttle:drag" || effects[0].Mode != "keep_existing" || effects[0].Topic != "__throttle.flush.drag.card.1" || string(effects[0].Payload) != `{"state_key":"state:1"}` {
+		t.Fatalf("after effect = %#v payload=%s", effects[0], effects[0].Payload)
+	}
+	if effects[1].Type != WebSocketEffectTimerAt || effects[1].UnixMS != 1780000000000 || effects[1].Key != "absolute" || effects[1].Mode != "replace" {
+		t.Fatalf("at effect = %#v", effects[1])
+	}
+	if effects[2].Type != WebSocketEffectTimerEvery || effects[2].MS != 1000 || effects[2].JitterMS != 50 || effects[2].Key != "tick" {
+		t.Fatalf("every effect = %#v", effects[2])
+	}
+	if effects[3].Type != WebSocketEffectTimerCancel || effects[3].Key != "old" {
+		t.Fatalf("cancel effect = %#v", effects[3])
+	}
+}
+
 func TestStarlarkExecutorEventsPublishRejectsReservedTopics(t *testing.T) {
 	for _, topic := range []string{
 		"hardware.serial.meter.read",
