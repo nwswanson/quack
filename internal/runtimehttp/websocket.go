@@ -270,7 +270,8 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		return err
 	}
 	defer trace.leave()
-	if err := trace.recordPublish(handler, topic); err != nil {
+	releasePublish, err := trace.recordPublish(handler, topic)
+	if err != nil {
 		kind := "runtime.event_publish_limit_exceeded"
 		if errors.Is(err, errEventCycleDetected) {
 			kind = "runtime.event_cycle_detected"
@@ -278,6 +279,7 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		h.logDispatchGuard(ctx, site, settings.version, trace, topic, handler, kind, err)
 		return err
 	}
+	defer releasePublish()
 	config, err := settings.pipe(topic)
 	if err != nil {
 		return err

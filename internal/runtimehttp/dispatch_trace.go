@@ -40,22 +40,24 @@ func (t *dispatchTrace) leave() {
 	}
 }
 
-func (t *dispatchTrace) recordPublish(handler string, topic string) error {
+func (t *dispatchTrace) recordPublish(handler string, topic string) (func(), error) {
 	t.publishCount++
 	if t.publishCount > dispatchMaxPublishes {
-		return fmt.Errorf("%w: publish count %d exceeds max %d", errEventPublishLimitExceeded, t.publishCount, dispatchMaxPublishes)
+		return func() {}, fmt.Errorf("%w: publish count %d exceeds max %d", errEventPublishLimitExceeded, t.publishCount, dispatchMaxPublishes)
 	}
 	handler = strings.TrimSpace(handler)
 	topic = strings.TrimSpace(topic)
 	if handler == "" || topic == "" {
-		return nil
+		return func() {}, nil
 	}
 	edge := handler + "\x00" + topic
 	if _, ok := t.edges[edge]; ok {
-		return fmt.Errorf("%w: handler %q already published topic %q in this dispatch trace", errEventCycleDetected, handler, topic)
+		return func() {}, fmt.Errorf("%w: handler %q is already publishing topic %q in this dispatch trace", errEventCycleDetected, handler, topic)
 	}
 	t.edges[edge] = struct{}{}
-	return nil
+	return func() {
+		delete(t.edges, edge)
+	}, nil
 }
 
 func (t *dispatchTrace) setRootEventID(id string) {

@@ -560,6 +560,30 @@ func TestHandlerDetectsRepeatedHandlerTopicPublishEdge(t *testing.T) {
 	assertRuntimeGuardLog(t, logs, "runtime.event_cycle_detected")
 }
 
+func TestHandlerAllowsSequentialPublishesToSameTopicFromSameHandler(t *testing.T) {
+	runtime := &recordingRuntime{}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"session","retain":64}]`,
+		},
+	}}}))
+
+	err := handler.applyEffectsFromHandler(context.Background(), "foo", []appruntime.WebSocketEffect{
+		{Type: appruntime.WebSocketEffectPublish, Topic: "session", Payload: []byte(`{"type":"debug"}`)},
+		{Type: appruntime.WebSocketEffectPublish, Topic: "session", Payload: []byte(`{"type":"terminal"}`)},
+	}, websocketHandlerEdge("/ws", "on_message"))
+	if err != nil {
+		t.Fatalf("applyEffectsFromHandler error = %v, want sequential same-topic publishes allowed", err)
+	}
+	recent := handler.pipes.Recent("foo", eventpipe.Config{Name: "session"})
+	if len(recent) != 2 || recent[0].Type != "debug" || recent[1].Type != "terminal" {
+		t.Fatalf("recent = %#v, want both same-topic events retained in order", recent)
+	}
+}
+
 func TestHandlerCapsDispatchDepth(t *testing.T) {
 	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
 		next := strings.TrimPrefix(req.Topic, "chain.")
