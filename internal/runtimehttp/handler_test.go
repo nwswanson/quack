@@ -400,7 +400,7 @@ func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
 		SiteSHA: "foo-sha",
 		Version: 3,
 		Settings: map[string]string{
-			appsettings.SettingRuntimePipes: `[{"name":"pixeldraw:canvas","retain":64}]`,
+			appsettings.SettingRuntimePipes: `[{"name":"pixeldraw.canvas","retain":64}]`,
 		},
 	}}}))
 	fooID, _, err := handler.sockets.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
@@ -413,12 +413,12 @@ func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handler.sockets.unregister(barID)
-	handler.sockets.subscribe(fooID, "pixeldraw:canvas")
-	handler.sockets.subscribe(barID, "pixeldraw:canvas")
+	handler.sockets.subscribe(fooID, "pixeldraw.canvas")
+	handler.sockets.subscribe(barID, "pixeldraw.canvas")
 
 	err = handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
 		Type:    appruntime.WebSocketEffectPublish,
-		Topic:   "pixeldraw:canvas",
+		Topic:   "pixeldraw.canvas",
 		Payload: []byte(`{"type":"pixels_updated"}`),
 	}})
 	if err != nil {
@@ -432,7 +432,7 @@ func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
 	if got.Site != "foo" || got.ConnID != fooID || got.EventType != appruntime.WebSocketEventEvent {
 		t.Fatalf("event request = %#v, want foo event for foo subscriber", got)
 	}
-	if !strings.HasPrefix(got.Event.ID, "evt_") || got.Event.Pipe != "pixeldraw:canvas" || got.Event.Topic != "pixeldraw:canvas" || got.Event.Type != "pixels_updated" || got.Event.Source != "runtime:events.publish" {
+	if !strings.HasPrefix(got.Event.ID, "evt_") || got.Event.Pipe != "pixeldraw.canvas" || got.Event.Topic != "pixeldraw.canvas" || got.Event.Type != "pixels_updated" || got.Event.Source != "runtime:events.publish" {
 		t.Fatalf("event envelope = %#v, want canonical subscriber envelope", got.Event)
 	}
 	if got.Event.Time.IsZero() || got.Event.Seq != 1 || !strings.HasPrefix(got.Event.CorrelationID, "req_") {

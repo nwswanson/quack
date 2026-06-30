@@ -47,6 +47,7 @@ const state = {
   drawingNames: new Map(),
   revision: 0,
   socket: null,
+  connectionGeneration: 0,
   retryTimer: 0,
   statusTimer: 0,
   flushTimer: 0,
@@ -104,9 +105,13 @@ function sendMessage(message) {
 }
 
 function updateRoute(drawingId = state.drawingId) {
-  if (!state.namespace) return;
   const url = new URL(window.location.href);
-  url.searchParams.set("ns", state.namespace);
+  if (state.namespace) {
+    url.searchParams.set("ns", state.namespace);
+  } else {
+    url.searchParams.delete("ns");
+    url.searchParams.delete("namespace");
+  }
   if (drawingId) {
     url.searchParams.set("tab", drawingId);
   } else {
@@ -116,6 +121,11 @@ function updateRoute(drawingId = state.drawingId) {
 }
 
 function applyNamespace(namespace) {
+  if (namespace === state.namespace && isOpen()) {
+    namespaceInput.value = state.namespace;
+    updateRoute(state.drawingId);
+    return;
+  }
   state.namespace = namespace;
   state.requestedDrawingId = "";
   state.drawingId = "";
@@ -255,8 +265,11 @@ function renderTabs() {
 
 function connect() {
   window.clearTimeout(state.retryTimer);
+  state.retryTimer = 0;
+  const generation = state.connectionGeneration + 1;
+  state.connectionGeneration = generation;
   if (state.socket) {
-    state.socket.close();
+    state.socket.close(1000, "replaced");
   }
   setStatus("closed", "Connecting");
   namespaceInput.value = state.namespace;
@@ -279,9 +292,13 @@ function connect() {
   });
 
   ws.addEventListener("close", () => {
-    if (state.socket === ws) {
+    if (state.socket === ws && state.connectionGeneration === generation) {
       setStatus("closed", "Reconnecting");
-      state.retryTimer = window.setTimeout(connect, 900);
+      state.retryTimer = window.setTimeout(() => {
+        if (state.socket === ws && state.connectionGeneration === generation) {
+          connect();
+        }
+      }, 900);
     }
   });
 
@@ -687,10 +704,7 @@ namespaceForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const namespace = normalizeNamespace(namespaceInput.value);
   if (!namespaceInput.value.trim()) {
-    state.namespace = "";
-    state.requestedDrawingId = "";
-    window.history.replaceState(null, "", window.location.pathname);
-    connect();
+    applyNamespace("");
     return;
   }
   if (!namespace) {
