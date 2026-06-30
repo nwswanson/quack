@@ -22,10 +22,11 @@ declarative effects.
 ## Design Model
 
 A pipe is a named stream of events inside the Go host. Events are addressed by a
-topic. In the current implementation, the topic also selects the pipe
-configuration: publishing to `app.chat.room.7` uses the configured pipe with the
-same name when one exists, otherwise the host creates an implicit pipe with
-default retention.
+topic. Pipes are declared resources in `site.yml`; topics are concrete
+addresses inside those resources. Publishing to `app.chat.room.7` must match a
+declared exact pipe or selector such as `app.chat.*`. If no declaration matches,
+the host rejects the publish with `runtime.pipe_not_declared` instead of
+creating an implicit pipe.
 
 Each pipe is scoped by site. Two sites can publish the same topic string without
 sharing events, subscribers, sequence numbers, or retained history.
@@ -98,6 +99,8 @@ Selector rules:
 - `room.*.message`, `*.message`, `room*`, and `*` are invalid.
 - Exact selectors win first; otherwise the longest matching prefix selector
   wins.
+- Publishing `room.2` with only `room.1` declared fails. Publishing `room.2`
+  with `room.*` declared succeeds and is bounded by that selector's policy.
 - `key_by: topic` retains bounded per-topic buffers.
 - `key_by: selector` retains one aggregate buffer under the selector name.
 
@@ -119,10 +122,10 @@ runtime.events
 ```
 
 At dispatch time, the runtime HTTP handler reads the current site's persisted
-manifest settings. This means event routing follows the current deployed
-manifest for the site, not the manifest of an older websocket connection except
-where the connection snapshot explicitly retains its route and version for its
-own websocket handler invocation.
+manifest settings. This means pipe admission and event routing follow the
+current deployed manifest for the site, not the manifest of an older websocket
+connection except where the connection snapshot explicitly retains its route and
+version for its own websocket handler invocation.
 
 ## Event Shape
 
@@ -193,6 +196,10 @@ return events.publish("app.room.7", {
 `events.publish` returns a declarative effect. Starlark does not synchronously
 write to subscribers and does not directly mutate the pipe store. After the
 handler returns, the Go host applies the effect by dispatching the event.
+The topic must match a `pipes` entry in the current `site.yml`. This rule is
+strict: `events.publish("room.2", ...)` does not use a `room.1` pipe, and it
+does not create a new pipe. Use an exact `name: room.2` declaration or a bounded
+selector such as `selector: "room.*"`.
 User Starlark cannot publish into host-reserved namespaces. Topics equal to or
 under `hardware`, `runtime`, `system`, or `internal` are reserved for host
 subsystems.
@@ -235,6 +242,12 @@ def on_connect(ctx):
     ]
 ```
 
+`ws.subscribe` is part of the pipe topic model. The topic must match a declared
+pipe name or selector in the current `site.yml`, just like `events.publish`.
+Subscribing to `app.room.8` with only `app.room.7` declared fails; subscribing
+to `app.room.8` with `app.room.*` declared succeeds. This catches misspelled
+topics when the connection joins instead of leaving a dead subscription behind.
+
 The Go socket manager records the subscription in two indexes:
 
 ```text
@@ -249,6 +262,9 @@ On disconnect, close, explicit `ws.unsubscribe`, or `ws.unsubscribe_all`, the
 manager removes the connection from the subscription indexes. When the host
 unregisters a connection, it also closes the underlying network connection and
 its writer loop.
+
+`ws.send` is different: it writes directly to a specific connection and does not
+use or require a pipe.
 
 Manifest event routes are a second attachment mechanism. They attach a Starlark
 function to a selector, not a websocket connection to a topic. A matching event

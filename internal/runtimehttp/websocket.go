@@ -43,6 +43,7 @@ var (
 	errEventCycleDetected        = errors.New("runtime.event_cycle_detected")
 	errEventDepthExceeded        = errors.New("runtime.event_depth_exceeded")
 	errEventPublishLimitExceeded = errors.New("runtime.event_publish_limit_exceeded")
+	errEventPipeNotDeclared      = errors.New("runtime.pipe_not_declared")
 )
 
 func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req appruntime.WebSocketInvocationRequest) {
@@ -208,6 +209,9 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 		case appruntime.WebSocketEffectBroadcast:
 			h.sockets.broadcast(site, effect.Topic, effect.Payload)
 		case appruntime.WebSocketEffectSubscribe:
+			if _, err := h.declaredPipe(ctx, site, effect.Topic); err != nil {
+				return err
+			}
 			h.sockets.subscribe(effect.ConnID, effect.Topic)
 		case appruntime.WebSocketEffectUnsubscribe:
 			h.sockets.unsubscribe(effect.ConnID, effect.Topic)
@@ -271,7 +275,10 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		h.logDispatchGuard(ctx, site, settings.version, trace, topic, handler, kind, err)
 		return err
 	}
-	config := settings.pipe(topic)
+	config, err := settings.pipe(topic)
+	if err != nil {
+		return err
+	}
 	event, accepted := h.pipes.Publish(config, eventpipe.Event{
 		Site: site, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName, Payload: payload, Headers: headers,
 	})
@@ -321,6 +328,14 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		}
 	}
 	return nil
+}
+
+func (h Handler) declaredPipe(ctx context.Context, site string, topic string) (eventpipe.Config, error) {
+	settings, err := h.siteEventSettings(ctx, site)
+	if err != nil {
+		return eventpipe.Config{}, err
+	}
+	return settings.pipe(topic)
 }
 
 func websocketHandlerEdge(route string, handler string) string {
@@ -433,7 +448,7 @@ func (h Handler) eventPipeLimits(ctx context.Context) eventpipe.Limits {
 	}
 }
 
-func (s eventSettings) pipe(name string) eventpipe.Config {
+func (s eventSettings) pipe(name string) (eventpipe.Config, error) {
 	var best *manifest.Pipe
 	bestLen := -1
 	for _, pipe := range s.pipes {
@@ -450,7 +465,7 @@ func (s eventSettings) pipe(name string) eventpipe.Config {
 		bestLen = specificity
 	}
 	if best == nil {
-		return eventpipe.Config{Name: name, SiteLimits: s.limits}
+		return eventpipe.Config{}, fmt.Errorf("%w: %w: topic %q does not match any site.yml pipes entry; declare `pipes: - name: %q` for an exact topic or `pipes: - selector: %q` for a bounded topic family", appruntime.ErrInvocationFailure, errEventPipeNotDeclared, name, name, selectorHint(name))
 	}
 	selector := pipeSelector(*best)
 	keyBy := strings.TrimSpace(best.KeyBy)
@@ -465,7 +480,15 @@ func (s eventSettings) pipe(name string) eventpipe.Config {
 		Name: configName, Selector: selector, Retain: best.Retain, Unlimited: best.Unlimited,
 		Overflow: best.Overflow, KeyBy: keyBy, MaxTopics: best.MaxTopics,
 		TopicOverflow: best.TopicOverflow, SiteLimits: s.limits,
+	}, nil
+}
+
+func selectorHint(topic string) string {
+	topic = strings.TrimSpace(topic)
+	if prefix, _, ok := strings.Cut(topic, "."); ok && strings.TrimSpace(prefix) != "" {
+		return prefix + ".*"
 	}
+	return topic + ".*"
 }
 
 func (s eventSettings) matchingRoutes(topic string) []manifest.EventRoute {

@@ -373,7 +373,14 @@ func TestSocketManagerScopesTopicsBySite(t *testing.T) {
 
 func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
 	runtime := &recordingRuntime{}
-	handler := New(runtime)
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"pixeldraw:canvas","retain":64}]`,
+		},
+	}}}))
 	fooID, _, err := handler.sockets.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -483,6 +490,7 @@ func TestHandlerDetectsRepeatedHandlerTopicPublishEdge(t *testing.T) {
 		SiteSHA: "foo-sha",
 		Version: 3,
 		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"name":"loop","retain":64}]`,
 			appsettings.SettingRuntimeEvents: `[{"selector":"loop","on_event":"app/loop.star:on_event"}]`,
 		},
 	}}}))
@@ -519,6 +527,7 @@ func TestHandlerCapsDispatchDepth(t *testing.T) {
 		SiteSHA: "foo-sha",
 		Version: 3,
 		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"chain.*","key_by":"selector","retain":64}]`,
 			appsettings.SettingRuntimeEvents: `[{"selector":"chain.*","on_event":"app/chain.star:on_event"}]`,
 		},
 	}}}))
@@ -545,7 +554,14 @@ func TestHandlerCapsPublishesPerRootEvent(t *testing.T) {
 			Payload: []byte(`{"type":"bulk"}`),
 		})
 	}
-	handler := New(&recordingRuntime{})
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"selector":"bulk.*","key_by":"selector","retain":64}]`,
+		},
+	}}}))
 
 	err := handler.applyEffects(context.Background(), "foo", effects)
 	if !errors.Is(err, errEventPublishLimitExceeded) {
@@ -559,15 +575,108 @@ func TestEventSettingsPipeUsesExactThenLongestPrefixSelector(t *testing.T) {
 		{Selector: "room.audit.*", Retain: 1024, KeyBy: "selector"},
 		{Selector: "room.audit.created", Retain: 7},
 	}}
-	if got := settings.pipe("room.audit.created"); got.Name != "room.audit.created" || got.Retain != 7 {
+	if got := mustPipe(t, settings, "room.audit.created"); got.Name != "room.audit.created" || got.Retain != 7 {
 		t.Fatalf("exact pipe config = %+v, want exact selector", got)
 	}
-	if got := settings.pipe("room.audit.deleted"); got.Name != "room.audit.*" || got.Retain != 1024 {
+	if got := mustPipe(t, settings, "room.audit.deleted"); got.Name != "room.audit.*" || got.Retain != 1024 {
 		t.Fatalf("audit pipe config = %+v, want longest prefix selector", got)
 	}
-	if got := settings.pipe("room.chat"); got.Name != "room.*" || got.Retain != 64 {
+	if got := mustPipe(t, settings, "room.chat"); got.Name != "room.*" || got.Retain != 64 {
 		t.Fatalf("room pipe config = %+v, want broad selector", got)
 	}
+}
+
+func TestEventSettingsPipeRejectsUndeclaredTopic(t *testing.T) {
+	settings := eventSettings{pipes: []manifest.Pipe{{Selector: "room.1", Retain: 64}}}
+
+	if _, err := settings.pipe("room.2"); !errors.Is(err, errEventPipeNotDeclared) || !strings.Contains(err.Error(), "site.yml pipes") {
+		t.Fatalf("pipe error = %v, want undeclared pipe guidance", err)
+	}
+}
+
+func TestHandlerRejectsPublishWithoutDeclaredPipe(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"room.1","retain":64}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "room.2",
+		Payload: []byte(`{"room":2}`),
+	}})
+	if !errors.Is(err, errEventPipeNotDeclared) || !errors.Is(err, appruntime.ErrInvocationFailure) {
+		t.Fatalf("applyEffects error = %v, want invocation failure for undeclared pipe", err)
+	}
+}
+
+func TestHandlerSubscribesOnlyToDeclaredPipeTopics(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"selector":"room.*","key_by":"topic","max_topics":10,"retain":64}]`,
+		},
+	}}}))
+	connID, _, err := handler.sockets.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handler.sockets.unregister(connID)
+
+	err = handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:   appruntime.WebSocketEffectSubscribe,
+		ConnID: connID,
+		Topic:  "room.2",
+	}})
+	if err != nil {
+		t.Fatalf("applyEffects subscribe error = %v", err)
+	}
+	if snapshots := handler.sockets.subscriberSnapshots("foo", "room.2"); len(snapshots) != 1 || snapshots[0].id != connID {
+		t.Fatalf("room.2 snapshots = %#v, want subscribed conn", snapshots)
+	}
+}
+
+func TestHandlerRejectsSubscribeWithoutDeclaredPipe(t *testing.T) {
+	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"room.1","retain":64}]`,
+		},
+	}}}))
+	connID, _, err := handler.sockets.reserve("foo", 1, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handler.sockets.unregister(connID)
+
+	err = handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:   appruntime.WebSocketEffectSubscribe,
+		ConnID: connID,
+		Topic:  "room.2",
+	}})
+	if !errors.Is(err, errEventPipeNotDeclared) || !errors.Is(err, appruntime.ErrInvocationFailure) {
+		t.Fatalf("applyEffects subscribe error = %v, want invocation failure for undeclared pipe", err)
+	}
+	if snapshots := handler.sockets.subscriberSnapshots("foo", "room.2"); len(snapshots) != 0 {
+		t.Fatalf("room.2 snapshots = %#v, want no subscription", snapshots)
+	}
+}
+
+func mustPipe(t *testing.T, settings eventSettings, topic string) eventpipe.Config {
+	t.Helper()
+	config, err := settings.pipe(topic)
+	if err != nil {
+		t.Fatalf("pipe(%q) error = %v", topic, err)
+	}
+	return config
 }
 
 func assertRuntimeGuardLog(t *testing.T, logs *logbuffer.Service, message string) {
@@ -681,6 +790,7 @@ func TestHandlerSerialByTopicPreventsSameTopicConcurrentHandlers(t *testing.T) {
 		SiteSHA: "foo-sha",
 		Version: 3,
 		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"room.*","key_by":"selector","retain":64}]`,
 			appsettings.SettingRuntimeEvents: `[{"selector":"room.*","concurrency":"serial_by_topic","on_event":"app/room.star:on_event"}]`,
 		},
 	}}}))
@@ -730,6 +840,7 @@ func TestHandlerSerialByTopicAllowsDifferentTopicsConcurrentHandlers(t *testing.
 		SiteSHA: "foo-sha",
 		Version: 3,
 		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"room.*","key_by":"selector","retain":64}]`,
 			appsettings.SettingRuntimeEvents: `[{"selector":"room.*","concurrency":"serial_by_topic","on_event":"app/room.star:on_event"}]`,
 		},
 	}}}))

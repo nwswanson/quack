@@ -204,6 +204,12 @@ handler execution order.
 Declare an event handler with `concurrency: serial_by_topic`:
 
 ```yaml
+pipes:
+  - selector: "room.*"
+    retain: 64
+    key_by: topic
+    max_topics: 256
+
 events:
   - selector: "room.*"
     concurrency: serial_by_topic

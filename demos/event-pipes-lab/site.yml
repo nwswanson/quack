@@ -9,6 +9,10 @@ routes:
     root: public
 
 pipes:
+  - selector: "pipe-demo.session.*"
+    retain: 256
+    key_by: selector
+
   - name: pipe-demo.map_reduce.start
     retain: 128
   - name: pipe-demo.map_reduce.split

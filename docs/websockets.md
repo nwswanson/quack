@@ -199,7 +199,7 @@ host.
 ### Broadcast
 
 ```python
-ws.broadcast("doc:123", {"type": "changed"})
+ws.broadcast("doc.123", {"type": "changed"})
 ```
 
 Enqueues a text frame for every current connection subscribed to the topic.
@@ -208,17 +208,18 @@ Broadcast delivery is best-effort for live local subscribers.
 ### Subscribe
 
 ```python
-ws.subscribe(ctx.conn_id, "doc:123")
+ws.subscribe(ctx.conn_id, "doc.123")
 ```
 
-Adds the connection to a host-owned subscription registry. This is the
-replacement for in-memory listener callbacks. The subscription is data owned by
-Go, not a live Starlark function.
+Adds the connection to a declared pipe topic. This is the replacement for
+in-memory listener callbacks. The subscription is data owned by Go, not a live
+Starlark function. The topic must match a `pipes` declaration in `site.yml`;
+otherwise the host returns `runtime.pipe_not_declared`.
 
 ### Unsubscribe
 
 ```python
-ws.unsubscribe(ctx.conn_id, "doc:123")
+ws.unsubscribe(ctx.conn_id, "doc.123")
 ws.unsubscribe_all(ctx.conn_id)
 ```
 
@@ -242,11 +243,13 @@ If no code is supplied, the host uses `1000`.
 ### Publish
 
 ```python
-events.publish("doc:123", {"type": "changed", "doc_id": "123"})
+events.publish("doc.123", {"type": "changed", "doc_id": "123"})
 ```
 
 Publishes an in-process event to current local subscribers of the topic. For
 each subscribed connection, Go invokes that route's `on_event(ctx, event)`.
+The topic must match a `pipes` declaration in `site.yml`; otherwise the host
+returns `runtime.pipe_not_declared` instead of creating a pipe implicitly.
 
 `events.publish` is not a durable queue:
 
@@ -277,10 +280,18 @@ actual sleeping, scheduling, and later re-invocation.
 
 ## Example: Topic Broadcast
 
+```yaml
+pipes:
+  - selector: "doc.*"
+    retain: 64
+    key_by: topic
+    max_topics: 256
+```
+
 ```python
 def on_connect(ctx):
     doc_id = ctx.path.strip("/") or "default"
-    topic = "doc:" + doc_id
+    topic = "doc." + doc_id
     return [
         ws.subscribe(ctx.conn_id, topic),
         ws.send(ctx.conn_id, {
@@ -293,7 +304,7 @@ def on_message(ctx, msg):
     if msg["type"] == "edit":
         doc_id = msg["doc_id"]
         return [
-            events.publish("doc:" + doc_id, {
+            events.publish("doc." + doc_id, {
                 "type": "document_updated",
                 "doc_id": doc_id,
                 "content": msg["content"],
@@ -328,10 +339,16 @@ The `memory` module does not automatically emit change events. If a script wants
 memory-backed state changes to notify WebSocket clients, it should publish an
 event after mutating memory:
 
+```yaml
+pipes:
+  - name: memory.counter
+    retain: 64
+```
+
 ```python
 def on_connect(ctx):
     return [
-        ws.subscribe(ctx.conn_id, "memory:counter"),
+        ws.subscribe(ctx.conn_id, "memory.counter"),
         ws.send(ctx.conn_id, {"type": "counter", "value": memory.get("counter", 0)}),
     ]
 
@@ -339,7 +356,7 @@ def on_message(ctx, msg):
     if msg["type"] == "increment":
         value = memory.incr("counter", 1)
         return [
-            events.publish("memory:counter", {
+            events.publish("memory.counter", {
                 "type": "counter",
                 "value": value,
             }),

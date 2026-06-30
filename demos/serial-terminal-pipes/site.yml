@@ -9,6 +9,10 @@ routes:
     root: public
 
 pipes:
+  - selector: "hardware.serial.*"
+    retain: 64
+    key_by: selector
+
   - name: serial-terminal-pipes.session
     retain: 64
 
