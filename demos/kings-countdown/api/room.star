@@ -124,41 +124,47 @@ def _reset_room_for(ctx, mode):
     return room
 
 def on_connect(ctx):
-    return [
-        ws.subscribe(ctx.conn_id, TOPIC),
-        ws.send(ctx.conn_id, {
-            "type": "hello",
-            "conn_id": ctx.conn_id,
-            "room": ROOM,
-            "topic": TOPIC,
-            "target": TARGET,
-        }),
-    ]
+    ws.subscribe(ctx.conn_id, TOPIC)
+    ws.send(ctx.conn_id, {
+        "type": "hello",
+        "conn_id": ctx.conn_id,
+        "room": ROOM,
+        "topic": TOPIC,
+        "target": TARGET,
+    })
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
-        return ws.send(ctx.conn_id, {"type": "error", "message": "json only, your majesty"})
+        ws.send(ctx.conn_id, {"type": "error", "message": "json only, your majesty"})
+        return
 
     kind = msg.get("type", "")
     if kind == "join":
-        return _join(ctx, msg.get("mode", "locked"))
+        _join(ctx, msg.get("mode", "locked"))
+        return
     if kind == "ready":
-        return _ready(ctx)
+        _ready(ctx)
+        return
     if kind == "add":
-        return _add(ctx, msg)
+        _add(ctx, msg)
+        return
     if kind == "mode":
-        return _set_mode(ctx, msg.get("mode", "locked"))
+        _set_mode(ctx, msg.get("mode", "locked"))
+        return
     if kind == "reset":
-        return _reset(ctx, msg.get("mode", "locked"))
+        _reset(ctx, msg.get("mode", "locked"))
+        return
     if kind == "sync":
-        return ws.send(ctx.conn_id, _state(_room()))
+        ws.send(ctx.conn_id, _state(_room()))
+        return
 
-    return ws.send(ctx.conn_id, {"type": "error", "message": "unknown countdown ritual"})
+    ws.send(ctx.conn_id, {"type": "error", "message": "unknown countdown ritual"})
 
 def _join(ctx, mode):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "the counting crown is occupied"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "the counting crown is occupied"})
+        return
 
     room = _room()
     if len(room["order"]) == 0:
@@ -168,14 +174,14 @@ def _join(ctx, mode):
         room["order"].append(ctx.conn_id)
         room["ready"][ctx.conn_id] = False
     memory.set(ROOM_KEY, room)
-    effect = ws.broadcast(TOPIC, _state(room, room["players"][ctx.conn_id] + " joined the count"))
+    ws.broadcast(TOPIC, _state(room, room["players"][ctx.conn_id] + " joined the count"))
     lock.release()
-    return effect
 
 def _ready(ctx):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "too many fingers on the abacus"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "too many fingers on the abacus"})
+        return
 
     room = _room()
     if ctx.conn_id not in room["players"]:
@@ -193,50 +199,49 @@ def _ready(ctx):
         notice = "everyone said go. race the counter to 1000."
 
     memory.set(ROOM_KEY, room)
-    effect = ws.broadcast(TOPIC, _state(room, notice))
+    ws.broadcast(TOPIC, _state(room, notice))
     lock.release()
-    return effect
 
 def _set_mode(ctx, mode):
-    return _reset(ctx, mode)
+    _reset(ctx, mode)
 
 def _reset(ctx, mode):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "the reset lever is sticky"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "the reset lever is sticky"})
+        return
 
     room = _reset_room_for(ctx, mode)
     memory.set(ROOM_KEY, room)
-    effect = ws.broadcast(TOPIC, _state(room, "new countdown, " + room["mode"] + " mode"))
+    ws.broadcast(TOPIC, _state(room, "new countdown, " + room["mode"] + " mode"))
     lock.release()
-    return effect
 
 def _add(ctx, msg):
     room = _room()
     if room["mode"] == "unsafe":
-        return _add_unsafe(ctx, msg)
-    return _add_locked(ctx, msg)
+        _add_unsafe(ctx, msg)
+        return
+    _add_locked(ctx, msg)
 
 def _add_locked(ctx, msg):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "locked mode is politely queuing"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "locked mode is politely queuing"})
+        return
 
     room = _room()
-    effect = _apply_add(ctx, room, msg, True)
+    _apply_add(ctx, room, msg, True)
     memory.set(ROOM_KEY, room)
     lock.release()
-    return effect
 
 def _add_unsafe(ctx, msg):
     room = _room()
-    effect = _apply_add(ctx, room, msg, False)
+    _apply_add(ctx, room, msg, False)
     memory.set(ROOM_KEY, room)
-    return effect
 
 def _apply_add(ctx, room, msg, locked):
     if not room["running"] or room["done"]:
-        return []
+        return
 
     requested = _sanitize_amount(msg.get("amount", 0))
     before = room["total"]
@@ -270,16 +275,16 @@ def _apply_add(ctx, room, msg, locked):
     notice = name + " added " + str(amount)
     if room["done"]:
         notice = "countdown hit 1000 in " + room["mode"] + " mode"
-    return ws.broadcast(TOPIC, _state(room, notice))
+    ws.broadcast(TOPIC, _state(room, notice))
 
 def on_event(ctx, event):
-    return ws.send(ctx.conn_id, event.payload)
+    ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
     lock = _with_room_lock(ctx)
-    effects = [ws.unsubscribe_all(ctx.conn_id)]
+    ws.unsubscribe_all(ctx.conn_id)
     if not lock:
-        return effects
+        return
 
     room = _room()
     if ctx.conn_id in room["players"]:
@@ -294,6 +299,5 @@ def on_disconnect(ctx):
         if not _all_ready(room):
             room["running"] = False
         memory.set(ROOM_KEY, room)
-        effects.append(ws.broadcast(TOPIC, _state(room, name + " left the count")))
+        ws.broadcast(TOPIC, _state(room, name + " left the count"))
     lock.release()
-    return effects

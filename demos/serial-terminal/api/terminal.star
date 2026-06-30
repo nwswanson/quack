@@ -137,10 +137,10 @@ def _snapshot(extra = {}):
     return out
 
 def _publish(message):
-    return events.publish(TOPIC, message)
+    events.publish(TOPIC, message)
 
 def _state_changed():
-    return _publish({
+    _publish({
         "type": "state",
         "state": _state(),
     })
@@ -195,17 +195,17 @@ def _refresh_devices():
         state["status"] = "ready" if len(devices) > 0 else "no devices"
     _save_state(state)
     _remember_debug("devices", {"count": len(devices), "selected": selected})
-    return _state_changed()
+    _state_changed()
 
 def _append_terminal_and_publish(item):
     if item == None:
-        return []
+        return
     _append_line(TERMINAL_KEY, item, MAX_TERMINAL_LINES)
-    return [_publish({"type": "terminal", "line": item})]
+    _publish({"type": "terminal", "line": item})
 
 def _append_debug_and_publish(kind, payload):
     item = _remember_debug(kind, payload)
-    return [_publish({"type": "debug", "entry": item})]
+    _publish({"type": "debug", "entry": item})
 
 def _events_after(status, cutoff):
     events = []
@@ -250,46 +250,45 @@ def _drain_status(alias):
     state["last_event_at"] = last
     _save_state(state)
 
-    effects = []
     if was_connected != state.get("connected", False) or old_status != state.get("status", "") or old_error != state.get("error", ""):
-        effects.append(_state_changed())
+        _state_changed()
     if status_error != "" and status_error != previous_error_line:
-        effects += _append_terminal_and_publish(_terminal("error", "! " + status_error))
+        _append_terminal_and_publish(_terminal("error", "! " + status_error))
 
     for event in events:
-        effects += _append_debug_and_publish("serial_event", event)
+        _append_debug_and_publish("serial_event", event)
         if event.get("type", "") == "read" and event.get("text", "") != "":
-            effects += _append_terminal_and_publish(_terminal("read", event.get("text", "")))
+            _append_terminal_and_publish(_terminal("read", event.get("text", "")))
         elif event.get("type", "") == "error" and event.get("error", "") != "":
-            effects += _append_terminal_and_publish(_terminal("error", "! " + event.get("error", "")))
-    return effects
+            _append_terminal_and_publish(_terminal("error", "! " + event.get("error", "")))
 
 def on_connect(ctx):
     state = _state()
-    effects = [
-        ws.subscribe(ctx.conn_id, TOPIC),
-        ws.send(ctx.conn_id, {"type": "ready", "conn_id": ctx.conn_id}),
-    ]
+    ws.subscribe(ctx.conn_id, TOPIC)
+    ws.send(ctx.conn_id, {"type": "ready", "conn_id": ctx.conn_id})
     if len(state.get("devices", [])) == 0 and not state.get("locked", False):
-        effects.append(_refresh_devices())
-    effects.append(ws.send(ctx.conn_id, _snapshot()))
-    return effects
+        _refresh_devices()
+    ws.send(ctx.conn_id, _snapshot())
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
-        return ws.send(ctx.conn_id, {"type": "error", "message": "expected a JSON object"})
+        ws.send(ctx.conn_id, {"type": "error", "message": "expected a JSON object"})
+        return
 
     msg_type = msg.get("type", "")
     state = _state()
 
     if msg_type == "refresh":
         if state.get("locked", False):
-            return ws.send(ctx.conn_id, {"type": "error", "message": "session is locked"})
-        return _refresh_devices()
+            ws.send(ctx.conn_id, {"type": "error", "message": "session is locked"})
+            return
+        _refresh_devices()
+        return
 
     if msg_type == "select":
         if state.get("locked", False):
-            return ws.send(ctx.conn_id, {"type": "error", "message": "session is locked"})
+            ws.send(ctx.conn_id, {"type": "error", "message": "session is locked"})
+            return
         alias = msg.get("device", "")
         valid = False
         for device in state.get("devices", []):
@@ -297,22 +296,29 @@ def on_message(ctx, msg):
                 valid = True
                 break
         if not valid:
-            return ws.send(ctx.conn_id, {"type": "error", "message": "unknown device"})
+            ws.send(ctx.conn_id, {"type": "error", "message": "unknown device"})
+            return
         state["selected"] = alias
         _save_state(state)
-        return [_state_changed()] + _append_debug_and_publish("select", {"device": alias, "by": ctx.conn_id})
+        _state_changed()
+        _append_debug_and_publish("select", {"device": alias, "by": ctx.conn_id})
+        return
 
     if msg_type == "settings":
         if state.get("locked", False):
-            return ws.send(ctx.conn_id, {"type": "error", "message": "session is locked"})
+            ws.send(ctx.conn_id, {"type": "error", "message": "session is locked"})
+            return
         state["settings"] = _clean_settings(msg.get("settings", {}))
         _save_state(state)
-        return [_state_changed()] + _append_debug_and_publish("settings", {"settings": state["settings"], "by": ctx.conn_id})
+        _state_changed()
+        _append_debug_and_publish("settings", {"settings": state["settings"], "by": ctx.conn_id})
+        return
 
     if msg_type == "open":
         alias = state.get("selected", "")
         if alias == "":
-            return ws.send(ctx.conn_id, {"type": "error", "message": "select a device first"})
+            ws.send(ctx.conn_id, {"type": "error", "message": "select a device first"})
+            return
         before = _serial_status(serial.status(alias))
         cutoff = _max_event_at(state.get("last_event_at", ""), _last_event_at(before))
         serial.open(alias)
@@ -326,16 +332,17 @@ def on_message(ctx, msg):
         state["last_error"] = opened_status.get("error", "")
         state["last_event_at"] = cutoff
         _save_state(state)
-        effects = [_state_changed()]
-        effects += _append_debug_and_publish("open", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": cutoff})
-        effects += _append_terminal_and_publish(_terminal("system", "connected to " + alias, ctx.conn_id))
-        effects += _drain_status(alias)
-        return effects
+        _state_changed()
+        _append_debug_and_publish("open", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": cutoff})
+        _append_terminal_and_publish(_terminal("system", "connected to " + alias, ctx.conn_id))
+        _drain_status(alias)
+        return
 
     if msg_type == "close":
         alias = state.get("selected", "")
         if alias == "":
-            return ws.send(ctx.conn_id, {"type": "error", "message": "no device selected"})
+            ws.send(ctx.conn_id, {"type": "error", "message": "no device selected"})
+            return
         serial.close(alias)
         closed_status = _serial_status(serial.status(alias))
         state = _state()
@@ -346,47 +353,52 @@ def on_message(ctx, msg):
         state["last_error"] = closed_status.get("error", "")
         state["last_event_at"] = _last_event_at(closed_status)
         _save_state(state)
-        effects = [_state_changed()]
-        effects += _append_debug_and_publish("close", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": state["last_event_at"]})
-        effects += _append_terminal_and_publish(_terminal("system", "closed " + alias, ctx.conn_id))
-        return effects
+        _state_changed()
+        _append_debug_and_publish("close", {"device": alias, "by": ctx.conn_id, "skipped_recent_through": state["last_event_at"]})
+        _append_terminal_and_publish(_terminal("system", "closed " + alias, ctx.conn_id))
+        return
 
     if msg_type == "write":
         alias = state.get("selected", "")
         if alias == "" or not state.get("connected", False):
-            return ws.send(ctx.conn_id, {"type": "error", "message": "not connected"})
+            ws.send(ctx.conn_id, {"type": "error", "message": "not connected"})
+            return
         text = msg.get("text", "")
         if type(text) != "string" or text == "":
-            return []
+            return
         settings = _clean_settings(state.get("settings", {}))
         data = text + _line_ending(settings.get("line_ending", "lf"))
         serial.write(alias, data)
-        effects = _append_debug_and_publish("write", {"device": alias, "text": text, "by": ctx.conn_id})
-        effects += _append_terminal_and_publish(_terminal("input", "> " + text, ctx.conn_id))
-        effects += _drain_status(alias)
-        return effects
+        _append_debug_and_publish("write", {"device": alias, "text": text, "by": ctx.conn_id})
+        _append_terminal_and_publish(_terminal("input", "> " + text, ctx.conn_id))
+        _drain_status(alias)
+        return
 
     if msg_type == "poll":
         alias = state.get("selected", "")
         if alias == "" or not state.get("connected", False):
-            return []
-        return _drain_status(alias)
+            return
+        _drain_status(alias)
+        return
 
     if msg_type == "clear_terminal":
         memory.set(TERMINAL_KEY, [])
-        return _publish({"type": "clear_terminal"})
+        _publish({"type": "clear_terminal"})
+        return
 
     if msg_type == "clear_debug":
         memory.set(DEBUG_KEY, [])
-        return _publish({"type": "clear_debug"})
+        _publish({"type": "clear_debug"})
+        return
 
     if msg_type == "snapshot":
-        return ws.send(ctx.conn_id, _snapshot())
+        ws.send(ctx.conn_id, _snapshot())
+        return
 
-    return ws.send(ctx.conn_id, {"type": "error", "message": "unknown message type"})
+    ws.send(ctx.conn_id, {"type": "error", "message": "unknown message type"})
 
 def on_event(ctx, event):
-    return ws.send(ctx.conn_id, event.payload)
+    ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
-    return ws.unsubscribe_all(ctx.conn_id)
+    ws.unsubscribe_all(ctx.conn_id)

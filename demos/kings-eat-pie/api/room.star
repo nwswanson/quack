@@ -83,36 +83,40 @@ def _with_room_lock(ctx):
     )
 
 def on_connect(ctx):
-    return [
-        ws.subscribe(ctx.conn_id, TOPIC),
-        ws.send(ctx.conn_id, {
-            "type": "hello",
-            "conn_id": ctx.conn_id,
-            "room": ROOM,
-            "topic": TOPIC,
-        }),
-    ]
+    ws.subscribe(ctx.conn_id, TOPIC)
+    ws.send(ctx.conn_id, {
+        "type": "hello",
+        "conn_id": ctx.conn_id,
+        "room": ROOM,
+        "topic": TOPIC,
+    })
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
-        return ws.send(ctx.conn_id, {"type": "error", "message": "json only, monarch"})
+        ws.send(ctx.conn_id, {"type": "error", "message": "json only, monarch"})
+        return
 
     kind = msg.get("type", "")
     if kind == "join":
-        return _join(ctx)
+        _join(ctx)
+        return
     if kind == "ready":
-        return _ready(ctx)
+        _ready(ctx)
+        return
     if kind == "reset":
-        return _reset(ctx)
+        _reset(ctx)
+        return
     if kind == "sync":
-        return ws.send(ctx.conn_id, _state(_room()))
+        ws.send(ctx.conn_id, _state(_room()))
+        return
 
-    return ws.send(ctx.conn_id, {"type": "error", "message": "unknown pie ritual"})
+    ws.send(ctx.conn_id, {"type": "error", "message": "unknown pie ritual"})
 
 def _join(ctx):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "the pie bouncer is occupied"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "the pie bouncer is occupied"})
+        return
 
     room = _room()
     if ctx.conn_id not in room["players"]:
@@ -122,14 +126,14 @@ def _join(ctx):
     room["started"] = False
     room["bites"] = []
     memory.set(ROOM_KEY, room)
-    effect = ws.broadcast(TOPIC, _state(room, room["players"][ctx.conn_id] + " slid into the booth"))
+    ws.broadcast(TOPIC, _state(room, room["players"][ctx.conn_id] + " slid into the booth"))
     lock.release()
-    return effect
 
 def _ready(ctx):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "too many kings reaching for pie"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "too many kings reaching for pie"})
+        return
 
     room = _room()
     if ctx.conn_id not in room["players"]:
@@ -146,32 +150,31 @@ def _ready(ctx):
         notice = "every king has said go. pie protocol engaged."
 
     memory.set(ROOM_KEY, room)
-    effect = ws.broadcast(TOPIC, _state(room, notice))
+    ws.broadcast(TOPIC, _state(room, notice))
     lock.release()
-    return effect
 
 def _reset(ctx):
     lock = _with_room_lock(ctx)
     if not lock:
-        return ws.send(ctx.conn_id, {"type": "busy", "message": "the crumbs are being audited"})
+        ws.send(ctx.conn_id, {"type": "busy", "message": "the crumbs are being audited"})
+        return
 
     room = _blank_room()
     room["players"][ctx.conn_id] = _name_for(ctx.conn_id, 0)
     room["order"].append(ctx.conn_id)
     room["ready"][ctx.conn_id] = False
     memory.set(ROOM_KEY, room)
-    effect = ws.broadcast(TOPIC, _state(room, "fresh pie, same weird little monarchy"))
+    ws.broadcast(TOPIC, _state(room, "fresh pie, same weird little monarchy"))
     lock.release()
-    return effect
 
 def on_event(ctx, event):
-    return ws.send(ctx.conn_id, event.payload)
+    ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
     lock = _with_room_lock(ctx)
-    effects = [ws.unsubscribe_all(ctx.conn_id)]
+    ws.unsubscribe_all(ctx.conn_id)
     if not lock:
-        return effects
+        return
 
     room = _room()
     if ctx.conn_id in room["players"]:
@@ -187,6 +190,5 @@ def on_disconnect(ctx):
             room["started"] = False
             room["bites"] = []
         memory.set(ROOM_KEY, room)
-        effects.append(ws.broadcast(TOPIC, _state(room, name + " vanished into the liner notes")))
+        ws.broadcast(TOPIC, _state(room, name + " vanished into the liner notes"))
     lock.release()
-    return effects

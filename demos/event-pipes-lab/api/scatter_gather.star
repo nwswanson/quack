@@ -32,7 +32,7 @@ def _save(session, state):
     return state
 
 def _trace(session, stage, title, detail):
-    return events.publish(_trace_topic(session), {
+    events.publish(_trace_topic(session), {
         "type": "trace",
         "flow": FLOW,
         "stage": stage,
@@ -41,7 +41,7 @@ def _trace(session, stage, title, detail):
     })
 
 def _result(session, title, detail):
-    return events.publish(_trace_topic(session), {
+    events.publish(_trace_topic(session), {
         "type": "result",
         "flow": FLOW,
         "stage": "result",
@@ -83,21 +83,20 @@ def start_node(ctx, event):
     payload = event.payload
     session = payload.get("session", "") if type(payload) == "dict" else ""
     if not _safe_session(session):
-        return []
+        return
     items = _items(payload.get("input", ""))
     _reset(session, 4)
-    effects = [_trace(session, "start_node", "scatter controller sent the same request to four services", {
+    _trace(session, "start_node", "scatter controller sent the same request to four services", {
         "node": "api/scatter_gather.star:start_node",
         "incoming_edge": START,
         "outgoing_edges": [PROFILE, PRICING, INVENTORY, RISK],
         "items": items,
-    })]
+    })
     if len(items) == 0:
-        effects.append(_result(session, "nothing to gather", {"responses": []}))
-        return effects
+        _result(session, "nothing to gather", {"responses": []})
+        return
     for i in range(4):
-        effects.append(events.publish(_service_pipe(i), {"session": session, "items": items}))
-    return effects
+        events.publish(_service_pipe(i), {"session": session, "items": items})
 
 def _profile_response(items):
     longest = ""
@@ -153,59 +152,56 @@ def _risk_response(items):
 def _worker_node(payload, node_name, incoming_edge, response):
     session = payload.get("session", "") if type(payload) == "dict" else ""
     if not _safe_session(session):
-        return []
+        return
     state = _state(session)
     responses = state.get("responses", [])
     responses.append(response)
     state["responses"] = responses
     _save(session, state)
-    effects = [_trace(session, node_name, "service returned a partial response", {
+    _trace(session, node_name, "service returned a partial response", {
         "node": "api/scatter_gather.star:" + node_name,
         "incoming_edge": incoming_edge,
         "outgoing_edge": GATHER,
         "response": response,
         "received": len(responses),
         "expected": state.get("expected", 0),
-    })]
+    })
     if len(responses) >= state.get("expected", 0):
-        effects.append(events.publish(GATHER, {"session": session, "responses": responses}))
-    return effects
+        events.publish(GATHER, {"session": session, "responses": responses})
 
 def profile_node(ctx, event):
     items = event.payload.get("items", []) if type(event.payload) == "dict" else []
-    return _worker_node(event.payload, "profile_node", PROFILE, _profile_response(items))
+    _worker_node(event.payload, "profile_node", PROFILE, _profile_response(items))
 
 def pricing_node(ctx, event):
     items = event.payload.get("items", []) if type(event.payload) == "dict" else []
-    return _worker_node(event.payload, "pricing_node", PRICING, _pricing_response(items))
+    _worker_node(event.payload, "pricing_node", PRICING, _pricing_response(items))
 
 def inventory_node(ctx, event):
     items = event.payload.get("items", []) if type(event.payload) == "dict" else []
-    return _worker_node(event.payload, "inventory_node", INVENTORY, _inventory_response(items))
+    _worker_node(event.payload, "inventory_node", INVENTORY, _inventory_response(items))
 
 def risk_node(ctx, event):
     items = event.payload.get("items", []) if type(event.payload) == "dict" else []
-    return _worker_node(event.payload, "risk_node", RISK, _risk_response(items))
+    _worker_node(event.payload, "risk_node", RISK, _risk_response(items))
 
 def gather_node(ctx, event):
     payload = event.payload
     session = payload.get("session", "") if type(payload) == "dict" else ""
     if not _safe_session(session):
-        return []
+        return
     responses = payload.get("responses", [])
     best = None
     for response in responses:
         if best == None or response.get("score", 0) > best.get("score", 0):
             best = response
-    return [
-        _trace(session, "gather_node", "gatherer merged worker responses", {
-            "node": "api/scatter_gather.star:gather_node",
-            "incoming_edge": GATHER,
-            "response_count": len(responses),
-            "best": best,
-        }),
-        _result(session, "scatter-gather complete", {
-            "best": best,
-            "responses": responses,
-        }),
-    ]
+    _trace(session, "gather_node", "gatherer merged worker responses", {
+        "node": "api/scatter_gather.star:gather_node",
+        "incoming_edge": GATHER,
+        "response_count": len(responses),
+        "best": best,
+    })
+    _result(session, "scatter-gather complete", {
+        "best": best,
+        "responses": responses,
+    })

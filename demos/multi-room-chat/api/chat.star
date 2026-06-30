@@ -67,43 +67,46 @@ def _set_connection(ctx, record):
     memory.set(_conn_key(ctx.conn_id), record)
 
 def _error(ctx, message):
-    return ws.send(ctx.conn_id, {
+    ws.send(ctx.conn_id, {
         "type": "error",
         "message": message,
     })
 
 def on_connect(ctx):
-    return [
-        ws.subscribe(ctx.conn_id, "chat.room.*"),
-        ws.send(ctx.conn_id, {
-            "type": "ready",
-            "conn_id": ctx.conn_id,
-            "rooms": {
-                "min": ROOM_MIN,
-                "max": ROOM_MAX,
-            },
-            "selector": "chat.room.*",
-        }),
-    ]
+    ws.subscribe(ctx.conn_id, "chat.room.*")
+    ws.send(ctx.conn_id, {
+        "type": "ready",
+        "conn_id": ctx.conn_id,
+        "rooms": {
+            "min": ROOM_MIN,
+            "max": ROOM_MAX,
+        },
+        "selector": "chat.room.*",
+    })
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
-        return _error(ctx, "json object required")
+        _error(ctx, "json object required")
+        return
 
     kind = msg.get("type", "")
     if kind == "join":
-        return _join(ctx, msg)
+        _join(ctx, msg)
+        return
     if kind == "message":
-        return _message(ctx, msg)
+        _message(ctx, msg)
+        return
     if kind == "typing":
-        return _typing(ctx, msg)
+        _typing(ctx, msg)
+        return
 
-    return _error(ctx, "unknown message type")
+    _error(ctx, "unknown message type")
 
 def _join(ctx, msg):
     room = _sanitize_room(msg.get("room"))
     if room == None:
-        return _error(ctx, "room must be 1-100")
+        _error(ctx, "room must be 1-100")
+        return
 
     old = _connection(ctx)
     previous_room = old.get("room")
@@ -114,41 +117,39 @@ def _join(ctx, msg):
     }
     _set_connection(ctx, record)
 
-    effects = [
-        ws.send(ctx.conn_id, {
-            "type": "joined",
-            "room": room,
-            "name": name,
-            "topic": _topic(room),
-            "selector": "chat.room.*",
-        }),
-        events.publish(_topic(room), {
-            "type": "system",
-            "room": room,
-            "name": name,
-            "text": name + " joined room " + str(room),
-        }),
-    ]
+    ws.send(ctx.conn_id, {
+        "type": "joined",
+        "room": room,
+        "name": name,
+        "topic": _topic(room),
+        "selector": "chat.room.*",
+    })
+    events.publish(_topic(room), {
+        "type": "system",
+        "room": room,
+        "name": name,
+        "text": name + " joined room " + str(room),
+    })
     if previous_room != None and previous_room != room:
-        effects.append(events.publish(_topic(previous_room), {
+        events.publish(_topic(previous_room), {
             "type": "system",
             "room": previous_room,
             "name": name,
             "text": name + " moved to room " + str(room),
-        }))
-    return effects
+        })
 
 def _message(ctx, msg):
     conn = _connection(ctx)
     room = conn.get("room")
     if room == None:
-        return _error(ctx, "join a room first")
+        _error(ctx, "join a room first")
+        return
 
     text = _sanitize_message(msg.get("text"))
     if text == "":
-        return []
+        return
 
-    return events.publish(_topic(room), {
+    events.publish(_topic(room), {
         "type": "message",
         "room": room,
         "name": conn.get("name", "Guest"),
@@ -160,9 +161,9 @@ def _typing(ctx, msg):
     conn = _connection(ctx)
     room = conn.get("room")
     if room == None:
-        return []
+        return
     active = bool(msg.get("active", False))
-    return events.publish(_topic(room), {
+    events.publish(_topic(room), {
         "type": "typing",
         "room": room,
         "name": conn.get("name", "Guest"),
@@ -171,26 +172,26 @@ def _typing(ctx, msg):
     })
 
 def on_event(ctx, event):
-    return _deliver(ctx, event)
+    _deliver(ctx, event)
 
 def on_chat_event(ctx, event):
-    return _deliver(ctx, event)
+    _deliver(ctx, event)
 
 def _deliver(ctx, event):
     room = _room_from_topic(event.topic)
     if room == None:
-        return []
+        return
 
     conn = _connection(ctx)
     if conn.get("room") != room:
-        return []
+        return
 
     payload = event.payload
     if type(payload) != "dict":
-        return []
+        return
     payload["topic"] = event.topic
     payload["selector"] = "chat.room.*"
-    return ws.send(ctx.conn_id, payload)
+    ws.send(ctx.conn_id, payload)
 
 def on_disconnect(ctx):
     conn = _connection(ctx)
@@ -198,13 +199,12 @@ def on_disconnect(ctx):
     room = conn.get("room")
     name = conn.get("name", "")
     if room == None or name == "":
-        return ws.unsubscribe_all(ctx.conn_id)
-    return [
-        ws.unsubscribe_all(ctx.conn_id),
-        events.publish(_topic(room), {
-            "type": "system",
-            "room": room,
-            "name": name,
-            "text": name + " left room " + str(room),
-        }),
-    ]
+        ws.unsubscribe_all(ctx.conn_id)
+        return
+    ws.unsubscribe_all(ctx.conn_id)
+    events.publish(_topic(room), {
+        "type": "system",
+        "room": room,
+        "name": name,
+        "text": name + " left room " + str(room),
+    })

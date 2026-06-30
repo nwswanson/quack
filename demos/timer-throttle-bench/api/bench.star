@@ -70,7 +70,7 @@ def _snapshot(extra = {}):
     return out
 
 def _schedule(push_ms, window_ms):
-    return timers.after(
+    timers.after(
         ms = push_ms,
         key = TIMER_KEY,
         mode = "keep_existing",
@@ -104,11 +104,9 @@ def _record_sample(push_ms, window_ms):
 def on_connect(ctx):
     push_ms = memory.get(PUSH_MS_KEY, DEFAULT_PUSH_MS)
     window_ms = memory.get(WINDOW_MS_KEY, DEFAULT_WINDOW_MS)
-    return [
-        ws.subscribe(ctx.conn_id, STATS_TOPIC),
-        ws.send(ctx.conn_id, _snapshot({"connected": True})),
-        _schedule(push_ms, window_ms),
-    ]
+    ws.subscribe(ctx.conn_id, STATS_TOPIC)
+    ws.send(ctx.conn_id, _snapshot({"connected": True}))
+    _schedule(push_ms, window_ms)
 
 def on_message(ctx, msg):
     push_ms = memory.get(PUSH_MS_KEY, DEFAULT_PUSH_MS)
@@ -123,16 +121,14 @@ def on_message(ctx, msg):
             memory.set("timer-throttle-bench:seq", 0)
         memory.set(PUSH_MS_KEY, push_ms)
         memory.set(WINDOW_MS_KEY, window_ms)
-    return [
-        ws.send(ctx.conn_id, _snapshot({"configured": True})),
-        _schedule(push_ms, window_ms),
-    ]
+    ws.send(ctx.conn_id, _snapshot({"configured": True}))
+    _schedule(push_ms, window_ms)
 
 def on_event(ctx, event):
-    return ws.send(ctx.conn_id, event.payload)
+    ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
-    return ws.unsubscribe_all(ctx.conn_id)
+    ws.unsubscribe_all(ctx.conn_id)
 
 def on_timer(ctx, event):
     payload = event.payload
@@ -142,7 +138,5 @@ def on_timer(ctx, event):
         push_ms = _clamp(_int(payload.get("push_ms", push_ms), push_ms), 1, 1000)
         window_ms = _clamp(_int(payload.get("window_ms", window_ms), window_ms), 100, 10000)
     stats = _record_sample(push_ms, window_ms)
-    return [
-        events.publish(STATS_TOPIC, stats),
-        _schedule(push_ms, window_ms),
-    ]
+    events.publish(STATS_TOPIC, stats)
+    _schedule(push_ms, window_ms)

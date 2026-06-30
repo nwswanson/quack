@@ -106,10 +106,11 @@ def _tick_players(players):
 def on_connect(ctx):
     players = _players()
     if len(players) >= MAX_PLAYERS:
-        return ws.send(ctx.conn_id, {
+        ws.send(ctx.conn_id, {
             "type": "error",
             "message": "room is full",
         })
+        return
 
     color = _next_color()
     player = _new_player(ctx.conn_id, color)
@@ -118,19 +119,17 @@ def on_connect(ctx):
 
     log.info(message="jump player connected", conn_id=ctx.conn_id, total=len(players))
 
-    return [
-        ws.subscribe(ctx.conn_id, TOPIC),
-        ws.send(ctx.conn_id, {
-            "type": "ready",
-            "conn_id": ctx.conn_id,
-            "color": color,
-            "players": list(players.values()),
-        }),
-        events.publish(TOPIC, {
-            "type": "state",
-            "players": list(players.values()),
-        }),
-    ]
+    ws.subscribe(ctx.conn_id, TOPIC)
+    ws.send(ctx.conn_id, {
+        "type": "ready",
+        "conn_id": ctx.conn_id,
+        "color": color,
+        "players": list(players.values()),
+    })
+    events.publish(TOPIC, {
+        "type": "state",
+        "players": list(players.values()),
+    })
 
 
 TICK_INTERVAL = 3
@@ -138,15 +137,15 @@ TICK_INTERVAL = 3
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
-        return []
+        return
 
     if msg.get("type") != "input":
-        return []
+        return
 
     players = _players()
     player = players.get(ctx.conn_id)
     if not player:
-        return []
+        return
 
     player["left"] = bool(msg.get("left", False))
     player["right"] = bool(msg.get("right", False))
@@ -159,18 +158,16 @@ def on_message(ctx, msg):
 
     if tick % TICK_INTERVAL == 0:
         _save_players(players)
-        return events.publish(TOPIC, {
+        events.publish(TOPIC, {
             "type": "state",
             "players": list(players.values()),
         })
 
-    return []
-
 
 def on_event(ctx, event):
     if event.topic != TOPIC:
-        return []
-    return ws.send(ctx.conn_id, event.payload)
+        return
+    ws.send(ctx.conn_id, event.payload)
 
 
 def on_disconnect(ctx):
@@ -182,10 +179,8 @@ def on_disconnect(ctx):
 
     log.info(message="jump player disconnected", conn_id=ctx.conn_id, remaining=len(players))
 
-    return [
-        events.publish(TOPIC, {
-            "type": "state",
-            "players": list(players.values()),
-        }),
-        ws.unsubscribe_all(ctx.conn_id),
-    ]
+    events.publish(TOPIC, {
+        "type": "state",
+        "players": list(players.values()),
+    })
+    ws.unsubscribe_all(ctx.conn_id)

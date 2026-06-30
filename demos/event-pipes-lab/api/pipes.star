@@ -18,7 +18,7 @@ def _start_pipe(flow):
     return ""
 
 def _trace(session, flow, stage, title, detail):
-    return events.publish(_trace_topic(session), {
+    events.publish(_trace_topic(session), {
         "type": "trace",
         "flow": flow,
         "stage": stage,
@@ -27,45 +27,46 @@ def _trace(session, flow, stage, title, detail):
     })
 
 def on_connect(ctx):
-    return ws.send(ctx.conn_id, {
+    ws.send(ctx.conn_id, {
         "type": "ready",
         "conn_id": ctx.conn_id,
     })
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
-        return ws.send(ctx.conn_id, {"type": "error", "message": "expected a JSON object"})
+        ws.send(ctx.conn_id, {"type": "error", "message": "expected a JSON object"})
+        return
 
     msg_type = msg.get("type", "")
     session = msg.get("session", "")
     if not _safe_session(session):
-        return ws.send(ctx.conn_id, {"type": "error", "message": "invalid session id"})
+        ws.send(ctx.conn_id, {"type": "error", "message": "invalid session id"})
+        return
 
     if msg_type == "subscribe":
-        return [
-            ws.subscribe(ctx.conn_id, _trace_topic(session)),
-            ws.send(ctx.conn_id, {"type": "subscribed", "topic": _trace_topic(session)}),
-        ]
+        ws.subscribe(ctx.conn_id, _trace_topic(session))
+        ws.send(ctx.conn_id, {"type": "subscribed", "topic": _trace_topic(session)})
+        return
 
     if msg_type == "start":
         flow = msg.get("flow", "")
         start_pipe = _start_pipe(flow)
         if start_pipe == "":
-            return ws.send(ctx.conn_id, {"type": "error", "message": "unknown flow"})
-        return [
-            ws.subscribe(ctx.conn_id, _trace_topic(session)),
-            _trace(session, flow, "websocket_ingress", "websocket message became a pipe event", {
-                "from": ctx.conn_id,
-                "edge": start_pipe,
-                "session": session,
-            }),
-            events.publish(start_pipe, msg),
-        ]
+            ws.send(ctx.conn_id, {"type": "error", "message": "unknown flow"})
+            return
+        ws.subscribe(ctx.conn_id, _trace_topic(session))
+        _trace(session, flow, "websocket_ingress", "websocket message became a pipe event", {
+            "from": ctx.conn_id,
+            "edge": start_pipe,
+            "session": session,
+        })
+        events.publish(start_pipe, msg)
+        return
 
-    return ws.send(ctx.conn_id, {"type": "error", "message": "unknown message type"})
+    ws.send(ctx.conn_id, {"type": "error", "message": "unknown message type"})
 
 def on_event(ctx, event):
-    return ws.send(ctx.conn_id, event.payload)
+    ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
-    return ws.unsubscribe_all(ctx.conn_id)
+    ws.unsubscribe_all(ctx.conn_id)
