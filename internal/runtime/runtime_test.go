@@ -1054,7 +1054,7 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pixeldraw:canvas" {
+	if len(effects) != 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pixeldraw.canvas" {
 		t.Fatalf("connect effects = %#v, want subscribe, ready, and snapshot", effects)
 	}
 	if got := string(effects[2].Payload); !strings.Contains(got, `"type":"canvas_snapshot"`) || !strings.Contains(got, `"width":48`) {
@@ -1068,7 +1068,7 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw:canvas" {
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw.canvas" {
 		t.Fatalf("draw effects = %#v, want publish effect", effects)
 	}
 	update := string(effects[0].Payload)
@@ -1080,7 +1080,7 @@ func TestDemoPixeldrawWebSocketExecutes(t *testing.T) {
 
 	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
 		Site: "demo-pixeldraw", Version: 1, Route: "/ws", ConnID: "c2", EventType: WebSocketEventEvent,
-		Event: WebSocketServerEvent{Topic: "pixeldraw:canvas", Payload: []byte(update)},
+		Event: WebSocketServerEvent{Topic: "pixeldraw.canvas", Payload: []byte(update)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1339,7 +1339,7 @@ func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pixeldraw:canvas:team" {
+	if len(effects) != 3 || effects[0].Type != WebSocketEffectSubscribe || effects[0].Topic != "pixeldraw.canvas.team" {
 		t.Fatalf("connect effects = %#v, want namespaced subscribe, ready, and snapshot", effects)
 	}
 	if got := string(effects[2].Payload); !strings.Contains(got, `"namespace":"team"`) || !strings.Contains(got, `"drawing_tabs"`) {
@@ -1353,7 +1353,7 @@ func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 2 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw:canvas:team" {
+	if len(effects) != 2 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw.canvas.team" {
 		t.Fatalf("create effects = %#v, want namespaced publish and snapshot", effects)
 	}
 	created := string(effects[1].Payload)
@@ -1369,7 +1369,7 @@ func TestDemoPixeldrawNamespacedTabsHaveNamesAndFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw:canvas:team" {
+	if len(effects) != 1 || effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "pixeldraw.canvas.team" {
 		t.Fatalf("rename effects = %#v, want namespaced publish", effects)
 	}
 	if got := string(effects[0].Payload); !strings.Contains(got, `"name":"Main"`) || !strings.Contains(got, `"active_drawing_id":"`+drawingID+`"`) {

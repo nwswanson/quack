@@ -11,3 +11,10 @@ routes:
     runtime: starlark
     entrypoint: api/colors.star
     methods: [GET]
+pipes:
+  - name: pixeldraw.canvas
+    retain: 64
+  - selector: pixeldraw.canvas.*
+    retain: 64
+    key_by: topic
+    max_topics: 256

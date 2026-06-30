@@ -1,7 +1,7 @@
 WIDTH = 48
 HEIGHT = 48
 
-TOPIC = "pixeldraw:canvas"
+TOPIC = "pixeldraw.canvas"
 DRAWINGS_KEY = "pixeldraw:drawings"
 DRAWING_NAMES_KEY = "pixeldraw:drawing_names"
 DRAWING_PREFIX = "pixeldraw:drawing:"
@@ -109,7 +109,7 @@ def _namespace_key(namespace, suffix):
 def _topic(namespace):
     if namespace == "":
         return TOPIC
-    return TOPIC + ":" + namespace
+    return TOPIC + "." + namespace
 
 def _pixel_index(x, y):
     return y * WIDTH + x
