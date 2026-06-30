@@ -355,20 +355,19 @@ def on_connect(ctx):
     namespace = _namespace_from_context(ctx)
     requested_id = _query_param(ctx.query, "tab")
     log.info(message="pixeldraw websocket connected", namespace=namespace, conn_id=ctx.conn_id)
-    return [
-        ws.subscribe(ctx.conn_id, _topic(namespace)),
-        ws.send(ctx.conn_id, {
-            "type": "ready",
-            "namespace": namespace,
-            "conn_id": ctx.conn_id,
-        }),
-        ws.send(ctx.conn_id, _snapshot(namespace, requested_id)),
-    ]
+    ws.subscribe(ctx.conn_id, _topic(namespace))
+    ws.send(ctx.conn_id, {
+        "type": "ready",
+        "namespace": namespace,
+        "conn_id": ctx.conn_id,
+    })
+    ws.send(ctx.conn_id, _snapshot(namespace, requested_id))
 
 def on_message(ctx, msg):
     if type(msg) != "dict":
         log.warn(message="pixeldraw rejected websocket payload", conn_id=ctx.conn_id, got=type(msg))
-        return ws.send(ctx.conn_id, _error("expected a JSON object"))
+        ws.send(ctx.conn_id, _error("expected a JSON object"))
+        return
 
     msg_type = msg.get("type")
     namespace = _namespace_from_context_or_message(ctx, msg)
@@ -379,43 +378,48 @@ def on_message(ctx, msg):
         if drawing_id == "":
             log.warn(message="pixeldraw unknown drawing requested", namespace=namespace, conn_id=ctx.conn_id, requested=requested_id)
             if namespace != "":
-                return ws.send(ctx.conn_id, _snapshot(namespace, "", requested_id))
-            return ws.send(ctx.conn_id, _error("unknown drawing"))
+                ws.send(ctx.conn_id, _snapshot(namespace, "", requested_id))
+                return
+            ws.send(ctx.conn_id, _error("unknown drawing"))
+            return
         log.info(message="pixeldraw drawing selected", namespace=namespace, conn_id=ctx.conn_id, drawing_id=drawing_id)
-        return ws.send(ctx.conn_id, _snapshot(namespace, drawing_id))
+        ws.send(ctx.conn_id, _snapshot(namespace, drawing_id))
+        return
 
     if msg_type == "create_drawing":
         drawing_id = _create_drawing(namespace, msg.get("name", ""))
         log.info("pixeldraw create_drawing", drawing_id, namespace=namespace, conn_id=ctx.conn_id)
-        return [
-            events.publish(_topic(namespace), _drawings_changed(namespace, drawing_id)),
-            ws.send(ctx.conn_id, _snapshot(namespace, drawing_id)),
-        ]
+        events.publish(_topic(namespace), _drawings_changed(namespace, drawing_id))
+        ws.send(ctx.conn_id, _snapshot(namespace, drawing_id))
+        return
 
     if msg_type == "rename_drawing":
         drawing_id = _valid_drawing_id(namespace, msg.get("drawing_id", ""))
         if drawing_id == "":
             log.warn(message="pixeldraw rename rejected", namespace=namespace, conn_id=ctx.conn_id, requested=msg.get("drawing_id", ""))
-            return ws.send(ctx.conn_id, _error("unknown drawing"))
+            ws.send(ctx.conn_id, _error("unknown drawing"))
+            return
         name = _save_drawing_name(namespace, drawing_id, msg.get("name", ""))
         log.info(message="pixeldraw drawing renamed", namespace=namespace, conn_id=ctx.conn_id, drawing_id=drawing_id, name=name)
-        return events.publish(_topic(namespace), _drawings_changed(namespace, drawing_id))
+        events.publish(_topic(namespace), _drawings_changed(namespace, drawing_id))
+        return
 
     if msg_type == "delete_drawing":
         drawing_id = _valid_drawing_id(namespace, msg.get("drawing_id", ""))
         if drawing_id == "":
             log.warn(message="pixeldraw delete rejected", namespace=namespace, conn_id=ctx.conn_id, requested=msg.get("drawing_id", ""))
-            return ws.send(ctx.conn_id, _error("unknown drawing"))
+            ws.send(ctx.conn_id, _error("unknown drawing"))
+            return
         next_id = _delete_drawing(namespace, drawing_id)
         log.info(message="pixeldraw delete_drawing", namespace=namespace, conn_id=ctx.conn_id, drawing_id=drawing_id, next_id=next_id)
-        return [
-            events.publish(_topic(namespace), _drawings_changed(namespace, next_id)),
-            ws.send(ctx.conn_id, _snapshot(namespace, next_id)),
-        ]
+        events.publish(_topic(namespace), _drawings_changed(namespace, next_id))
+        ws.send(ctx.conn_id, _snapshot(namespace, next_id))
+        return
 
     if msg_type != "draw_pixels":
         log.warn(message="pixeldraw unknown message type", conn_id=ctx.conn_id, msg_type=msg_type)
-        return ws.send(ctx.conn_id, _error("unknown message type"))
+        ws.send(ctx.conn_id, _error("unknown message type"))
+        return
 
     drawing_id = _valid_drawing_id(namespace, msg.get("drawing_id", ""))
     if drawing_id == "":
@@ -425,7 +429,8 @@ def on_message(ctx, msg):
     raw_pixels = msg.get("pixels", [])
     if type(raw_pixels) != "list":
         log.warn(message="pixeldraw rejected draw batch", namespace=namespace, conn_id=ctx.conn_id, drawing_id=drawing_id, reason="pixels must be a list")
-        return ws.send(ctx.conn_id, _error("pixels must be a list"))
+        ws.send(ctx.conn_id, _error("pixels must be a list"))
+        return
 
     changed = []
     seen = {}
@@ -470,7 +475,7 @@ def on_message(ctx, msg):
             duplicates=duplicates,
             unchanged=unchanged,
         )
-        return []
+        return
 
     _write_pixels(namespace, drawing_id, stored_pixels)
     revision = memory.incr(_revision_counter_key(namespace, drawing_id), 1)
@@ -487,7 +492,7 @@ def on_message(ctx, msg):
         unchanged=unchanged,
         truncated=truncated,
     )
-    return events.publish(_topic(namespace), {
+    events.publish(_topic(namespace), {
         "type": "pixels_updated",
         "namespace": namespace,
         "drawing_id": drawing_id,
@@ -500,10 +505,10 @@ def on_event(ctx, event):
     namespace = _namespace_from_context(ctx)
     if event.topic != _topic(namespace):
         log.debug(message="pixeldraw ignored event", conn_id=ctx.conn_id, topic=event.topic)
-        return []
+        return
     log.debug(message="pixeldraw forwarding event", conn_id=ctx.conn_id, topic=event.topic)
-    return ws.send(ctx.conn_id, event.payload)
+    ws.send(ctx.conn_id, event.payload)
 
 def on_disconnect(ctx):
     log.info(message="pixeldraw websocket disconnected", conn_id=ctx.conn_id)
-    return ws.unsubscribe_all(ctx.conn_id)
+    ws.unsubscribe_all(ctx.conn_id)
