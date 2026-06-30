@@ -42,6 +42,7 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 		return nil, nil
 	}
 	globals.Freeze()
+	collector := modules.InstallEffectCollector(thread)
 	result, err := starlark.Call(thread, handler, args, nil)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -49,7 +50,10 @@ func (e *StarlarkExecutor) InvokeWebSocket(ctx context.Context, bundle Bundle, e
 		}
 		return nil, e.wrapStarlarkError(bundle, route, err)
 	}
-	return websocketEffectsFromValue(result)
+	if result != starlark.None {
+		return nil, fmt.Errorf("%w: websocket handlers must not return host effects; call ws/events/timers APIs directly", ErrInvocationFailure)
+	}
+	return websocketEffectsFromCollector(collector)
 }
 
 func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event EventInvocation) ([]WebSocketEffect, error) {
@@ -83,6 +87,7 @@ func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event
 		return nil, fmt.Errorf("%w: %s must be callable", ErrInvalidRuntime, event.Handler)
 	}
 	globals.Freeze()
+	collector := modules.InstallEffectCollector(thread)
 	result, err := starlark.Call(thread, callable, starlark.Tuple{eventContext(event), websocketServerEventValue(webSocketServerEventFromEnvelope(envelope))}, nil)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -90,7 +95,10 @@ func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event
 		}
 		return nil, e.wrapStarlarkError(bundle, route, err)
 	}
-	return websocketEffectsFromValue(result)
+	if result != starlark.None {
+		return nil, fmt.Errorf("%w: event handlers must not return host effects; call ws/events/timers APIs directly", ErrInvocationFailure)
+	}
+	return websocketEffectsFromCollector(collector)
 }
 
 func (e *StarlarkExecutor) websocketPredeclareds(ctx context.Context, bundle Bundle, route Route, limits ResourceLimits) starlark.StringDict {
@@ -236,40 +244,17 @@ func normalizedEventInvocationEnvelope(event EventInvocation) EventEnvelope {
 	return envelope
 }
 
-func websocketEffectsFromValue(v starlark.Value) ([]WebSocketEffect, error) {
-	if v == starlark.None {
-		return nil, nil
-	}
-	if list, ok := v.(*starlark.List); ok {
-		out := make([]WebSocketEffect, 0, list.Len())
-		iter := list.Iterate()
-		defer iter.Done()
-		var value starlark.Value
-		for iter.Next(&value) {
-			effect, err := websocketEffectFromValue(value)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, effect)
+func websocketEffectsFromCollector(collector *modules.EffectCollector) ([]WebSocketEffect, error) {
+	values := collector.Effects()
+	out := make([]WebSocketEffect, 0, len(values))
+	for _, value := range values {
+		effect, err := websocketEffectFromValue(value)
+		if err != nil {
+			return nil, err
 		}
-		return out, nil
+		out = append(out, effect)
 	}
-	if tuple, ok := v.(starlark.Tuple); ok {
-		out := make([]WebSocketEffect, 0, tuple.Len())
-		for _, value := range tuple {
-			effect, err := websocketEffectFromValue(value)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, effect)
-		}
-		return out, nil
-	}
-	effect, err := websocketEffectFromValue(v)
-	if err != nil {
-		return nil, err
-	}
-	return []WebSocketEffect{effect}, nil
+	return out, nil
 }
 
 func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
@@ -445,6 +430,9 @@ func makeEffectBuiltin(effectType WebSocketEffectType, fields []string) func(*st
 		if err := starlark.UnpackArgs(fn.Name(), args, kwargs, targets...); err != nil {
 			return nil, err
 		}
+		if effectType == WebSocketEffectPublish && isReservedPublishTopic(topic) {
+			return nil, fmt.Errorf("%w: events.publish cannot publish to reserved topic %q", ErrInvocationFailure, topic)
+		}
 		out := starlark.NewDict(6)
 		_ = out.SetKey(starlark.String("type"), starlark.String(effectType))
 		if connID != "" {
@@ -471,7 +459,10 @@ func makeEffectBuiltin(effectType WebSocketEffectType, fields []string) func(*st
 		if event != starlark.None {
 			_ = out.SetKey(starlark.String("payload"), event)
 		}
-		return out, nil
+		if err := modules.QueueEffect(thread, fn.Name(), out); err != nil {
+			return nil, err
+		}
+		return starlark.None, nil
 	}
 }
 

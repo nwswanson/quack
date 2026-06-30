@@ -15,19 +15,17 @@ SHARDS = 8
 STEPS = 3
 
 def _emit(topic, payload):
-    return events.publish(topic, payload)
+    events.publish(topic, payload)
 
 def start(ctx, event):
     payload = event.payload
-    effects = []
     for shard in range(SHARDS):
-        effects.append(_emit("bench.pipe.shard.%d" % shard, {
+        _emit("bench.pipe.shard.%d" % shard, {
             "session": payload["session"],
             "shard": shard,
             "step": 0,
             "data": payload["data"],
-        }))
-    return effects
+        })
 
 def shard(ctx, event):
     payload = event.payload
@@ -37,13 +35,14 @@ def shard(ctx, event):
     data = payload["data"]
     memory.incr("bench.count.%s.%d" % (session, shard_id), len(data) + step)
     if step + 1 < STEPS:
-        return _emit("bench.pipe.shard.%d" % shard_id, {
+        _emit("bench.pipe.shard.%d" % shard_id, {
             "session": session,
             "shard": shard_id,
             "step": step + 1,
             "data": data + "|%d" % step,
         })
-    return _emit("bench.pipe.reduce", {
+        return
+    _emit("bench.pipe.reduce", {
         "session": session,
         "shard": shard_id,
         "value": memory.get("bench.count.%s.%d" % (session, shard_id), 0),

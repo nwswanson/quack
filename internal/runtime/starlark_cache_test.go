@@ -134,7 +134,7 @@ func TestStarlarkExecutorCachedMemoryModulesKeepSitesSeparate(t *testing.T) {
 def on_event(ctx, event):
     previous = memory.get("shared", "missing")
     memory.set("shared", event.payload["value"])
-    return events.publish("seen", {
+    events.publish("seen", {
         "site": ctx.site,
         "previous": previous,
         "current": memory.get("shared"),
@@ -181,7 +181,7 @@ func TestStarlarkExecutorSharedWebSocketModulesAreReusableAcrossInvocations(t *t
 
 	const script = `
 def on_event(ctx, event):
-    return events.publish("seen." + ctx.site, {
+    events.publish("seen." + ctx.site, {
         "site": ctx.site,
         "value": event.payload["value"],
     })

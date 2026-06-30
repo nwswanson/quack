@@ -35,7 +35,7 @@ func timerAfter(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tup
 	if ms < 0 {
 		return nil, fmt.Errorf("%s: ms must be non-negative", fn.Name())
 	}
-	return timerEffect("timers.after", topic, payload, key, mode, map[string]starlark.Value{
+	return queueTimerEffect(thread, fn.Name(), "timers.after", topic, payload, key, mode, map[string]starlark.Value{
 		"ms": starlark.MakeInt64(ms),
 	})
 }
@@ -55,7 +55,7 @@ func timerAt(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple,
 	if unixMS < 0 {
 		return nil, fmt.Errorf("%s: unix_ms must be non-negative", fn.Name())
 	}
-	return timerEffect("timers.at", topic, payload, key, mode, map[string]starlark.Value{
+	return queueTimerEffect(thread, fn.Name(), "timers.at", topic, payload, key, mode, map[string]starlark.Value{
 		"unix_ms": starlark.MakeInt64(unixMS),
 	})
 }
@@ -81,7 +81,7 @@ func timerEvery(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tup
 	if jitterMS < 0 {
 		return nil, fmt.Errorf("%s: jitter_ms must be non-negative", fn.Name())
 	}
-	return timerEffect("timers.every", topic, payload, key, "replace", map[string]starlark.Value{
+	return queueTimerEffect(thread, fn.Name(), "timers.every", topic, payload, key, "replace", map[string]starlark.Value{
 		"ms":        starlark.MakeInt64(ms),
 		"jitter_ms": starlark.MakeInt64(jitterMS),
 	})
@@ -103,7 +103,10 @@ func timerCancel(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tu
 	if id != "" {
 		_ = out.SetKey(starlark.String("id"), starlark.String(id))
 	}
-	return out, nil
+	if err := QueueEffect(thread, fn.Name(), out); err != nil {
+		return nil, err
+	}
+	return starlark.None, nil
 }
 
 func timerSet(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -119,7 +122,21 @@ func timerSet(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple
 	if event != starlark.None {
 		_ = out.SetKey(starlark.String("payload"), event)
 	}
-	return out, nil
+	if err := QueueEffect(thread, fn.Name(), out); err != nil {
+		return nil, err
+	}
+	return starlark.None, nil
+}
+
+func queueTimerEffect(thread *starlark.Thread, fnName string, effectType string, topic string, payload starlark.Value, key string, mode string, fields map[string]starlark.Value) (starlark.Value, error) {
+	effect, err := timerEffect(effectType, topic, payload, key, mode, fields)
+	if err != nil {
+		return nil, err
+	}
+	if err := QueueEffect(thread, fnName, effect); err != nil {
+		return nil, err
+	}
+	return starlark.None, nil
 }
 
 func timerEffect(effectType string, topic string, payload starlark.Value, key string, mode string, fields map[string]starlark.Value) (starlark.Value, error) {

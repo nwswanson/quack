@@ -288,9 +288,8 @@ def on_event(ctx, event):
     lock = ctx.locks().acquire("memory:rooms:room.123", ttl_ms=40, wait_ms=200)
     if not lock:
         memory.list_push("locks", "busy")
-        return []
+        return
     memory.list_push("locks", lock.token)
-    return []
 `})
 	bundle := Bundle{
 		Site: site, Version: 1,
@@ -324,10 +323,9 @@ def on_event(ctx, event):
     lock = ctx.locks().acquire("memory:counter", ttl_ms=1000, wait_ms=0)
     if not lock:
         memory.list_push("locks", "busy")
-        return []
+        return
     memory.list_push("locks", "got")
     lock.release()
-    return []
 `})
 	bundle := Bundle{
 		Site: site, Version: 1,
@@ -363,7 +361,6 @@ def on_event(ctx, event):
     memory.list_push("seen", event.site)
     memory.list_push("seen", str(event.version))
     memory.list_push("seen", event.payload["text"])
-    return []
 `})
 	bundle := Bundle{
 		Site: site, Version: 17,
@@ -892,21 +889,19 @@ func TestDemoStarlarkMemoryRoutesExecute(t *testing.T) {
 	}
 }
 
-func TestStarlarkExecutorWebSocketHandlersReturnHostEffects(t *testing.T) {
+func TestStarlarkExecutorWebSocketHandlersCollectHostEffects(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
 def on_connect(ctx):
-    return [
-        ws.accept(),
-        ws.subscribe(ctx.conn_id, "doc:123"),
-        ws.send(ctx.conn_id, {"type": "connected", "path": ctx.path}),
-        timers.set(key="heartbeat:" + ctx.conn_id, after="30s", event={"type": "heartbeat"}),
-    ]
+    ws.accept()
+    ws.subscribe(ctx.conn_id, "doc:123")
+    ws.send(ctx.conn_id, {"type": "connected", "path": ctx.path})
+    timers.set(key="heartbeat:" + ctx.conn_id, after="30s", event={"type": "heartbeat"})
 
 def on_message(ctx, msg):
-    return [events.publish("doc:" + msg["doc_id"], {"type": msg["type"], "by": ctx.conn_id})]
+    events.publish("doc:" + msg["doc_id"], {"type": msg["type"], "by": ctx.conn_id})
 
 def on_event(ctx, event):
-    return [ws.send(ctx.conn_id, {"type": "event", "topic": event.topic, "payload": event.payload})]
+    ws.send(ctx.conn_id, {"type": "event", "topic": event.topic, "payload": event.payload})
 `})
 
 	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
@@ -954,21 +949,19 @@ def on_event(ctx, event):
 	}
 }
 
-func TestStarlarkExecutorTimersModuleReturnsScheduleEffects(t *testing.T) {
+func TestStarlarkExecutorTimersModuleCollectsScheduleEffects(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
 def on_message(ctx, msg):
-    return [
-        timers.after(
-            ms = 25,
-            key = "throttle:" + msg["name"],
-            mode = "keep_existing",
-            topic = "__throttle.flush." + msg["name"] + "." + msg["key"],
-            payload = {"state_key": msg["state_key"]},
-        ),
-        timers.at(unix_ms=1780000000000, topic="timer.absolute", payload=None, key="absolute", mode="replace"),
-        timers.every(ms=1000, topic="timer.tick", payload={"ok": True}, key="tick", jitter_ms=50),
-        timers.cancel(key="old"),
-    ]
+    timers.after(
+        ms = 25,
+        key = "throttle:" + msg["name"],
+        mode = "keep_existing",
+        topic = "__throttle.flush." + msg["name"] + "." + msg["key"],
+        payload = {"state_key": msg["state_key"]},
+    )
+    timers.at(unix_ms=1780000000000, topic="timer.absolute", payload=None, key="absolute", mode="replace")
+    timers.every(ms=1000, topic="timer.tick", payload={"ok": True}, key="tick", jitter_ms=50)
+    timers.cancel(key="old")
 `})
 
 	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
@@ -997,6 +990,63 @@ def on_message(ctx, msg):
 	}
 }
 
+func TestStarlarkExecutorDiscardsCollectedEffectsOnHandlerFailure(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_message(ctx, msg):
+    ws.send(ctx.conn_id, "before-boom")
+    events.publish("doc:123", {"started": True})
+    fail("boom")
+`})
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want handler failure", err)
+	}
+	if len(effects) != 0 {
+		t.Fatalf("effects = %#v, want discarded effects on failure", effects)
+	}
+}
+
+func TestStarlarkExecutorRejectsReturnedEffectsFromWebSocketHandlers(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_connect(ctx):
+    return [{"type": "ws.send", "conn_id": ctx.conn_id, "payload": "old"}]
+`})
+
+	_, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventConnect,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not return host effects") {
+		t.Fatalf("err = %v, want returned-effect rejection", err)
+	}
+}
+
+func TestStarlarkExecutorRejectsEffectsOutsideHandlerInvocation(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+events.publish("doc:123", {"ok": True})
+
+def on_message(ctx, msg):
+    pass
+`})
+
+	_, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "can only be used inside websocket/event handlers") {
+		t.Fatalf("err = %v, want effect outside handler error", err)
+	}
+}
+
 func TestStarlarkExecutorEventsPublishRejectsReservedTopics(t *testing.T) {
 	for _, topic := range []string{
 		"hardware.serial.meter.read",
@@ -1008,7 +1058,7 @@ func TestStarlarkExecutorEventsPublishRejectsReservedTopics(t *testing.T) {
 		t.Run(topic, func(t *testing.T) {
 			executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": fmt.Sprintf(`
 def on_message(ctx, msg):
-    return events.publish(%q, {"ok": True})
+    events.publish(%q, {"ok": True})
 `, topic)})
 			_, err := executor.InvokeWebSocket(context.Background(), Bundle{
 				Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
@@ -1023,7 +1073,7 @@ def on_message(ctx, msg):
 	}
 }
 
-func TestStarlarkExecutorEventsPublishRejectsReservedTopicRawEffect(t *testing.T) {
+func TestStarlarkExecutorRejectsRawReturnedEffectBeforeParsing(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
 def on_message(ctx, msg):
     return {"type": "events.publish", "topic": "hardware.serial.meter.read", "payload": {"ok": True}}
@@ -1034,15 +1084,15 @@ def on_message(ctx, msg):
 		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
 		Message: []byte(`{}`),
 	})
-	if err == nil || !strings.Contains(err.Error(), "reserved topic") {
-		t.Fatalf("err = %v, want reserved topic error", err)
+	if err == nil || !strings.Contains(err.Error(), "must not return host effects") {
+		t.Fatalf("err = %v, want returned-effect rejection", err)
 	}
 }
 
 func TestStarlarkExecutorEventsPublishAllowsNonReservedPrefix(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
 def on_message(ctx, msg):
-    return events.publish("hardware-demo.serial.meter.read", {"ok": True})
+    events.publish("hardware-demo.serial.meter.read", {"ok": True})
 `})
 	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
 		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
@@ -1664,7 +1714,7 @@ func TestServiceInvokesWebSocketStarlarkBehindPolicyGate(t *testing.T) {
 			BundleObjectKey: "socket.star", RequiredCapabilities: []string{"runtime.websocket"},
 		}),
 		Policies:        allowRuntimeWebSocketPolicy(),
-		Executor:        newTestStarlarkExecutor(t, map[string]string{"socket.star": `def on_connect(ctx): return [ws.send(ctx.conn_id, "ok")]`}),
+		Executor:        newTestStarlarkExecutor(t, map[string]string{"socket.star": `def on_connect(ctx): ws.send(ctx.conn_id, "ok")`}),
 		EnableExecution: true,
 	})
 
