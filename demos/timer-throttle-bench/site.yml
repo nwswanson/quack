@@ -1,0 +1,24 @@
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/bench.star
+
+  - path: /bench
+    kind: http
+    runtime: starlark
+    entrypoint: api/http.star
+    methods: [GET, POST]
+
+  - path: /
+    kind: static
+    root: public
+
+pipes:
+  - selector: "__timer_bench.*"
+    retain: 128
+    key_by: selector
+
+events:
+  - selector: "__timer_bench.tick"
+    on_event: api/bench.star:on_timer

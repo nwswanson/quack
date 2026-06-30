@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timer Throttle Bench</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="topline">
+      <div>
+        <h1>Timer Throttle Bench</h1>
+        <p id="socket-state">connecting</p>
+      </div>
+      <button id="reset" type="button">Reset</button>
+    </section>
+
+    <section class="metrics" aria-live="polite">
+      <article>
+        <span>Current RPS</span>
+        <strong id="rps">0</strong>
+      </article>
+      <article>
+        <span>Window Hits</span>
+        <strong id="hits">0</strong>
+      </article>
+      <article>
+        <span>Total Requests</span>
+        <strong id="total">0</strong>
+      </article>
+      <article>
+        <span>Timer Push</span>
+        <strong id="push-readout">25 ms</strong>
+      </article>
+    </section>
+
+    <section class="controls">
+      <label>
+        <span>Push interval</span>
+        <input id="push-ms" type="range" min="1" max="250" value="25">
+      </label>
+      <label>
+        <span>RPS window</span>
+        <input id="window-ms" type="range" min="100" max="5000" step="100" value="1000">
+      </label>
+    </section>
+
+    <section class="bench">
+      <div>
+        <span>Bench endpoint</span>
+        <code id="bench-url">/bench</code>
+      </div>
+      <pre id="ab-command">ab -n 10000 -c 64 /bench</pre>
+    </section>
+
+    <section class="stream">
+      <header>
+        <h2>Recent Samples</h2>
+        <span id="sample-count">0</span>
+      </header>
+      <ol id="samples"></ol>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
