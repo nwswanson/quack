@@ -40,6 +40,11 @@ const (
 )
 
 var (
+	websocketPongWait     = 75 * time.Second
+	websocketPingInterval = 30 * time.Second
+)
+
+var (
 	errEventCycleDetected        = errors.New("runtime.event_cycle_detected")
 	errEventDepthExceeded        = errors.New("runtime.event_depth_exceeded")
 	errEventPublishLimitExceeded = errors.New("runtime.event_publish_limit_exceeded")
@@ -106,7 +111,7 @@ func (h Handler) ServeWebSocketRoute(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	reserved = false
-	h.readWebSocketLoop(r.Context(), rw.Reader, connID, req)
+	h.readWebSocketLoop(r.Context(), rw.Reader, netConn, connID, req)
 }
 
 func (h Handler) writeWebSocketRuntimeError(w http.ResponseWriter, r *http.Request, err error) {
@@ -138,17 +143,23 @@ func (h Handler) writeWebSocketRuntimeError(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func (h Handler) readWebSocketLoop(ctx context.Context, reader *bufio.Reader, connID string, req appruntime.WebSocketInvocationRequest) {
+func (h Handler) readWebSocketLoop(ctx context.Context, reader *bufio.Reader, conn net.Conn, connID string, req appruntime.WebSocketInvocationRequest) {
 	defer h.sockets.unregister(connID)
 	maxRequestBytes := req.Limits.MaxRequestBytes
 	if maxRequestBytes <= 0 {
 		maxRequestBytes = appruntime.DefaultMaxRequestBytes
+	}
+	if conn != nil {
+		_ = conn.SetReadDeadline(time.Now().Add(websocketPongWait))
 	}
 	for {
 		frame, err := readClientFrame(reader, maxRequestBytes)
 		if err != nil {
 			h.invokeDisconnect(ctx, req)
 			return
+		}
+		if conn != nil {
+			_ = conn.SetReadDeadline(time.Now().Add(websocketPongWait))
 		}
 		switch frame.opcode {
 		case websocketOpcodeText, websocketOpcodeBinary:
@@ -901,17 +912,15 @@ func (m *socketManager) enqueueFrame(connID string, frame outboundFrame) error {
 }
 
 func (m *socketManager) writeLoop(conn *socketConnection) {
+	ticker := time.NewTicker(websocketPingInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case frame := <-conn.outbound:
 			if conn.conn == nil {
 				continue
 			}
-			if err := conn.conn.SetWriteDeadline(time.Now().Add(websocketWriteTimeout)); err != nil {
-				m.unregister(conn.id)
-				return
-			}
-			if err := writeFrame(conn.conn, frame.opcode, frame.payload); err != nil {
+			if err := writeWebSocketFrameWithDeadline(conn.conn, frame.opcode, frame.payload); err != nil {
 				m.unregister(conn.id)
 				return
 			}
@@ -919,10 +928,25 @@ func (m *socketManager) writeLoop(conn *socketConnection) {
 				m.unregister(conn.id)
 				return
 			}
+		case <-ticker.C:
+			if conn.conn == nil {
+				continue
+			}
+			if err := writeWebSocketFrameWithDeadline(conn.conn, websocketOpcodePing, nil); err != nil {
+				m.unregister(conn.id)
+				return
+			}
 		case <-conn.done:
 			return
 		}
 	}
+}
+
+func writeWebSocketFrameWithDeadline(conn net.Conn, opcode byte, payload []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(websocketWriteTimeout)); err != nil {
+		return err
+	}
+	return writeFrame(conn, opcode, payload)
 }
 
 func cloneHeaders(headers map[string][]string) map[string][]string {

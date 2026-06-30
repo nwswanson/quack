@@ -171,6 +171,28 @@ func TestHandlerWebSocketUpgradeAppliesConnectEffects(t *testing.T) {
 	}
 }
 
+func TestHandlerWebSocketHeartbeatPingsAndReapsIdleConnection(t *testing.T) {
+	restore := setWebSocketHeartbeatForTest(10*time.Millisecond, 40*time.Millisecond)
+	defer restore()
+	handler := New(&recordingRuntime{})
+	conn, reader, done := websocketPipe(t, handler, appruntime.WebSocketInvocationRequest{Site: "foo", Version: 1, Route: "/socket"})
+	defer conn.Close()
+
+	frame, err := readServerFrame(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.opcode != websocketOpcodePing {
+		t.Fatalf("frame opcode = %#x, want ping", frame.opcode)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("websocket handler did not reap idle connection after missing pong")
+	}
+}
+
 func TestHandlerWebSocketRejectsMissingOriginBeforeRuntime(t *testing.T) {
 	runtime := &recordingRuntime{}
 	handler := New(runtime)
@@ -1013,6 +1035,17 @@ func readServerFrame(r *bufio.Reader) (websocketFrame, error) {
 		return websocketFrame{}, err
 	}
 	return websocketFrame{opcode: opcode, payload: payload}, nil
+}
+
+func setWebSocketHeartbeatForTest(pingInterval time.Duration, pongWait time.Duration) func() {
+	oldPingInterval := websocketPingInterval
+	oldPongWait := websocketPongWait
+	websocketPingInterval = pingInterval
+	websocketPongWait = pongWait
+	return func() {
+		websocketPingInterval = oldPingInterval
+		websocketPongWait = oldPongWait
+	}
 }
 
 type hijackRecorder struct {
