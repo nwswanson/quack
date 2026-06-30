@@ -170,7 +170,7 @@ func (s *service) InvokeEvent(ctx context.Context, req EventInvocationRequest) (
 	}
 	effects, err = s.eventExecutor.InvokeEvent(invokeCtx, bundle, EventInvocation{
 		Site: req.Site, Version: req.Version, Entrypoint: req.Entrypoint, Handler: req.Handler,
-		Topic: req.Topic, Payload: req.Payload,
+		Event: req.Event, Topic: req.Topic, Payload: req.Payload,
 	})
 	if err != nil {
 		return nil, invocationError(invokeCtx, err)

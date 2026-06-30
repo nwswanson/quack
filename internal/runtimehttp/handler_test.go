@@ -410,6 +410,12 @@ func TestHandlerPublishDispatchesOnlyWithinSite(t *testing.T) {
 	if got.Site != "foo" || got.ConnID != fooID || got.EventType != appruntime.WebSocketEventEvent {
 		t.Fatalf("event request = %#v, want foo event for foo subscriber", got)
 	}
+	if !strings.HasPrefix(got.Event.ID, "evt_") || got.Event.Pipe != "pixeldraw:canvas" || got.Event.Topic != "pixeldraw:canvas" || got.Event.Type != "pixels_updated" || got.Event.Source != "runtime:events.publish" {
+		t.Fatalf("event envelope = %#v, want canonical subscriber envelope", got.Event)
+	}
+	if got.Event.Time.IsZero() || got.Event.Seq != 1 || !strings.HasPrefix(got.Event.CorrelationID, "req_") {
+		t.Fatalf("event envelope = %#v, want host time, seq, and correlation id", got.Event)
+	}
 }
 
 func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
@@ -439,6 +445,51 @@ func TestHandlerPublishDispatchesSelectorEventHandler(t *testing.T) {
 	got := runtime.eventRequests[0]
 	if got.Site != "foo" || got.Version != 3 || got.Entrypoint != "api/serial.star" || got.Handler != "on_serial" || got.Topic != "hardware.serial.rpi.read" {
 		t.Fatalf("event request = %#v, want selector event invocation", got)
+	}
+	if !strings.HasPrefix(got.Event.ID, "evt_") || got.Event.Pipe != "hardware.serial.rpi.read" || got.Event.Topic != "hardware.serial.rpi.read" || got.Event.Type != "hardware.serial.rpi.read" {
+		t.Fatalf("event envelope = %#v, want canonical selector event", got.Event)
+	}
+}
+
+func TestHandlerNestedPublishCarriesCausationAndCorrelation(t *testing.T) {
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		if req.Topic == "chain.start" {
+			return []appruntime.WebSocketEffect{{
+				Type:    appruntime.WebSocketEffectPublish,
+				Topic:   "chain.next",
+				Payload: []byte(`{"type":"next"}`),
+			}}, nil
+		}
+		return nil, nil
+	}}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"chain.*","key_by":"selector","retain":64}]`,
+			appsettings.SettingRuntimeEvents: `[{"selector":"chain.*","on_event":"app/chain.star:on_event"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffectsFromHandler(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "chain.start",
+		Payload: []byte(`{"type":"start"}`),
+	}}, websocketHandlerEdge("/chat", "on_message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.eventRequests) != 2 {
+		t.Fatalf("event requests = %#v, want start and nested event", runtime.eventRequests)
+	}
+	parent := runtime.eventRequests[0].Event
+	child := runtime.eventRequests[1].Event
+	if parent.Source != "ws:/chat" || parent.CausationID != "" || parent.CorrelationID == "" {
+		t.Fatalf("parent envelope = %#v, want websocket source with root correlation", parent)
+	}
+	if child.CausationID != parent.ID || child.CorrelationID != parent.CorrelationID {
+		t.Fatalf("child envelope = %#v parent = %#v, want causation and correlation propagation", child, parent)
 	}
 }
 

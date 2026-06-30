@@ -1,6 +1,9 @@
 package eventpipe
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStorePublishRetainsNewestByDefault(t *testing.T) {
 	store := NewStore()
@@ -12,6 +15,26 @@ func TestStorePublishRetainsNewestByDefault(t *testing.T) {
 	recent := store.Recent("site", Config{Name: "sensor"})
 	if len(recent) != 2 || string(recent[0].Payload) != "1" || string(recent[1].Payload) != "2" {
 		t.Fatalf("recent = %#v, want newest two events", recent)
+	}
+}
+
+func TestStorePublishAssignsCanonicalEnvelopeFields(t *testing.T) {
+	store := NewStore()
+	event, ok := store.Publish(Config{Name: "rooms", Retain: 2}, Event{
+		Site: "site", Version: 17, Topic: "room.123", SourceKind: "ws", SourceName: "/chat",
+		CorrelationID: "req_123", Payload: []byte(`{"type":"room.message.created","text":"hello"}`),
+	})
+	if !ok {
+		t.Fatal("publish rejected")
+	}
+	if !strings.HasPrefix(event.ID, "evt_") {
+		t.Fatalf("id = %q, want evt_ prefix", event.ID)
+	}
+	if event.Pipe != "rooms" || event.Topic != "room.123" || event.Type != "room.message.created" || event.Source != "ws:/chat" {
+		t.Fatalf("event = %#v, want canonical pipe/topic/type/source", event)
+	}
+	if event.Time.IsZero() || event.Seq != 1 || event.Site != "site" || event.Version != 17 || event.CorrelationID != "req_123" {
+		t.Fatalf("event = %#v, want host time, seq, site, version, and correlation", event)
 	}
 }
 
@@ -162,7 +185,7 @@ func TestStorePublishPrunesOldestRetainedEventsPerSite(t *testing.T) {
 
 func TestStorePublishPrunesOldestRetainedBytesPerSite(t *testing.T) {
 	store := NewStore()
-	limits := Limits{MaxRetainedBytes: 60}
+	limits := Limits{MaxRetainedBytes: 120}
 	if _, ok := store.Publish(Config{Name: "one", Retain: 2, SiteLimits: limits}, Event{Site: "site", Topic: "one", Payload: []byte("large-first-payload")}); !ok {
 		t.Fatal("first publish rejected")
 	}

@@ -180,6 +180,7 @@ type EventInvocationRequest struct {
 	Version    int64
 	Entrypoint string
 	Handler    string
+	Event      EventEnvelope
 	Topic      string
 	Payload    []byte
 	Limits     ResourceLimits
@@ -190,6 +191,7 @@ type EventInvocation struct {
 	Version    int64
 	Entrypoint string
 	Handler    string
+	Event      EventEnvelope
 	Topic      string
 	Payload    []byte
 }
@@ -219,8 +221,33 @@ type WebSocketInvocationRequest struct {
 }
 
 type WebSocketServerEvent struct {
-	Topic   string
-	Payload []byte
+	ID            string
+	Pipe          string
+	Topic         string
+	Type          string
+	Source        string
+	Time          time.Time
+	Seq           uint64
+	CausationID   string
+	CorrelationID string
+	Site          string
+	Version       int64
+	Payload       []byte
+}
+
+type EventEnvelope struct {
+	ID            string
+	Pipe          string
+	Topic         string
+	Type          string
+	Source        string
+	Time          time.Time
+	Seq           uint64
+	CausationID   string
+	CorrelationID string
+	Site          string
+	Version       int64
+	Payload       []byte
 }
 
 type WebSocketEvent struct {

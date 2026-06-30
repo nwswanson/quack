@@ -346,6 +346,51 @@ def on_event(ctx, event):
 	}
 }
 
+func TestStarlarkEventReceivesCanonicalEnvelope(t *testing.T) {
+	site := "event-envelope-test"
+	modules.WipeMemorySite(site)
+	executor := newTestStarlarkExecutor(t, map[string]string{"app.star": `
+def on_event(ctx, event):
+    memory.list_push("seen", event.id)
+    memory.list_push("seen", event.pipe)
+    memory.list_push("seen", event.topic)
+    memory.list_push("seen", event.type)
+    memory.list_push("seen", event.source)
+    memory.list_push("seen", event.time)
+    memory.list_push("seen", str(event.seq))
+    memory.list_push("seen", event.causation_id)
+    memory.list_push("seen", event.correlation_id)
+    memory.list_push("seen", event.site)
+    memory.list_push("seen", str(event.version))
+    memory.list_push("seen", event.payload["text"])
+    return []
+`})
+	bundle := Bundle{
+		Site: site, Version: 17,
+		Routes: []Route{{Path: "/events", Kind: RouteWebSocket, Entrypoint: "app.star"}},
+	}
+	_, err := executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+		Site: site, Version: 17, Entrypoint: "app.star", Handler: "on_event",
+		Event: EventEnvelope{
+			ID: "evt_123", Pipe: "rooms", Topic: "room.123", Type: "room.message.created", Source: "ws:/chat",
+			Time: time.Date(2026, 6, 30, 19, 0, 0, 0, time.UTC), Seq: 1842,
+			CausationID: "evt_parent", CorrelationID: "req_abc", Site: site, Version: 17,
+			Payload: []byte(`{"text":"hello"}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := memoryListStrings(t, site, "seen")
+	want := []string{
+		"evt_123", "rooms", "room.123", "room.message.created", "ws:/chat", "2026-06-30T19:00:00Z",
+		"1842", "evt_parent", "req_abc", site, "17", "hello",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("seen = %#v, want %#v", got, want)
+	}
+}
+
 func TestKingsEatPieDemoUsesWebSocketLocks(t *testing.T) {
 	site := "kings-eat-pie-test"
 	modules.WipeMemorySite(site)

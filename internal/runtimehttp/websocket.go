@@ -244,7 +244,7 @@ func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, p
 }
 
 func (h Handler) dispatchEventFromHandler(ctx context.Context, site string, topic string, payload []byte, handler string) error {
-	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, "runtime", "events.publish", nil, handler)
+	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, sourceKindForHandler(handler), sourceNameForHandler(handler), nil, handler)
 }
 
 func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string) error {
@@ -261,6 +261,9 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 	if trace == nil {
 		trace = newDispatchTrace()
 		ctx = context.WithValue(ctx, dispatchTraceContextKey{}, trace)
+	}
+	if trace.correlationID == "" {
+		trace.correlationID = randomCorrelationID()
 	}
 	if err := trace.enter(); err != nil {
 		h.logDispatchGuard(ctx, site, settings.version, trace, topic, handler, "runtime.event_depth_exceeded", err)
@@ -280,12 +283,19 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		return err
 	}
 	event, accepted := h.pipes.Publish(config, eventpipe.Event{
-		Site: site, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName, Payload: payload, Headers: headers,
+		Site: site, Version: settings.version, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName,
+		CausationID: trace.currentEventID, CorrelationID: trace.correlationID, Payload: payload, Headers: headers,
 	})
 	if !accepted {
 		return nil
 	}
 	trace.setRootEventID(event.ID)
+	parentEventID := trace.currentEventID
+	trace.currentEventID = event.ID
+	defer func() {
+		trace.currentEventID = parentEventID
+	}()
+	envelope := runtimeEventEnvelope(event)
 	for _, route := range settings.matchingRoutes(event.Topic) {
 		entrypoint, handler, err := manifest.SplitEventHandler(route.OnEvent)
 		if err != nil {
@@ -296,7 +306,7 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 			var invokeErr error
 			effects, invokeErr = h.runtime.InvokeEvent(ctx, appruntime.EventInvocationRequest{
 				Site: site, Version: settings.version, Entrypoint: entrypoint, Handler: handler,
-				Topic: event.Topic, Payload: event.Payload,
+				Event: envelope, Topic: event.Topic, Payload: event.Payload,
 			})
 			return invokeErr
 		}
@@ -316,7 +326,7 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		effects, err := h.runtime.InvokeWebSocket(ctx, appruntime.WebSocketInvocationRequest{
 			Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Query: snapshot.query,
 			Headers: snapshot.headers, ConnID: snapshot.id, EventType: appruntime.WebSocketEventEvent,
-			Event: appruntime.WebSocketServerEvent{Topic: event.Topic, Payload: payload},
+			Event: webSocketServerEventFromPipeEvent(event),
 		})
 		if err != nil {
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event invocation failed")
@@ -328,6 +338,51 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		}
 	}
 	return nil
+}
+
+func runtimeEventEnvelope(event eventpipe.Event) appruntime.EventEnvelope {
+	return appruntime.EventEnvelope{
+		ID: event.ID, Pipe: event.Pipe, Topic: event.Topic, Type: event.Type, Source: event.Source,
+		Time: event.Time, Seq: event.Seq, CausationID: event.CausationID, CorrelationID: event.CorrelationID,
+		Site: event.Site, Version: event.Version, Payload: event.Payload,
+	}
+}
+
+func webSocketServerEventFromPipeEvent(event eventpipe.Event) appruntime.WebSocketServerEvent {
+	return appruntime.WebSocketServerEvent{
+		ID: event.ID, Pipe: event.Pipe, Topic: event.Topic, Type: event.Type, Source: event.Source,
+		Time: event.Time, Seq: event.Seq, CausationID: event.CausationID, CorrelationID: event.CorrelationID,
+		Site: event.Site, Version: event.Version, Payload: event.Payload,
+	}
+}
+
+func sourceNameForHandler(handler string) string {
+	handler = strings.TrimSpace(handler)
+	if strings.HasPrefix(handler, "websocket:") {
+		parts := strings.Split(handler, ":")
+		if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+			return parts[1]
+		}
+	}
+	if handler != "" {
+		return handler
+	}
+	return "events.publish"
+}
+
+func sourceKindForHandler(handler string) string {
+	if strings.HasPrefix(strings.TrimSpace(handler), "websocket:") {
+		return "ws"
+	}
+	return "runtime"
+}
+
+func randomCorrelationID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("req-%p", &b)
+	}
+	return "req_" + base64.RawURLEncoding.EncodeToString(b[:])
 }
 
 func (h Handler) declaredPipe(ctx context.Context, site string, topic string) (eventpipe.Config, error) {

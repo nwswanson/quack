@@ -1,6 +1,9 @@
 package eventpipe
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -35,16 +38,21 @@ type Limits struct {
 }
 
 type Event struct {
-	ID         string            `json:"id"`
-	Site       string            `json:"site"`
-	Pipe       string            `json:"pipe"`
-	Topic      string            `json:"topic"`
-	SourceKind string            `json:"source_kind,omitempty"`
-	SourceName string            `json:"source_name,omitempty"`
-	Payload    []byte            `json:"payload,omitempty"`
-	Headers    map[string]string `json:"headers,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	Seq        uint64            `json:"seq"`
+	ID            string            `json:"id"`
+	Site          string            `json:"site,omitempty"`
+	Version       int64             `json:"version,omitempty"`
+	Pipe          string            `json:"pipe"`
+	Topic         string            `json:"topic"`
+	Type          string            `json:"type"`
+	Source        string            `json:"source"`
+	SourceKind    string            `json:"source_kind,omitempty"`
+	SourceName    string            `json:"source_name,omitempty"`
+	Time          time.Time         `json:"time"`
+	Seq           uint64            `json:"seq"`
+	CausationID   string            `json:"causation_id,omitempty"`
+	CorrelationID string            `json:"correlation_id,omitempty"`
+	Payload       []byte            `json:"payload,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
 }
 
 type Store struct {
@@ -122,11 +130,17 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	p.next++
 	event.Pipe = config.Name
 	event.Seq = p.next
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now().UTC()
+	if event.Time.IsZero() {
+		event.Time = time.Now().UTC()
 	}
 	if event.ID == "" {
-		event.ID = event.Site + ":" + event.Pipe + ":" + uintString(event.Seq)
+		event.ID = randomEventID(event.Site, event.Pipe, event.Seq)
+	}
+	if event.Type == "" {
+		event.Type = inferEventType(event.Topic, event.Payload)
+	}
+	if event.Source == "" {
+		event.Source = eventSource(event.SourceKind, event.SourceName)
 	}
 	event.Payload = append([]byte(nil), event.Payload...)
 	event.Headers = cloneHeaders(event.Headers)
@@ -226,7 +240,7 @@ func (s *Store) dropOldestSiteEvent(site string) bool {
 	for _, p := range s.sitePipes(site) {
 		p.mu.Lock()
 		events := p.orderedEvents()
-		if len(events) > 0 && (oldestPipe == nil || events[0].CreatedAt.Before(oldest.CreatedAt) || (events[0].CreatedAt.Equal(oldest.CreatedAt) && events[0].Seq < oldest.Seq)) {
+		if len(events) > 0 && (oldestPipe == nil || events[0].Time.Before(oldest.Time) || (events[0].Time.Equal(oldest.Time) && events[0].Seq < oldest.Seq)) {
 			oldestPipe = p
 			oldest = events[0]
 		}
@@ -254,7 +268,7 @@ func (s *Store) sitePipes(site string) []*pipe {
 }
 
 func retainedEventBytes(event Event) int64 {
-	n := len(event.Payload) + len(event.ID) + len(event.Site) + len(event.Pipe) + len(event.Topic) + len(event.SourceKind) + len(event.SourceName)
+	n := len(event.Payload) + len(event.ID) + len(event.Site) + len(event.Pipe) + len(event.Topic) + len(event.Type) + len(event.Source) + len(event.SourceKind) + len(event.SourceName) + len(event.CausationID) + len(event.CorrelationID)
 	for key, value := range event.Headers {
 		n += len(key) + len(value)
 	}
@@ -416,6 +430,43 @@ func normalizeConfig(config Config) Config {
 		config.Retain = DefaultRetain
 	}
 	return config
+}
+
+func randomEventID(site string, pipe string, seq uint64) string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return "evt_" + base64.RawURLEncoding.EncodeToString(b[:])
+	}
+	return "evt_" + strings.ReplaceAll(site+":"+pipe+":"+uintString(seq), " ", "_")
+}
+
+func inferEventType(topic string, payload []byte) string {
+	var object map[string]any
+	if len(payload) > 0 && json.Unmarshal(payload, &object) == nil {
+		if value, ok := object["type"].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return "event"
+	}
+	return topic
+}
+
+func eventSource(kind string, name string) string {
+	kind = strings.TrimSpace(kind)
+	name = strings.TrimSpace(name)
+	switch {
+	case kind != "" && name != "":
+		return kind + ":" + name
+	case kind != "":
+		return kind
+	case name != "":
+		return name
+	default:
+		return "runtime"
+	}
 }
 
 func (i *topicIndex) touch(topic string) {

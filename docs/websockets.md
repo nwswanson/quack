@@ -167,9 +167,26 @@ Empty messages become `None`.
 `on_event(ctx, event)` receives a host event object:
 
 ```python
+event.id
+event.pipe
 event.topic
+event.type
+event.source
+event.time
+event.seq
+event.causation_id
+event.correlation_id
+event.site
+event.version
 event.payload
 ```
+
+The host assigns the envelope fields when an event is published. `event.id` is
+the unique event identity, `event.pipe` is the declared pipe resource,
+`event.topic` is the concrete routed address, `event.time` is an RFC 3339 UTC
+timestamp, and `event.seq` is a pipe-local sequence number. Nested publishes set
+`event.causation_id` to the parent event id and keep the same
+`event.correlation_id`.
 
 `event.payload` follows the same decoding rule as messages: JSON payloads become
 Starlark values, non-JSON payloads become strings, and empty payloads become
@@ -250,6 +267,8 @@ Publishes an in-process event to current local subscribers of the topic. For
 each subscribed connection, Go invokes that route's `on_event(ctx, event)`.
 The topic must match a `pipes` declaration in `site.yml`; otherwise the host
 returns `runtime.pipe_not_declared` instead of creating a pipe implicitly.
+If the JSON payload has a string `type` field, the host uses it as the semantic
+event type; otherwise the event type falls back to the topic.
 
 `events.publish` is not a durable queue:
 

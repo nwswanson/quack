@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"quack/internal/runtime/modules"
 
@@ -61,7 +62,8 @@ func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event
 	if scriptKey == "" {
 		scriptKey = route.Entrypoint
 	}
-	thread, stopCancel := starlarkThread(ctx, "event "+event.Topic, limits.MaxExecutionSteps)
+	envelope := normalizedEventInvocationEnvelope(event)
+	thread, stopCancel := starlarkThread(ctx, "event "+envelope.Topic, limits.MaxExecutionSteps)
 	defer stopCancel()
 	predeclared := e.websocketPredeclareds(ctx, bundle, route, limits)
 	program, err := e.program(ctx, bundle, route, scriptKey, limits, predeclared)
@@ -81,7 +83,7 @@ func (e *StarlarkExecutor) InvokeEvent(ctx context.Context, bundle Bundle, event
 		return nil, fmt.Errorf("%w: %s must be callable", ErrInvalidRuntime, event.Handler)
 	}
 	globals.Freeze()
-	result, err := starlark.Call(thread, callable, starlark.Tuple{eventContext(event), websocketServerEventValue(WebSocketServerEvent{Topic: event.Topic, Payload: event.Payload})}, nil)
+	result, err := starlark.Call(thread, callable, starlark.Tuple{eventContext(event), websocketServerEventValue(webSocketServerEventFromEnvelope(envelope))}, nil)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ErrTimeout
@@ -194,9 +196,44 @@ func websocketPayloadValue(payload []byte) starlark.Value {
 
 func websocketServerEventValue(event WebSocketServerEvent) starlark.Value {
 	return starlarkstruct.FromStringDict(starlarkstruct.Default, starlark.StringDict{
-		"topic":   starlark.String(event.Topic),
-		"payload": websocketPayloadValue(event.Payload),
+		"id":             starlark.String(event.ID),
+		"pipe":           starlark.String(event.Pipe),
+		"topic":          starlark.String(event.Topic),
+		"type":           starlark.String(event.Type),
+		"source":         starlark.String(event.Source),
+		"time":           starlark.String(event.Time.Format(time.RFC3339Nano)),
+		"seq":            starlark.MakeUint64(event.Seq),
+		"causation_id":   starlark.String(event.CausationID),
+		"correlation_id": starlark.String(event.CorrelationID),
+		"site":           starlark.String(event.Site),
+		"version":        starlark.MakeInt64(event.Version),
+		"payload":        websocketPayloadValue(event.Payload),
 	})
+}
+
+func webSocketServerEventFromEnvelope(envelope EventEnvelope) WebSocketServerEvent {
+	return WebSocketServerEvent{
+		ID: envelope.ID, Pipe: envelope.Pipe, Topic: envelope.Topic, Type: envelope.Type, Source: envelope.Source,
+		Time: envelope.Time, Seq: envelope.Seq, CausationID: envelope.CausationID, CorrelationID: envelope.CorrelationID,
+		Site: envelope.Site, Version: envelope.Version, Payload: envelope.Payload,
+	}
+}
+
+func normalizedEventInvocationEnvelope(event EventInvocation) EventEnvelope {
+	envelope := event.Event
+	if envelope.Site == "" {
+		envelope.Site = event.Site
+	}
+	if envelope.Version == 0 {
+		envelope.Version = event.Version
+	}
+	if envelope.Topic == "" {
+		envelope.Topic = event.Topic
+	}
+	if envelope.Payload == nil {
+		envelope.Payload = event.Payload
+	}
+	return envelope
 }
 
 func websocketEffectsFromValue(v starlark.Value) ([]WebSocketEffect, error) {
