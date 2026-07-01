@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"quack/internal/admin2"
 	"quack/internal/adminui"
 	"quack/internal/cache"
 	"quack/internal/controlapi"
@@ -145,6 +146,10 @@ func New(adminAddr string, publicAddr string, store appstorage.Storage, db Datab
 		Secrets:     secretService,
 		Hardware:    db,
 		HardwareCtl: opts.HardwareService,
+	}).Register(adminMux)
+	admin2.New(admin2.Options{
+		Sessions: db,
+		Secrets:  secretService,
 	}).Register(adminMux)
 	adminMux.HandleFunc("/metrics", metrics.handle)
 

@@ -6,7 +6,7 @@ Quack is a small self-hosted app server for publishing weird little web things i
 
 Point Quack at a directory, give it a site name, and it serves the current version by hostname. That is the main trick: easy static file hosting with versioning, rollback, and a tiny control plane.
 
-But Quack is not only a static file server. It also includes a small Starlark runtime, a site-scoped memory module, and WebSockets. Together, those pieces make it possible to build small realtime apps without reaching for a full platform stack.
+Quack also includes a compact event runtime for turning rich frontend sites into live systems. HTTP routes, WebSocket sessions, hardware events, timers, and background handlers all communicate through durable named pipes. Pipes can retain recent messages, route by selector, fan events out to subscribers, serialize work by topic, and give handlers a shared coordination layer without requiring a separate broker. You can even bring along your logic--the main handler is starlark, but a WASM module can be called to invoke fast compiled code. 
 
 Think less “formal production platform with RBAC and policies” (It has RBAC and policies if you want to run it at your company for internal demo hosting) and more “a 🤡🚗 full of 🦆s with 🐝🔫s.” Quack is meant to carry a surprising amount of stuff for its size, especially for strange, fun, useful, half-serious apps that should exist before you talk yourself out of deploying them.
 
@@ -17,6 +17,7 @@ Quack is designed for:
 * Static sites
 * Tiny tools
 * Vibe-coded apps
+* Hardware interface projects
 * AI-generated web artifacts
 * Personal dashboards
 * Internal tools

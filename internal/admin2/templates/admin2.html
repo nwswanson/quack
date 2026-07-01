@@ -1,0 +1,195 @@
+{{define "admin2.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Quack Admin 2</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --color-bg: #F6F2EA;
+      --color-surface: #FFFDF9;
+      --color-surface-elevated: #FFFFFF;
+      --color-sidebar: #F1E8DA;
+      --color-border: #DDD2C2;
+      --color-border-subtle: #E8DED0;
+      --color-text: #2F261F;
+      --color-text-secondary: #6E6258;
+      --color-text-muted: #8A7C70;
+      --color-accent: #C98A2E;
+      --color-accent-hover: #B67922;
+      --color-accent-soft: #F5E6CC;
+      --color-focus: #D99A3D;
+      --color-success: #4E8B62;
+      --color-success-soft: #E6F2EA;
+      --color-warning: #B97A1E;
+      --color-warning-soft: #F7E9CC;
+      --color-danger: #B6523A;
+      --color-danger-soft: #F8E2DD;
+      --color-info: #5E7FA3;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--color-text);
+      background: var(--color-bg);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--color-bg); color: var(--color-text); }
+    a { color: inherit; }
+    button, input { font: inherit; }
+    .shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 100vh; }
+    .sidebar { background: var(--color-sidebar); border-right: 1px solid var(--color-border); padding: 20px 16px; }
+    .brand { display: grid; gap: 4px; padding: 4px 8px 22px; border-bottom: 1px solid var(--color-border); }
+    .brand-title { font-size: 18px; font-weight: 700; letter-spacing: 0; }
+    .brand-subtitle { color: var(--color-text-secondary); font-size: 13px; }
+    .nav-group { margin-top: 24px; display: grid; gap: 8px; }
+    .nav-label { padding: 0 8px; color: var(--color-text-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .nav-item { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 10px; border-radius: 8px; color: var(--color-text-secondary); text-decoration: none; font-size: 14px; font-weight: 600; }
+    .nav-item svg { width: 18px; height: 18px; color: var(--color-text-muted); }
+    .nav-item[aria-current="page"] { background: var(--color-accent-soft); color: var(--color-text); box-shadow: inset 3px 0 0 var(--color-accent); }
+    .nav-item[aria-current="page"] svg { color: var(--color-accent); }
+    .main { min-width: 0; display: grid; grid-template-rows: 60px minmax(0, 1fr); }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 28px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+    .instance { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-text-secondary); font-size: 13px; background: var(--color-surface-elevated); }
+    .session { display: flex; align-items: center; gap: 12px; color: var(--color-text-secondary); font-size: 14px; }
+    .logout { min-height: 34px; padding: 7px 11px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-elevated); color: var(--color-text); font-weight: 650; cursor: pointer; }
+    .content { width: min(100%, 1440px); padding: 28px 32px 40px; }
+    .content-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+    .eyebrow { margin: 0 0 6px; color: var(--color-text-muted); font-size: 13px; font-weight: 650; }
+    h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 720; letter-spacing: 0; }
+    .description { max-width: 720px; margin: 8px 0 0; color: var(--color-text-secondary); font-size: 15px; line-height: 1.5; }
+    .badge { display: inline-flex; align-items: center; min-height: 28px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--color-border); font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .badge.success { color: var(--color-success); background: var(--color-success-soft); border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-border)); }
+    .badge.warning { color: var(--color-warning); background: var(--color-warning-soft); border-color: color-mix(in srgb, var(--color-warning) 35%, var(--color-border)); }
+    .badge.muted { color: var(--color-text-muted); background: var(--color-surface); }
+    .tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--color-border); margin-bottom: 24px; }
+    .tab { position: relative; padding: 0 0 11px; color: var(--color-text-secondary); text-decoration: none; font-size: 14px; font-weight: 700; }
+    .tab[aria-current="page"] { color: var(--color-text); }
+    .tab[aria-current="page"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; border-radius: 999px 999px 0 0; background: var(--color-accent); }
+    .work-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
+    .panel, .rail-panel { border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); }
+    .panel-header { padding: 22px 24px 16px; border-bottom: 1px solid var(--color-border-subtle); }
+    .panel-title { margin: 0; font-size: 18px; font-weight: 720; letter-spacing: 0; }
+    .panel-copy { margin: 6px 0 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.5; }
+    .panel-body { padding: 22px 24px 24px; }
+    .field { display: grid; gap: 8px; max-width: 520px; }
+    label { color: var(--color-text); font-size: 13px; font-weight: 700; }
+    input[type="password"] { width: 100%; min-height: 42px; padding: 9px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-elevated); color: var(--color-text); outline: none; }
+    input[type="password"]:focus { border-color: var(--color-focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-focus) 24%, transparent); }
+    .help { color: var(--color-text-secondary); font-size: 13px; line-height: 1.45; }
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+    .primary { min-height: 40px; padding: 9px 14px; border: 1px solid var(--color-accent); border-radius: 8px; background: var(--color-accent); color: #FFFFFF; font-size: 14px; font-weight: 750; cursor: pointer; }
+    .primary:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
+    .primary:disabled { cursor: not-allowed; border-color: var(--color-border); background: var(--color-border-subtle); color: var(--color-text-muted); }
+    .primary:focus-visible, .logout:focus-visible, .nav-item:focus-visible, .tab:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-focus) 45%, transparent); outline-offset: 2px; }
+    .notice { margin: 0 0 16px; padding: 11px 12px; border-radius: 8px; font-size: 14px; font-weight: 650; }
+    .notice.error { color: var(--color-danger); background: var(--color-danger-soft); border: 1px solid color-mix(in srgb, var(--color-danger) 32%, var(--color-border)); }
+    .notice.message { color: var(--color-success); background: var(--color-success-soft); border: 1px solid color-mix(in srgb, var(--color-success) 32%, var(--color-border)); }
+    .rail-panel { padding: 20px; display: grid; gap: 16px; }
+    .rail-title { margin: 0; font-size: 16px; font-weight: 720; }
+    .meta-list { display: grid; gap: 14px; margin: 0; }
+    .meta-row { display: grid; gap: 4px; }
+    .meta-row dt { color: var(--color-text-muted); font-size: 12px; font-weight: 700; }
+    .meta-row dd { margin: 0; color: var(--color-text); font-size: 14px; line-height: 1.45; }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--color-border); }
+      .nav-group { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .nav-label { grid-column: 1 / -1; }
+      .main { grid-template-rows: auto minmax(0, 1fr); }
+      .topbar, .content-header, .work-grid { display: grid; grid-template-columns: 1fr; }
+      .content { padding: 24px 18px 36px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Admin navigation">
+      <div class="brand">
+        <div class="brand-title">Quack Admin</div>
+        <div class="brand-subtitle">Maintenance console</div>
+      </div>
+      <nav class="nav-group" aria-label="Configure">
+        <div class="nav-label">Configure</div>
+        <a class="nav-item" href="/admin2" aria-current="page">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3l7 3v5c0 4.4-2.8 8.3-7 9.8C7.8 19.3 5 15.4 5 11V6l7-3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9.5 12.2l1.7 1.7 3.6-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Secrets</span>
+        </a>
+      </nav>
+      <nav class="nav-group" aria-label="Operations">
+        <div class="nav-label">Operations</div>
+        <a class="nav-item" href="/logs">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 5h12M6 10h12M6 15h8M6 20h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Logs</span>
+        </a>
+      </nav>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <div class="instance">Admin 2 preview</div>
+        <div class="session">
+          <span>Signed in as {{.User.Username}}</span>
+          <form method="post" action="/logout">
+            <button class="logout" type="submit">Sign out</button>
+          </form>
+        </div>
+      </header>
+      <main class="content">
+        <div class="content-header">
+          <div>
+            <p class="eyebrow">Configure</p>
+            <h1>Secret store</h1>
+            <p class="description">Unlock the server-side secret root key for runtime secret reads and writes.</p>
+          </div>
+          <span class="badge {{.StoreStateClass}}">{{.StoreState}}</span>
+        </div>
+        <nav class="tabs" aria-label="Secret store sections">
+          <a class="tab" href="/admin2" aria-current="page">Access</a>
+        </nav>
+        <div class="work-grid">
+          {{template "secret_panel" .}}
+          <aside class="rail-panel" aria-label="Secret store status">
+            <h2 class="rail-title">Store status</h2>
+            <dl class="meta-list">
+              <div class="meta-row">
+                <dt>Root key</dt>
+                <dd>{{if .Status.Configured}}Configured{{else}}Not configured{{end}}</dd>
+              </div>
+              <div class="meta-row">
+                <dt>Access</dt>
+                <dd>{{.AccessState}}</dd>
+              </div>
+              <div class="meta-row">
+                <dt>Login source</dt>
+                <dd>Existing admin session</dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
+{{end}}
+
+{{define "secret_panel"}}
+<section id="secret-store-panel" class="panel" aria-labelledby="secret-panel-title">
+  <div class="panel-header">
+    <h2 id="secret-panel-title" class="panel-title">Unlock secret store</h2>
+    <p class="panel-copy">Enter the store passphrase to make encrypted secrets available to the runtime.</p>
+  </div>
+  <div class="panel-body">
+    {{if .Error}}<p class="notice error">{{.Error}}</p>{{end}}
+    {{if .Message}}<p class="notice message">{{.Message}}</p>{{end}}
+    <form method="post" action="/admin2/secret/unlock" hx-post="/admin2/secret/unlock" hx-target="#secret-store-panel" hx-swap="outerHTML">
+      <div class="field">
+        <label for="passphrase">Passphrase</label>
+        <input id="passphrase" name="passphrase" type="password" autocomplete="current-password" {{if .Status.Unlocked}}disabled{{end}}>
+        <div class="help">{{if .Status.Unlocked}}The store is already unlocked for this server process.{{else if .Status.Configured}}This unlocks the existing root key without changing it.{{else}}The root key has not been created yet; use the current admin UI to initialize it.{{end}}</div>
+      </div>
+      <div class="actions">
+        <button class="primary" type="submit" {{if or .Status.Unlocked (not .Status.Configured)}}disabled{{end}}>Unlock store</button>
+      </div>
+    </form>
+  </div>
+</section>
+{{end}}
