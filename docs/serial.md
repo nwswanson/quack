@@ -319,6 +319,21 @@ blob from being handed to the serial driver as one unpaced burst. `write` still
 reports bytes accepted by the host serial stack, not a protocol-level
 acknowledgement from the attached device.
 
+Very fragile line-oriented firmware consoles can be configured to receive one
+byte per low-level write:
+
+```yaml
+serial:
+  baud: 9600
+  write_chunk_bytes: 1
+  write_delay_ms: 5
+```
+
+With that configuration, `serial.write("dish", "azangle 90\r")` is sent as
+individual byte writes for `a`, `z`, `a`, and so on through the carriage return.
+Use this mode for devices that behave like interactive terminals rather than
+robust stream parsers. This is a nod for saveitforparts--I love your channel! :) 
+
 ### transfer
 
 ```python

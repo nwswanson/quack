@@ -147,6 +147,45 @@ func TestSerialProviderWriteUsesDefensiveChunksAndDrain(t *testing.T) {
 	}
 }
 
+func TestSerialProviderWriteCanSendSingleByteChunks(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	options := SerialOptions{WriteChunkBytes: 1, WriteDelayMillis: 1}
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "dish",
+		Path:     "/dev/ttyACM0",
+		Options:  options,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeResp, err := provider.WriteSerial(context.Background(), SerialWriteRequest{
+		DeviceID: "dish",
+		Path:     "/dev/ttyACM0",
+		Options:  options,
+		Data:     []byte("azangle 90\r"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeResp.Bytes != len("azangle 90\r") || string(port.written()) != "azangle 90\r" {
+		t.Fatalf("write resp/data = %+v/%q, want single-byte command", writeResp, string(port.written()))
+	}
+	if got := port.writeCallLengths(); strings.Join(got, ",") != "1,1,1,1,1,1,1,1,1,1,1" {
+		t.Fatalf("write call lengths = %v, want one byte per low-level write", got)
+	}
+	if got := port.drainCallCount(); got != len("azangle 90\r") {
+		t.Fatalf("drain calls = %d, want one per byte", got)
+	}
+}
+
 func TestSerialProviderWriteTreatsZeroByteWriteAsShortWrite(t *testing.T) {
 	provider := NewSerialProvider()
 	port := newFakeSerialPort()
