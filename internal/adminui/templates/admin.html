@@ -923,6 +923,16 @@
                           <span class="field-hint">Default timeout for serial.request when site code does not pass one.</span>
                         </label>
                         <label class="field-control">
+                          <span>Write chunk bytes</span>
+                          <input name="serial_write_chunk_bytes" type="number" min="0" value="{{.Serial.WriteChunkBytes}}" placeholder="256">
+                          <span class="field-hint">Maximum bytes accepted per low-level serial write. Default is 256.</span>
+                        </label>
+                        <label class="field-control">
+                          <span>Write delay ms</span>
+                          <input name="serial_write_delay_ms" type="number" min="0" value="{{.Serial.WriteDelayMillis}}" placeholder="2">
+                          <span class="field-hint">Pause between serial write chunks. Default is 2 ms.</span>
+                        </label>
+                        <label class="field-control">
                           <span>Write queue size</span>
                           <input name="serial_write_queue_size" type="number" min="0" value="{{.Serial.WriteQueueSize}}" placeholder="64">
                           <span class="field-hint">Buffered write commands per device actor. Default is 64.</span>
@@ -1063,6 +1073,16 @@
                     <span>Request timeout ms</span>
                     <input name="serial_request_timeout_ms" type="number" min="0" value="1000">
                     <span class="field-hint">Default timeout for serial.request.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Write chunk bytes</span>
+                    <input name="serial_write_chunk_bytes" type="number" min="0" value="256">
+                    <span class="field-hint">Maximum bytes accepted per low-level serial write.</span>
+                  </label>
+                  <label class="field-control">
+                    <span>Write delay ms</span>
+                    <input name="serial_write_delay_ms" type="number" min="0" value="2">
+                    <span class="field-hint">Pause between serial write chunks.</span>
                   </label>
                   <label class="field-control">
                     <span>Write queue size</span>

@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -109,6 +110,43 @@ func TestSerialProviderWriteLoopsThroughPartialWrites(t *testing.T) {
 	}
 }
 
+func TestSerialProviderWriteUsesDefensiveChunksAndDrain(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data := bytes.Repeat([]byte("A"), defaultSerialWriteChunkBytes+1)
+	writeResp, err := provider.WriteSerial(context.Background(), SerialWriteRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     data,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeResp.Bytes != len(data) || !bytes.Equal(port.written(), data) {
+		t.Fatalf("write resp/data = %+v/%d bytes, want %d bytes", writeResp, len(port.written()), len(data))
+	}
+	if got := port.writeCallLengths(); strings.Join(got, ",") != "256,1" {
+		t.Fatalf("write call lengths = %v, want [256 1]", got)
+	}
+	if got := port.drainCallCount(); got != 2 {
+		t.Fatalf("drain calls = %d, want 2", got)
+	}
+}
+
 func TestSerialProviderWriteTreatsZeroByteWriteAsShortWrite(t *testing.T) {
 	provider := NewSerialProvider()
 	port := newFakeSerialPort()
@@ -134,6 +172,40 @@ func TestSerialProviderWriteTreatsZeroByteWriteAsShortWrite(t *testing.T) {
 	})
 	if !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("WriteSerial error = %v, want short write", err)
+	}
+}
+
+func TestSerialProviderWriteRetriesTransientErrors(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	port.writeErrs = []error{syscall.EAGAIN, syscall.EINTR}
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeResp, err := provider.WriteSerial(context.Background(), SerialWriteRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     []byte("READ\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeResp.Bytes != 5 || string(port.written()) != "READ\n" {
+		t.Fatalf("write resp/data = %+v/%q, want retry then 5 bytes", writeResp, string(port.written()))
+	}
+	if got := port.writeCallLengths(); strings.Join(got, ",") != "0,0,5" {
+		t.Fatalf("write call lengths = %v, want [0 0 5]", got)
 	}
 }
 
@@ -299,7 +371,9 @@ type fakeSerialPort struct {
 	writes    []byte
 	maxWrite  int
 	zeroWrite bool
+	writeErrs []error
 	callLens  []int
+	drains    int
 	closeCh   chan struct{}
 }
 
@@ -324,6 +398,12 @@ func (p *fakeSerialPort) Write(data []byte) (int, error) {
 		p.callLens = append(p.callLens, 0)
 		return 0, nil
 	}
+	if len(p.writeErrs) > 0 {
+		err := p.writeErrs[0]
+		p.writeErrs = p.writeErrs[1:]
+		p.callLens = append(p.callLens, 0)
+		return 0, err
+	}
 	n := len(data)
 	if p.maxWrite > 0 && n > p.maxWrite {
 		n = p.maxWrite
@@ -333,7 +413,12 @@ func (p *fakeSerialPort) Write(data []byte) (int, error) {
 	return n, nil
 }
 
-func (p *fakeSerialPort) Drain() error             { return nil }
+func (p *fakeSerialPort) Drain() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.drains++
+	return nil
+}
 func (p *fakeSerialPort) ResetInputBuffer() error  { return nil }
 func (p *fakeSerialPort) ResetOutputBuffer() error { return nil }
 func (p *fakeSerialPort) SetDTR(bool) error        { return nil }
@@ -369,4 +454,10 @@ func (p *fakeSerialPort) writeCallLengths() []string {
 		out = append(out, fmt.Sprintf("%d", n))
 	}
 	return out
+}
+
+func (p *fakeSerialPort) drainCallCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.drains
 }

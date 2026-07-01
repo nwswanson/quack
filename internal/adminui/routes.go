@@ -788,6 +788,14 @@ func hardwareDeviceFromForm(r *http.Request) (hardware.AdminDevice, error) {
 	if err != nil {
 		return hardware.AdminDevice{}, err
 	}
+	writeChunkBytes, err := parseNonNegativeInt64(r.Form.Get("serial_write_chunk_bytes"), "serial write chunk bytes")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
+	writeDelayMillis, err := parseNonNegativeInt64(r.Form.Get("serial_write_delay_ms"), "serial write delay")
+	if err != nil {
+		return hardware.AdminDevice{}, err
+	}
 	writeQueueSize, err := parseNonNegativeInt64(r.Form.Get("serial_write_queue_size"), "serial write queue size")
 	if err != nil {
 		return hardware.AdminDevice{}, err
@@ -815,6 +823,8 @@ func hardwareDeviceFromForm(r *http.Request) (hardware.AdminDevice, error) {
 			StopBits:             r.Form.Get("serial_stop_bits"),
 			ReadTimeoutMillis:    int(readTimeoutMillis),
 			RequestTimeoutMillis: int(requestTimeoutMillis),
+			WriteChunkBytes:      int(writeChunkBytes),
+			WriteDelayMillis:     int(writeDelayMillis),
 			WriteQueueSize:       int(writeQueueSize),
 			RecentEvents:         int(recentEvents),
 			ReconnectMillis:      int(reconnectMillis),

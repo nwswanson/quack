@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -19,7 +22,10 @@ const (
 	serialStatusOpen   = "open"
 	serialStatusError  = "error"
 
-	serialWriteChunkBytes = 4096
+	defaultSerialWriteChunkBytes  = 256
+	defaultSerialWriteDelayMillis = 2
+	maxSerialWriteChunkBytes      = 4096
+	serialWriteChunkBytes         = defaultSerialWriteChunkBytes
 )
 
 type SerialDeviceProvider struct {
@@ -46,10 +52,13 @@ func (p *SerialDeviceProvider) ListDevices(ctx context.Context, req ListDevicesR
 	if p == nil || p.listPorts == nil {
 		return nil, ErrNotConfigured
 	}
+	slog.DebugContext(ctx, "serial list devices started")
 	ports, err := p.listPorts()
 	if err != nil {
+		slog.WarnContext(ctx, "serial list devices failed", "error", err)
 		return nil, err
 	}
+	slog.DebugContext(ctx, "serial list devices completed", "ports", len(ports))
 	out := make([]DeviceInfo, 0, len(ports))
 	for _, port := range ports {
 		select {
@@ -178,6 +187,7 @@ func (p *SerialDeviceProvider) actor(deviceID string, path string, options Seria
 	if actor == nil {
 		actor = newSerialActor(strings.TrimSpace(deviceID), path, options, p.openPort, p.emit)
 		p.actors[key] = actor
+		slog.Debug("serial actor created", "device_id", actor.deviceID, "path", actor.path, "baud", actor.options.BaudRate, "write_chunk_bytes", actor.options.WriteChunkBytes, "write_delay_ms", actor.options.WriteDelayMillis, "disable_write_drain", actor.options.DisableWriteDrain)
 	}
 	return actor, nil
 }
@@ -245,6 +255,16 @@ type serialTransfer struct {
 	data   []byte
 	offset int
 	status string
+}
+
+type serialWriteOptions struct {
+	deviceID     string
+	path         string
+	operation    string
+	chunkBytes   int
+	delay        time.Duration
+	drain        bool
+	logThreshold int
 }
 
 var serialGenerationSeq uint64
@@ -417,9 +437,11 @@ func (a *serialActor) run() {
 		case <-reconnect.C:
 			if port == nil && opened {
 				var err error
+				slog.Info("serial reconnect started", "device_id", a.deviceID, "path", a.path)
 				port, readCh, err = a.open()
 				if err != nil {
 					a.recordError(err)
+					slog.Warn("serial reconnect failed", "device_id", a.deviceID, "path", a.path, "error", err)
 					reconnect.Reset(a.reconnectDelay())
 				}
 			}
@@ -433,11 +455,12 @@ func (a *serialActor) run() {
 				transfer = nil
 				break
 			}
-			end := transfer.offset + serialWriteChunkBytes
+			writeOptions := a.writeOptions("transfer")
+			end := transfer.offset + writeOptions.chunkBytes
 			if end > len(transfer.data) {
 				end = len(transfer.data)
 			}
-			n, err := serialWriteAll(context.Background(), port, transfer.data[transfer.offset:end])
+			n, err := serialWriteAll(context.Background(), port, transfer.data[transfer.offset:end], writeOptions)
 			if n > 0 {
 				transfer.offset += n
 				a.recordTransferEvent("transfer_progress", transfer, nil)
@@ -486,7 +509,7 @@ func (a *serialActor) run() {
 					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is busy with transfer %q", a.deviceID, transfer.id)}
 					break
 				}
-				n, err := serialWriteAll(command.ctx, port, command.data)
+				n, err := serialWriteAll(command.ctx, port, command.data, a.writeOptions("write"))
 				if err != nil {
 					a.setError(err)
 					a.recordEvent("write_error", nil, err)
@@ -500,6 +523,7 @@ func (a *serialActor) run() {
 					break
 				}
 				a.recordEvent("write", command.data, nil)
+				slog.InfoContext(command.ctx, "serial write completed", "device_id", a.deviceID, "path", a.path, "bytes", n)
 				command.reply <- serialCommandResult{bytes: n}
 			case "request":
 				if port == nil {
@@ -521,7 +545,7 @@ func (a *serialActor) run() {
 				if timeoutMillis <= 0 {
 					timeoutMillis = 1000
 				}
-				n, err := serialWriteAll(command.ctx, port, command.request.data)
+				n, err := serialWriteAll(command.ctx, port, command.request.data, a.writeOptions("request"))
 				if err != nil {
 					a.setError(err)
 					a.recordEvent("write_error", nil, err)
@@ -535,6 +559,7 @@ func (a *serialActor) run() {
 					break
 				}
 				a.recordEvent("write", command.request.data, nil)
+				slog.InfoContext(command.ctx, "serial request write completed", "device_id", a.deviceID, "path", a.path, "bytes", n, "timeout_ms", timeoutMillis)
 				maxBytes := command.request.maxBytes
 				if maxBytes <= 0 {
 					maxBytes = 4096
@@ -573,6 +598,7 @@ func (a *serialActor) run() {
 					status: "running",
 				}
 				a.recordTransferEvent("transfer_started", transfer, nil)
+				slog.Info("serial transfer accepted", "device_id", a.deviceID, "path", a.path, "transfer_id", transfer.id, "bytes", len(transfer.data))
 				command.reply <- serialCommandResult{transferID: transfer.id, bytes: len(transfer.data)}
 				signalTransfer()
 			case "status":
@@ -599,11 +625,13 @@ func (a *serialActor) run() {
 					}
 				}
 				a.setClosed()
+				slog.Info("serial port closed", "device_id", a.deviceID, "path", a.path)
 				command.reply <- serialCommandResult{closed: true}
 			}
 		case result := <-readCh:
 			if result.err != nil {
 				a.recordError(result.err)
+				slog.Warn("serial read failed", "device_id", a.deviceID, "path", a.path, "error", result.err)
 				if port != nil {
 					_ = port.Close()
 					port = nil
@@ -622,6 +650,7 @@ func (a *serialActor) run() {
 				break
 			}
 			a.recordEvent("read", result.data, nil)
+			slog.Debug("serial read completed", "device_id", a.deviceID, "path", a.path, "bytes", len(result.data))
 			if active != nil && active.accept(result.data) {
 				data := append([]byte(nil), active.buf...)
 				active.finish(serialCommandResult{data: data})
@@ -651,6 +680,7 @@ func (a *serialActor) open() (serial.Port, chan serialReadResult, error) {
 		return nil, nil, err
 	}
 	a.setOpen()
+	slog.Info("serial port opened", "device_id", a.deviceID, "path", a.path, "baud", a.options.BaudRate, "data_bits", a.options.DataBits, "parity", a.options.Parity, "stop_bits", a.options.StopBits, "read_timeout_ms", a.options.ReadTimeoutMillis, "write_chunk_bytes", a.options.WriteChunkBytes, "write_delay_ms", a.options.WriteDelayMillis, "disable_write_drain", a.options.DisableWriteDrain)
 	readCh := make(chan serialReadResult, 1)
 	go serialReadLoop(port, readCh)
 	return port, readCh, nil
@@ -670,33 +700,118 @@ func serialReadLoop(port serial.Port, readCh chan<- serialReadResult) {
 	}
 }
 
-func serialWriteAll(ctx context.Context, port serial.Port, data []byte) (int, error) {
+func serialWriteAll(ctx context.Context, port serial.Port, data []byte, options serialWriteOptions) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if options.chunkBytes <= 0 {
+		options.chunkBytes = defaultSerialWriteChunkBytes
+	}
+	if options.logThreshold <= 0 {
+		options.logThreshold = options.chunkBytes * 4
+	}
+	if len(data) >= options.logThreshold {
+		slog.InfoContext(ctx, "serial write started", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes", len(data), "chunk_bytes", options.chunkBytes, "write_delay", options.delay, "write_drain", options.drain)
 	}
 	total := 0
 	for total < len(data) {
 		select {
 		case <-ctx.Done():
+			slog.WarnContext(ctx, "serial write cancelled", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes_written", total, "total_bytes", len(data), "error", ctx.Err())
 			return total, ctx.Err()
 		default:
 		}
-		end := total + serialWriteChunkBytes
+		end := total + options.chunkBytes
 		if end > len(data) {
 			end = len(data)
 		}
 		n, err := port.Write(data[total:end])
 		if n > 0 {
 			total += n
+			slog.DebugContext(ctx, "serial write chunk accepted", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "chunk_bytes", n, "bytes_written", total, "total_bytes", len(data))
+		}
+		if err != nil && serialWriteRetryable(err) {
+			slog.DebugContext(ctx, "serial write retrying after transient error", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes_written", total, "total_bytes", len(data), "error", err)
+			if n > 0 && options.drain {
+				if drainErr := port.Drain(); drainErr != nil {
+					slog.WarnContext(ctx, "serial write drain failed", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes_written", total, "total_bytes", len(data), "error", drainErr)
+					return total, drainErr
+				}
+			}
+			if err := serialWritePause(ctx, options); err != nil {
+				return total, err
+			}
+			continue
 		}
 		if err != nil {
+			slog.WarnContext(ctx, "serial write failed", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes_written", total, "total_bytes", len(data), "error", err)
 			return total, err
 		}
 		if n == 0 {
+			slog.WarnContext(ctx, "serial write made no progress", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes_written", total, "total_bytes", len(data))
 			return total, io.ErrShortWrite
+		}
+		if options.drain {
+			if err := port.Drain(); err != nil {
+				slog.WarnContext(ctx, "serial write drain failed", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "bytes_written", total, "total_bytes", len(data), "error", err)
+				return total, err
+			}
+		}
+		if total < len(data) {
+			if err := serialWritePause(ctx, options); err != nil {
+				return total, err
+			}
 		}
 	}
 	return total, nil
+}
+
+func serialWriteRetryable(err error) bool {
+	return errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.EAGAIN)
+}
+
+func serialWritePause(ctx context.Context, options serialWriteOptions) error {
+	delay := options.delay
+	if delay <= 0 {
+		delay = time.Millisecond
+	}
+	timer := time.NewTimer(delay)
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		slog.WarnContext(ctx, "serial write cancelled during pacing delay", "device_id", options.deviceID, "path", options.path, "operation", options.operation, "error", ctx.Err())
+		return ctx.Err()
+	}
+}
+
+func (a *serialActor) writeOptions(operation string) serialWriteOptions {
+	chunkBytes := a.options.WriteChunkBytes
+	if chunkBytes <= 0 {
+		chunkBytes = defaultSerialWriteChunkBytes
+	}
+	if chunkBytes > maxSerialWriteChunkBytes {
+		chunkBytes = maxSerialWriteChunkBytes
+	}
+	delayMillis := a.options.WriteDelayMillis
+	if delayMillis < 0 {
+		delayMillis = 0
+	}
+	return serialWriteOptions{
+		deviceID:     a.deviceID,
+		path:         a.path,
+		operation:    operation,
+		chunkBytes:   chunkBytes,
+		delay:        time.Duration(delayMillis) * time.Millisecond,
+		drain:        !a.options.DisableWriteDrain,
+		logThreshold: chunkBytes * 4,
+	}
 }
 
 func (r *pendingSerialRequest) accept(data []byte) bool {
@@ -873,6 +988,15 @@ func defaultSerialOptions(options SerialOptions) SerialOptions {
 	}
 	if options.RequestTimeoutMillis <= 0 {
 		options.RequestTimeoutMillis = 1000
+	}
+	if options.WriteChunkBytes <= 0 {
+		options.WriteChunkBytes = defaultSerialWriteChunkBytes
+	}
+	if options.WriteChunkBytes > maxSerialWriteChunkBytes {
+		options.WriteChunkBytes = maxSerialWriteChunkBytes
+	}
+	if options.WriteDelayMillis <= 0 {
+		options.WriteDelayMillis = defaultSerialWriteDelayMillis
 	}
 	if options.WriteQueueSize <= 0 {
 		options.WriteQueueSize = 64

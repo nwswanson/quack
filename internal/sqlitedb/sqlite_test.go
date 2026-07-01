@@ -319,6 +319,8 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 			StopBits:             "2",
 			ReadTimeoutMillis:    250,
 			RequestTimeoutMillis: 3000,
+			WriteChunkBytes:      128,
+			WriteDelayMillis:     5,
 			WriteQueueSize:       32,
 			RecentEvents:         128,
 			ReconnectMillis:      750,
@@ -340,7 +342,7 @@ func TestHardwareDevicesRoundTripAndConfig(t *testing.T) {
 	if devices[1].ID != "cam_02" || devices[1].Site != "" {
 		t.Fatalf("unbound device = %+v, want no site", devices[1])
 	}
-	if devices[2].ID != "serial_01" || devices[2].Serial.BaudRate != 115200 || devices[2].Serial.Parity != "even" {
+	if devices[2].ID != "serial_01" || devices[2].Serial.BaudRate != 115200 || devices[2].Serial.Parity != "even" || devices[2].Serial.WriteChunkBytes != 128 || devices[2].Serial.WriteDelayMillis != 5 {
 		t.Fatalf("serial device = %+v, want serial settings", devices[2])
 	}
 

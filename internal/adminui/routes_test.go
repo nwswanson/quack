@@ -137,6 +137,8 @@ func TestAdminHardwareFormSavesSerialOptions(t *testing.T) {
 		"serial_stop_bits":          {"2"},
 		"serial_read_timeout_ms":    {"250"},
 		"serial_request_timeout_ms": {"3000"},
+		"serial_write_chunk_bytes":  {"128"},
+		"serial_write_delay_ms":     {"5"},
 		"serial_write_queue_size":   {"32"},
 		"serial_recent_events":      {"128"},
 		"serial_reconnect_ms":       {"750"},
@@ -155,7 +157,7 @@ func TestAdminHardwareFormSavesSerialOptions(t *testing.T) {
 	if repo.saved.Kind != hardware.AdminKindSerial || repo.saved.Serial.BaudRate != 115200 || repo.saved.Serial.DataBits != 7 || repo.saved.Serial.Parity != "even" || repo.saved.Serial.StopBits != "2" {
 		t.Fatalf("saved device = %+v, want serial options", repo.saved)
 	}
-	if repo.saved.Serial.ReadTimeoutMillis != 250 || repo.saved.Serial.RequestTimeoutMillis != 3000 || repo.saved.Serial.WriteQueueSize != 32 || repo.saved.Serial.RecentEvents != 128 || repo.saved.Serial.ReconnectMillis != 750 {
+	if repo.saved.Serial.ReadTimeoutMillis != 250 || repo.saved.Serial.RequestTimeoutMillis != 3000 || repo.saved.Serial.WriteChunkBytes != 128 || repo.saved.Serial.WriteDelayMillis != 5 || repo.saved.Serial.WriteQueueSize != 32 || repo.saved.Serial.RecentEvents != 128 || repo.saved.Serial.ReconnectMillis != 750 {
 		t.Fatalf("saved serial options = %+v, want timeout and queue settings", repo.saved.Serial)
 	}
 }

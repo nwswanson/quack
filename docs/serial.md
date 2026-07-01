@@ -176,6 +176,9 @@ parity
 stop_bits
 read_timeout_ms
 request_timeout_ms
+write_chunk_bytes
+write_delay_ms
+disable_write_drain
 write_queue_size
 recent_events
 reconnect_ms
@@ -190,6 +193,9 @@ parity = none
 stop_bits = 1
 read_timeout_ms = 500
 request_timeout_ms = 1000
+write_chunk_bytes = 256
+write_delay_ms = 2
+disable_write_drain = false
 write_queue_size = 64
 recent_events = 64
 reconnect_ms = 1000
@@ -303,6 +309,15 @@ Returns:
 
 `write` requires the device to already be open. It does not open the port
 implicitly.
+
+The hardware actor treats writes defensively because serial ports are byte
+streams backed by small kernel and device buffers. A single `serial.write` call
+is split into bounded low-level writes, retries short writes until all bytes are
+accepted, treats zero-byte progress as `io.ErrShortWrite`, drains the port after
+each chunk by default, and yields between chunks. This keeps a large paste or
+blob from being handed to the serial driver as one unpaced burst. `write` still
+reports bytes accepted by the host serial stack, not a protocol-level
+acknowledgement from the attached device.
 
 ### transfer
 

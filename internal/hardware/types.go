@@ -125,6 +125,9 @@ type SerialOptions struct {
 	StopBits             string `json:"stop_bits" yaml:"stop_bits"`
 	ReadTimeoutMillis    int    `json:"read_timeout_ms" yaml:"read_timeout_ms"`
 	RequestTimeoutMillis int    `json:"request_timeout_ms" yaml:"request_timeout_ms"`
+	WriteChunkBytes      int    `json:"write_chunk_bytes" yaml:"write_chunk_bytes"`
+	WriteDelayMillis     int    `json:"write_delay_ms" yaml:"write_delay_ms"`
+	DisableWriteDrain    bool   `json:"disable_write_drain" yaml:"disable_write_drain"`
 	WriteQueueSize       int    `json:"write_queue_size" yaml:"write_queue_size"`
 	RecentEvents         int    `json:"recent_events" yaml:"recent_events"`
 	ReconnectMillis      int    `json:"reconnect_ms" yaml:"reconnect_ms"`
@@ -915,6 +918,15 @@ func effectiveSerialOptions(admin SerialOptions, request SerialOptions) SerialOp
 	}
 	if request.RequestTimeoutMillis > 0 {
 		out.RequestTimeoutMillis = request.RequestTimeoutMillis
+	}
+	if request.WriteChunkBytes > 0 {
+		out.WriteChunkBytes = request.WriteChunkBytes
+	}
+	if request.WriteDelayMillis > 0 {
+		out.WriteDelayMillis = request.WriteDelayMillis
+	}
+	if request.DisableWriteDrain {
+		out.DisableWriteDrain = request.DisableWriteDrain
 	}
 	if request.WriteQueueSize > 0 {
 		out.WriteQueueSize = request.WriteQueueSize

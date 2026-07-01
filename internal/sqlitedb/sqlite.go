@@ -238,6 +238,8 @@ func (d *Database) init(ctx context.Context) error {
 			serial_stop_bits TEXT NOT NULL DEFAULT '',
 			serial_read_timeout_ms INTEGER NOT NULL DEFAULT 0,
 			serial_request_timeout_ms INTEGER NOT NULL DEFAULT 0,
+			serial_write_chunk_bytes INTEGER NOT NULL DEFAULT 0,
+			serial_write_delay_ms INTEGER NOT NULL DEFAULT 0,
 			serial_write_queue_size INTEGER NOT NULL DEFAULT 0,
 			serial_recent_events INTEGER NOT NULL DEFAULT 0,
 			serial_reconnect_ms INTEGER NOT NULL DEFAULT 0,
@@ -329,6 +331,8 @@ func (d *Database) init(ctx context.Context) error {
 		{"serial_stop_bits", `ALTER TABLE hardware_devices ADD COLUMN serial_stop_bits TEXT NOT NULL DEFAULT ''`},
 		{"serial_read_timeout_ms", `ALTER TABLE hardware_devices ADD COLUMN serial_read_timeout_ms INTEGER NOT NULL DEFAULT 0`},
 		{"serial_request_timeout_ms", `ALTER TABLE hardware_devices ADD COLUMN serial_request_timeout_ms INTEGER NOT NULL DEFAULT 0`},
+		{"serial_write_chunk_bytes", `ALTER TABLE hardware_devices ADD COLUMN serial_write_chunk_bytes INTEGER NOT NULL DEFAULT 0`},
+		{"serial_write_delay_ms", `ALTER TABLE hardware_devices ADD COLUMN serial_write_delay_ms INTEGER NOT NULL DEFAULT 0`},
 		{"serial_write_queue_size", `ALTER TABLE hardware_devices ADD COLUMN serial_write_queue_size INTEGER NOT NULL DEFAULT 0`},
 		{"serial_recent_events", `ALTER TABLE hardware_devices ADD COLUMN serial_recent_events INTEGER NOT NULL DEFAULT 0`},
 		{"serial_reconnect_ms", `ALTER TABLE hardware_devices ADD COLUMN serial_reconnect_ms INTEGER NOT NULL DEFAULT 0`},
@@ -1509,7 +1513,8 @@ func (d *Database) ListHardwareDevices(ctx context.Context) ([]hardware.AdminDev
 	rows, err := d.readDB.QueryContext(ctx, `
 		SELECT d.id, d.kind, d.path, d.label,
 			d.serial_baud, d.serial_data_bits, d.serial_parity, d.serial_stop_bits,
-			d.serial_read_timeout_ms, d.serial_request_timeout_ms, d.serial_write_queue_size,
+			d.serial_read_timeout_ms, d.serial_request_timeout_ms, d.serial_write_chunk_bytes,
+			d.serial_write_delay_ms, d.serial_write_queue_size,
 			d.serial_recent_events, d.serial_reconnect_ms,
 			COALESCE(b.site, ''), COALESCE(b.alias, ''),
 			d.created_at, d.updated_at
@@ -1527,7 +1532,8 @@ func (d *Database) ListHardwareDevices(ctx context.Context) ([]hardware.AdminDev
 		if err := rows.Scan(
 			&device.ID, &device.Kind, &device.Path, &device.Label,
 			&device.Serial.BaudRate, &device.Serial.DataBits, &device.Serial.Parity, &device.Serial.StopBits,
-			&device.Serial.ReadTimeoutMillis, &device.Serial.RequestTimeoutMillis, &device.Serial.WriteQueueSize,
+			&device.Serial.ReadTimeoutMillis, &device.Serial.RequestTimeoutMillis, &device.Serial.WriteChunkBytes,
+			&device.Serial.WriteDelayMillis, &device.Serial.WriteQueueSize,
 			&device.Serial.RecentEvents, &device.Serial.ReconnectMillis,
 			&device.Site, &device.Alias, &device.CreatedAt, &device.UpdatedAt,
 		); err != nil {
@@ -1610,13 +1616,15 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 			UPDATE hardware_devices
 			SET id = ?, path = ?, label = ?,
 				serial_baud = ?, serial_data_bits = ?, serial_parity = ?, serial_stop_bits = ?,
-				serial_read_timeout_ms = ?, serial_request_timeout_ms = ?, serial_write_queue_size = ?,
+				serial_read_timeout_ms = ?, serial_request_timeout_ms = ?, serial_write_chunk_bytes = ?,
+				serial_write_delay_ms = ?, serial_write_queue_size = ?,
 				serial_recent_events = ?, serial_reconnect_ms = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, device.ID, device.Path, device.Label,
 			device.Serial.BaudRate, device.Serial.DataBits, device.Serial.Parity, device.Serial.StopBits,
-			device.Serial.ReadTimeoutMillis, device.Serial.RequestTimeoutMillis, device.Serial.WriteQueueSize,
+			device.Serial.ReadTimeoutMillis, device.Serial.RequestTimeoutMillis, device.Serial.WriteChunkBytes,
+			device.Serial.WriteDelayMillis, device.Serial.WriteQueueSize,
 			device.Serial.RecentEvents, device.Serial.ReconnectMillis,
 			device.OriginalID)
 		if err != nil {
@@ -1633,10 +1641,11 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 		INSERT INTO hardware_devices (
 			id, kind, path, label,
 			serial_baud, serial_data_bits, serial_parity, serial_stop_bits,
-			serial_read_timeout_ms, serial_request_timeout_ms, serial_write_queue_size,
+			serial_read_timeout_ms, serial_request_timeout_ms, serial_write_chunk_bytes,
+			serial_write_delay_ms, serial_write_queue_size,
 			serial_recent_events, serial_reconnect_ms
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			kind = hardware_devices.kind,
 			path = excluded.path,
@@ -1647,13 +1656,16 @@ func (d *Database) SaveHardwareDevice(ctx context.Context, device hardware.Admin
 			serial_stop_bits = excluded.serial_stop_bits,
 			serial_read_timeout_ms = excluded.serial_read_timeout_ms,
 			serial_request_timeout_ms = excluded.serial_request_timeout_ms,
+			serial_write_chunk_bytes = excluded.serial_write_chunk_bytes,
+			serial_write_delay_ms = excluded.serial_write_delay_ms,
 			serial_write_queue_size = excluded.serial_write_queue_size,
 			serial_recent_events = excluded.serial_recent_events,
 			serial_reconnect_ms = excluded.serial_reconnect_ms,
 			updated_at = CURRENT_TIMESTAMP
 	`, device.ID, device.Kind, device.Path, device.Label,
 		device.Serial.BaudRate, device.Serial.DataBits, device.Serial.Parity, device.Serial.StopBits,
-		device.Serial.ReadTimeoutMillis, device.Serial.RequestTimeoutMillis, device.Serial.WriteQueueSize,
+		device.Serial.ReadTimeoutMillis, device.Serial.RequestTimeoutMillis, device.Serial.WriteChunkBytes,
+		device.Serial.WriteDelayMillis, device.Serial.WriteQueueSize,
 		device.Serial.RecentEvents, device.Serial.ReconnectMillis); err != nil {
 		return fmt.Errorf("save hardware device: %w", err)
 	}
