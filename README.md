@@ -1,6 +1,6 @@
 # Quack
 
-![image](quack.jpg  | width=400 )
+<img src="quack.jpg" width="400" height="400">
 
 Quack is a small self-hosted app server for publishing weird little web things instantly.
 
