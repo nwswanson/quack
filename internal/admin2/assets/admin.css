@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@theme {
+  --color-warm-bg: #F6F2EA;
+  --color-warm-surface: #FFFDF9;
+  --color-warm-elevated: #FFFFFF;
+  --color-warm-sidebar: #F1E8DA;
+  --color-warm-border: #DDD2C2;
+  --color-warm-border-subtle: #E8DED0;
+  --color-warm-text: #2F261F;
+  --color-warm-secondary: #6E6258;
+  --color-warm-muted: #8A7C70;
+  --color-warm-accent: #C98A2E;
+  --color-warm-accent-hover: #B67922;
+  --color-warm-accent-soft: #F5E6CC;
+  --color-warm-focus: #D99A3D;
+  --color-warm-success: #4E8B62;
+  --color-warm-success-soft: #E6F2EA;
+  --color-warm-warning: #B97A1E;
+  --color-warm-warning-soft: #F7E9CC;
+  --color-warm-danger: #B6523A;
+  --color-warm-danger-soft: #F8E2DD;
+}
+
+@layer base {
+  html {
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+}
+
+@layer components {
+  .admin-shell { @apply grid min-h-screen grid-cols-[260px_minmax(0,1fr)] max-[900px]:grid-cols-1; }
+  .admin-sidebar { @apply border-r border-warm-border bg-warm-sidebar px-4 py-5 max-[900px]:border-r-0 max-[900px]:border-b; }
+  .admin-brand { @apply grid gap-1 border-b border-warm-border px-2 pb-[22px] pt-1; }
+  .admin-brand-title { @apply text-lg font-bold tracking-normal text-warm-text; }
+  .admin-brand-subtitle { @apply text-[13px] text-warm-secondary; }
+  .admin-nav-group { @apply mt-6 grid gap-2 max-[900px]:grid-cols-2; }
+  .admin-nav-label { @apply px-2 text-xs font-bold uppercase tracking-[0.04em] text-warm-muted max-[900px]:col-span-full; }
+  .admin-nav-item { @apply flex min-h-[38px] items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-semibold text-warm-secondary no-underline hover:bg-warm-surface; }
+  .admin-nav-item-active { @apply bg-warm-accent-soft text-warm-text shadow-[inset_3px_0_0_#C98A2E]; }
+  .admin-nav-icon { @apply inline-flex size-[18px] items-center justify-center text-warm-muted; }
+  .admin-main { @apply grid min-w-0 grid-rows-[60px_minmax(0,1fr)] max-[900px]:grid-rows-[auto_minmax(0,1fr)]; }
+  .admin-topbar { @apply flex items-center justify-between gap-5 border-b border-warm-border bg-warm-surface px-7 max-[900px]:grid max-[900px]:grid-cols-1 max-[900px]:py-4; }
+  .admin-instance { @apply inline-flex min-h-7 items-center rounded-full border border-warm-border bg-warm-elevated px-2.5 py-1 text-[13px] text-warm-secondary; }
+  .admin-session { @apply flex items-center gap-3 text-sm text-warm-secondary; }
+  .admin-content { @apply w-full max-w-[1440px] px-8 py-7 max-[900px]:px-[18px] max-[900px]:py-6; }
+  .admin-page { @apply space-y-6; }
+  .admin-page-header { @apply flex items-start justify-between gap-6 max-[900px]:grid max-[900px]:grid-cols-1; }
+  .admin-eyebrow { @apply mb-1.5 text-[13px] font-semibold text-warm-muted; }
+  .admin-title { @apply m-0 text-3xl font-semibold leading-tight tracking-normal text-warm-text; }
+  .admin-subtitle { @apply mt-2 max-w-[720px] text-[15px] leading-6 text-warm-secondary; }
+  .admin-tabs { @apply flex gap-[18px] border-b border-warm-border; }
+  .admin-tab { @apply relative pb-3 text-sm font-bold text-warm-secondary no-underline; }
+  .admin-tab-active { @apply text-warm-text after:absolute after:inset-x-0 after:bottom-[-1px] after:h-[3px] after:rounded-t-full after:bg-warm-accent; }
+  .admin-work-grid { @apply grid grid-cols-[minmax(0,1fr)_300px] items-start gap-6 max-[900px]:grid-cols-1; }
+  .admin-card { @apply rounded-lg border border-warm-border bg-warm-surface; }
+  .admin-card-header { @apply border-b border-warm-border-subtle px-6 pb-4 pt-[22px]; }
+  .admin-card-title { @apply m-0 text-lg font-semibold tracking-normal text-warm-text; }
+  .admin-card-copy { @apply mt-1.5 text-sm leading-6 text-warm-secondary; }
+  .admin-card-body { @apply space-y-4 px-6 pb-6 pt-[22px]; }
+  .admin-form { @apply space-y-4; }
+  .admin-field { @apply max-w-[520px] space-y-2; }
+  .admin-label { @apply block text-[13px] font-bold text-warm-text; }
+  .admin-input-row { @apply flex gap-2; }
+  .admin-input { @apply min-h-[42px] w-full rounded-lg border border-warm-border bg-warm-elevated px-3 py-2 text-sm text-warm-text outline-none focus:border-warm-focus focus:ring-3 focus:ring-warm-focus/25; }
+  .admin-help { @apply text-[13px] leading-5 text-warm-secondary; }
+  .admin-actions { @apply flex items-center gap-3; }
+  .admin-button { @apply inline-flex min-h-10 items-center justify-center rounded-lg px-3.5 py-2 text-sm font-semibold; }
+  .admin-button-primary { @apply border border-warm-accent bg-warm-accent text-white hover:border-warm-accent-hover hover:bg-warm-accent-hover; }
+  .admin-button-secondary { @apply border border-warm-border bg-warm-elevated text-warm-text; }
+  .admin-alert { @apply rounded-lg border p-3 text-sm font-semibold; }
+  .admin-alert-success { @apply border-warm-success/35 bg-warm-success-soft text-warm-success; }
+  .admin-alert-error { @apply border-warm-danger/35 bg-warm-danger-soft text-warm-danger; }
+  .admin-badge { @apply inline-flex min-h-7 items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[13px] font-bold; }
+  .admin-badge-success { @apply border-warm-success/35 bg-warm-success-soft text-warm-success; }
+  .admin-badge-warning { @apply border-warm-warning/35 bg-warm-warning-soft text-warm-warning; }
+  .admin-rail { @apply grid gap-4 rounded-lg border border-warm-border bg-warm-surface p-5; }
+  .admin-rail-title { @apply m-0 text-base font-semibold text-warm-text; }
+  .admin-meta-list { @apply m-0 grid gap-3.5; }
+  .admin-meta-row { @apply grid gap-1; }
+  .admin-meta-row dt { @apply text-xs font-bold text-warm-muted; }
+  .admin-meta-row dd { @apply m-0 text-sm leading-5 text-warm-text; }
+}

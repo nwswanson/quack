@@ -1,0 +1,55 @@
+package layout
+
+templ AdminLayout(title string, username string) {
+	<!doctype html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<title>{ title } - Quack Admin 2</title>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<link rel="stylesheet" href="/admin2/assets/admin.css"/>
+			<script src="/admin2/assets/htmx.min.js" defer></script>
+			<script src="/admin2/assets/alpine.min.js" defer></script>
+		</head>
+		<body class="min-h-screen bg-warm-bg text-warm-text antialiased">
+			<div class="admin-shell">
+				<aside class="admin-sidebar" aria-label="Admin navigation">
+					<div class="admin-brand">
+						<div class="admin-brand-title">Quack Admin</div>
+						<div class="admin-brand-subtitle">Maintenance console</div>
+					</div>
+					<nav class="admin-nav-group" aria-label="Configure">
+						<div class="admin-nav-label">Configure</div>
+						<a class="admin-nav-item admin-nav-item-active" href="/admin2/secrets" aria-current="page">
+							<span class="admin-nav-icon" aria-hidden="true">◇</span>
+							<span>Secrets</span>
+						</a>
+					</nav>
+					<nav class="admin-nav-group" aria-label="Operations">
+						<div class="admin-nav-label">Operations</div>
+						<a class="admin-nav-item" href="/logs">
+							<span class="admin-nav-icon" aria-hidden="true">☰</span>
+							<span>Logs</span>
+						</a>
+					</nav>
+				</aside>
+				<div class="admin-main">
+					<header class="admin-topbar">
+						<div class="admin-instance">Admin 2 preview</div>
+						<div class="admin-session">
+							if username != "" {
+								<span>Signed in as { username }</span>
+							}
+							<form method="post" action="/logout">
+								<button class="admin-button admin-button-secondary" type="submit">Sign out</button>
+							</form>
+						</div>
+					</header>
+					<main class="admin-content">
+						{ children... }
+					</main>
+				</div>
+			</div>
+		</body>
+	</html>
+}

@@ -9,7 +9,6 @@ import (
 var ErrPassphraseRequired = errors.New("passphrase required")
 
 type SecretStore interface {
-	Status(ctx context.Context) (hasKey bool, unlocked bool, err error)
 	Unlocked() bool
 	Unlock(ctx context.Context, passphrase string) error
 }
@@ -23,19 +22,14 @@ func NewService(secrets SecretStore) *Service {
 }
 
 type Status struct {
-	Configured bool
-	Unlocked   bool
+	Unlocked bool
 }
 
-func (s *Service) Status(ctx context.Context) (Status, error) {
+func (s *Service) Status(ctx context.Context) Status {
 	if s == nil || s.secrets == nil {
-		return Status{}, nil
+		return Status{}
 	}
-	configured, unlocked, err := s.secrets.Status(ctx)
-	if err != nil {
-		return Status{}, err
-	}
-	return Status{Configured: configured, Unlocked: unlocked}, nil
+	return Status{Unlocked: s.secrets.Unlocked()}
 }
 
 type UnlockInput struct {
@@ -43,8 +37,7 @@ type UnlockInput struct {
 }
 
 type UnlockResult struct {
-	Configured bool
-	Unlocked   bool
+	Unlocked bool
 }
 
 func (s *Service) Unlock(ctx context.Context, input UnlockInput) (UnlockResult, error) {
@@ -53,13 +46,10 @@ func (s *Service) Unlock(ctx context.Context, input UnlockInput) (UnlockResult, 
 	}
 	passphrase := strings.TrimSpace(input.Passphrase)
 	if passphrase == "" {
-		status, err := s.Status(ctx)
-		return UnlockResult{Configured: status.Configured, Unlocked: status.Unlocked}, errors.Join(ErrPassphraseRequired, err)
+		return UnlockResult{Unlocked: s.secrets.Unlocked()}, ErrPassphraseRequired
 	}
 	if err := s.secrets.Unlock(ctx, passphrase); err != nil {
-		status, statusErr := s.Status(ctx)
-		return UnlockResult{Configured: status.Configured, Unlocked: status.Unlocked}, errors.Join(err, statusErr)
+		return UnlockResult{Unlocked: s.secrets.Unlocked()}, err
 	}
-	status, err := s.Status(ctx)
-	return UnlockResult{Configured: status.Configured, Unlocked: status.Unlocked}, err
+	return UnlockResult{Unlocked: s.secrets.Unlocked()}, nil
 }

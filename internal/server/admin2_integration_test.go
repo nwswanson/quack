@@ -48,7 +48,7 @@ func TestAdmin2SecretStorePageUsesExistingSession(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Quack Admin 2", "Secret store", "Signed in as admin", `action="/admin2/secret/unlock"`, "Locked"} {
+	for _, want := range []string{"Quack Admin 2", "Secret store", "Signed in as admin", `hx-post="/admin2/secrets/unlock"`, "Locked"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q: %s", want, body)
 		}
@@ -65,7 +65,7 @@ func TestAdmin2UnlockSecretStore(t *testing.T) {
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
-	req := httptest.NewRequest(http.MethodPost, "/admin2/secret/unlock", strings.NewReader("passphrase=opensesame"))
+	req := httptest.NewRequest(http.MethodPost, "/admin2/secrets/unlock", strings.NewReader("passphrase=opensesame"))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
@@ -77,7 +77,7 @@ func TestAdmin2UnlockSecretStore(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Secret store unlocked.") || !strings.Contains(body, "Unlocked") {
+	if !strings.Contains(body, "Secret store unlocked.") || !strings.Contains(body, "Secret store is unlocked.") {
 		t.Fatalf("body = %s, want unlocked state", body)
 	}
 }
@@ -92,7 +92,7 @@ func TestAdmin2UnlockRequiresPassphrase(t *testing.T) {
 	}
 	srv := New("", "", fakeStorage{}, db, DefaultOptions())
 
-	req := httptest.NewRequest(http.MethodPost, "/admin2/secret/unlock", strings.NewReader("passphrase="))
+	req := httptest.NewRequest(http.MethodPost, "/admin2/secrets/unlock", strings.NewReader("passphrase="))
 	req.Host = "quack.example.com"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", "https://quack.example.com")
