@@ -24,12 +24,13 @@ func NewSerialModule(ctx context.Context, site string, hardware HardwareService)
 	return &starlarkstruct.Module{
 		Name: "serial",
 		Members: starlark.StringDict{
-			"list":    starlark.NewBuiltin("serial.list", m.list),
-			"open":    starlark.NewBuiltin("serial.open", m.open),
-			"write":   starlark.NewBuiltin("serial.write", m.write),
-			"request": starlark.NewBuiltin("serial.request", m.request),
-			"status":  starlark.NewBuiltin("serial.status", m.status),
-			"close":   starlark.NewBuiltin("serial.close", m.close),
+			"list":     starlark.NewBuiltin("serial.list", m.list),
+			"open":     starlark.NewBuiltin("serial.open", m.open),
+			"write":    starlark.NewBuiltin("serial.write", m.write),
+			"transfer": starlark.NewBuiltin("serial.transfer", m.transfer),
+			"request":  starlark.NewBuiltin("serial.request", m.request),
+			"status":   starlark.NewBuiltin("serial.status", m.status),
+			"close":    starlark.NewBuiltin("serial.close", m.close),
 		},
 	}
 }
@@ -85,6 +86,32 @@ func (m *serialModule) write(thread *starlark.Thread, fn *starlark.Builtin, args
 	return stringDict(map[string]starlark.Value{
 		"id":    starlark.String(resp.DeviceID),
 		"bytes": starlark.MakeInt(resp.Bytes),
+	}), nil
+}
+
+func (m *serialModule) transfer(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id string
+	var data starlark.Value
+	if err := starlark.UnpackArgs(fn.Name(), args, kwargs, "id", &id, "data", &data); err != nil {
+		return nil, err
+	}
+	payload, err := serialPayload(fn.Name(), data)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := m.hardware.TransferSerial(m.ctx, hardware.SerialTransferRequest{
+		DeviceID: id,
+		Site:     m.site,
+		Data:     payload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stringDict(map[string]starlark.Value{
+		"id":          starlark.String(resp.DeviceID),
+		"transfer_id": starlark.String(resp.TransferID),
+		"bytes":       starlark.MakeInt(resp.Bytes),
+		"accepted":    starlark.Bool(resp.Accepted),
 	}), nil
 }
 
@@ -145,11 +172,16 @@ func (m *serialModule) status(thread *starlark.Thread, fn *starlark.Builtin, arg
 		recent = append(recent, serialEventDict(event))
 	}
 	return stringDict(map[string]starlark.Value{
-		"id":     starlark.String(resp.DeviceID),
-		"open":   starlark.Bool(resp.Open),
-		"status": starlark.String(resp.Status),
-		"error":  starlark.String(resp.Error),
-		"recent": starlark.NewList(recent),
+		"id":              starlark.String(resp.DeviceID),
+		"open":            starlark.Bool(resp.Open),
+		"status":          starlark.String(resp.Status),
+		"error":           starlark.String(resp.Error),
+		"busy":            starlark.Bool(resp.Busy),
+		"transfer_id":     starlark.String(resp.TransferID),
+		"transfer_status": starlark.String(resp.TransferStatus),
+		"transfer_bytes":  starlark.MakeInt(resp.TransferBytes),
+		"transfer_total":  starlark.MakeInt(resp.TransferTotal),
+		"recent":          starlark.NewList(recent),
 	}), nil
 }
 

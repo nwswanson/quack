@@ -100,6 +100,7 @@ func TestSerialModuleUsesHardwareService(t *testing.T) {
 devices = serial.list()
 opened = serial.open("meter")
 written = serial.write("meter", b"READ\n")
+transfer = serial.transfer("meter", b"FIRMWARE")
 resp = serial.request("meter", "MEASURE?\n", until="\n", timeout_ms=250, max_bytes=64)
 status = serial.status("meter")
 closed = serial.close("meter")
@@ -118,6 +119,9 @@ closed = serial.close("meter")
 	if string(service.serialWriteReq.Data) != "READ\n" {
 		t.Fatalf("write data = %q, want READ newline", string(service.serialWriteReq.Data))
 	}
+	if string(service.serialTransferReq.Data) != "FIRMWARE" {
+		t.Fatalf("transfer data = %q, want FIRMWARE", string(service.serialTransferReq.Data))
+	}
 	if string(service.serialReq.Data) != "MEASURE?\n" || string(service.serialReq.Until) != "\n" {
 		t.Fatalf("request = %+v, want data and newline delimiter", service.serialReq)
 	}
@@ -134,6 +138,11 @@ closed = serial.close("meter")
 	if got, _ := starlark.AsInt32(bytesValue); got != 5 {
 		t.Fatalf("written bytes = %d, want 5", got)
 	}
+	transfer := globals["transfer"].(*starlark.Dict)
+	transferID, _, _ := transfer.Get(starlark.String("transfer_id"))
+	if got := string(transferID.(starlark.String)); got != "xfer-test" {
+		t.Fatalf("transfer id = %q, want xfer-test", got)
+	}
 	closed := globals["closed"].(*starlark.Dict)
 	closedValue, _, _ := closed.Get(starlark.String("closed"))
 	if closedValue != starlark.True {
@@ -142,15 +151,16 @@ closed = serial.close("meter")
 }
 
 type fakeHardwareService struct {
-	devices        []hardware.DeviceInfo
-	frame          hardware.CaptureResponse
-	serialResponse hardware.SerialRequestResponse
-	status         hardware.SerialStatusResponse
-	listReq        hardware.ListDevicesRequest
-	capReq         hardware.CaptureRequest
-	serialOpenReq  hardware.SerialOpenRequest
-	serialWriteReq hardware.SerialWriteRequest
-	serialReq      hardware.SerialRequestRequest
+	devices           []hardware.DeviceInfo
+	frame             hardware.CaptureResponse
+	serialResponse    hardware.SerialRequestResponse
+	status            hardware.SerialStatusResponse
+	listReq           hardware.ListDevicesRequest
+	capReq            hardware.CaptureRequest
+	serialOpenReq     hardware.SerialOpenRequest
+	serialWriteReq    hardware.SerialWriteRequest
+	serialTransferReq hardware.SerialTransferRequest
+	serialReq         hardware.SerialRequestRequest
 }
 
 func (s *fakeHardwareService) ListDevices(_ context.Context, req hardware.ListDevicesRequest) (hardware.ListDevicesResponse, error) {
@@ -180,6 +190,11 @@ func (s *fakeHardwareService) OpenSerial(_ context.Context, req hardware.SerialO
 func (s *fakeHardwareService) WriteSerial(_ context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error) {
 	s.serialWriteReq = req
 	return hardware.SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
+}
+
+func (s *fakeHardwareService) TransferSerial(_ context.Context, req hardware.SerialTransferRequest) (hardware.SerialTransferResponse, error) {
+	s.serialTransferReq = req
+	return hardware.SerialTransferResponse{DeviceID: req.DeviceID, TransferID: "xfer-test", Bytes: len(req.Data), Accepted: true}, nil
 }
 
 func (s *fakeHardwareService) RequestSerial(_ context.Context, req hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error) {

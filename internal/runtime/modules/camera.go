@@ -17,6 +17,7 @@ type HardwareService interface {
 	Capture(ctx context.Context, req hardware.CaptureRequest) (hardware.CaptureResponse, error)
 	OpenSerial(ctx context.Context, req hardware.SerialOpenRequest) (hardware.SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req hardware.SerialWriteRequest) (hardware.SerialWriteResponse, error)
+	TransferSerial(ctx context.Context, req hardware.SerialTransferRequest) (hardware.SerialTransferResponse, error)
 	RequestSerial(ctx context.Context, req hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error)
 	SerialStatus(ctx context.Context, req hardware.SerialStatusRequest) (hardware.SerialStatusResponse, error)
 	CloseSerial(ctx context.Context, req hardware.SerialCloseRequest) (hardware.SerialCloseResponse, error)

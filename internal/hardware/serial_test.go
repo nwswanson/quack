@@ -1,7 +1,9 @@
 package hardware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -133,6 +135,162 @@ func TestSerialProviderWriteTreatsZeroByteWriteAsShortWrite(t *testing.T) {
 	if !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("WriteSerial error = %v, want short write", err)
 	}
+}
+
+func TestSerialProviderTransferEmitsLifecycleEvents(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	events := make(chan HardwareEvent, 16)
+	provider.setHardwareEventSink(func(event HardwareEvent) {
+		events <- event
+	})
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data := bytes.Repeat([]byte("Z"), serialWriteChunkBytes+1)
+	resp, err := provider.TransferSerial(context.Background(), SerialTransferRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     data,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Accepted || resp.TransferID == "" || resp.Bytes != len(data) {
+		t.Fatalf("transfer response = %+v, want accepted transfer", resp)
+	}
+
+	var started, completed map[string]any
+	progressCount := 0
+	for {
+		event := nextSerialEvent(t, events)
+		if !strings.HasPrefix(event.Type, "serial.transfer_") {
+			continue
+		}
+		if bytes.Contains(event.Bytes, data[:16]) {
+			t.Fatalf("transfer event leaked raw transfer bytes: %s", event.Bytes)
+		}
+		payload := decodeTransferPayload(t, event)
+		if payload["transfer_id"] != resp.TransferID {
+			t.Fatalf("transfer payload = %v, want id %q", payload, resp.TransferID)
+		}
+		switch event.Type {
+		case "serial.transfer_started":
+			started = payload
+		case "serial.transfer_progress":
+			progressCount++
+		case "serial.transfer_completed":
+			completed = payload
+		}
+		if completed != nil {
+			break
+		}
+	}
+	if started == nil {
+		t.Fatal("missing transfer_started event")
+	}
+	if progressCount < 2 {
+		t.Fatalf("progress events = %d, want at least two chunks", progressCount)
+	}
+	if got := int(completed["bytes_written"].(float64)); got != len(data) {
+		t.Fatalf("completed bytes = %d, want %d", got, len(data))
+	}
+	if string(port.written()) != string(data) {
+		t.Fatalf("written bytes len = %d, want %d", len(port.written()), len(data))
+	}
+}
+
+func TestSerialProviderTransferFailureEmitsFailedEvent(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	port.zeroWrite = true
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	events := make(chan HardwareEvent, 16)
+	provider.setHardwareEventSink(func(event HardwareEvent) {
+		events <- event
+	})
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := provider.TransferSerial(context.Background(), SerialTransferRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     []byte("firmware"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for {
+		event := nextSerialEvent(t, events)
+		if event.Type != "serial.transfer_failed" {
+			continue
+		}
+		payload := decodeTransferPayload(t, event)
+		if payload["transfer_id"] != resp.TransferID || payload["error"] == "" {
+			t.Fatalf("failed payload = %v, want transfer id and error", payload)
+		}
+		return
+	}
+}
+
+func TestSerialProviderTransferRequiresOpenPort(t *testing.T) {
+	provider := NewSerialProvider()
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return newFakeSerialPort(), nil
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	_, err := provider.TransferSerial(context.Background(), SerialTransferRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     []byte("firmware"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "not open") {
+		t.Fatalf("TransferSerial error = %v, want not open", err)
+	}
+}
+
+func nextSerialEvent(t *testing.T, events <-chan HardwareEvent) HardwareEvent {
+	t.Helper()
+	select {
+	case event := <-events:
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for serial event")
+		return HardwareEvent{}
+	}
+}
+
+func decodeTransferPayload(t *testing.T, event HardwareEvent) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(event.Bytes, &payload); err != nil {
+		t.Fatalf("decode %s payload %q: %v", event.Type, string(event.Bytes), err)
+	}
+	return payload
 }
 
 type fakeSerialPort struct {

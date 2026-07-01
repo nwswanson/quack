@@ -3,6 +3,7 @@ package hardware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -93,6 +94,14 @@ func (p *SerialDeviceProvider) WriteSerial(ctx context.Context, req SerialWriteR
 		return SerialWriteResponse{}, err
 	}
 	return actor.write(ctx, req.Data)
+}
+
+func (p *SerialDeviceProvider) TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error) {
+	actor, err := p.actor(req.DeviceID, req.Path, req.Options)
+	if err != nil {
+		return SerialTransferResponse{}, err
+	}
+	return actor.transfer(ctx, req.Data)
 }
 
 func (p *SerialDeviceProvider) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
@@ -208,13 +217,14 @@ type serialRequest struct {
 }
 
 type serialCommandResult struct {
-	bytes   int
-	data    []byte
-	timeout bool
-	status  SerialStatusResponse
-	open    bool
-	closed  bool
-	err     error
+	bytes      int
+	transferID string
+	data       []byte
+	timeout    bool
+	status     SerialStatusResponse
+	open       bool
+	closed     bool
+	err        error
 }
 
 type serialReadResult struct {
@@ -230,7 +240,15 @@ type pendingSerialRequest struct {
 	timer    *time.Timer
 }
 
+type serialTransfer struct {
+	id     string
+	data   []byte
+	offset int
+	status string
+}
+
 var serialGenerationSeq uint64
+var serialTransferSeq uint64
 
 func newSerialActor(deviceID string, path string, options SerialOptions, openPort func(string, *serial.Mode) (serial.Port, error), emit func(HardwareEvent)) *serialActor {
 	actor := &serialActor{
@@ -260,6 +278,22 @@ func (a *serialActor) write(ctx context.Context, data []byte) (SerialWriteRespon
 		return SerialWriteResponse{DeviceID: a.deviceID, Bytes: result.bytes}, nil
 	case <-ctx.Done():
 		return SerialWriteResponse{}, ctx.Err()
+	}
+}
+
+func (a *serialActor) transfer(ctx context.Context, data []byte) (SerialTransferResponse, error) {
+	reply := make(chan serialCommandResult, 1)
+	if err := a.send(ctx, serialCommand{kind: "transfer", data: append([]byte(nil), data...), reply: reply}); err != nil {
+		return SerialTransferResponse{}, err
+	}
+	select {
+	case result := <-reply:
+		if result.err != nil {
+			return SerialTransferResponse{}, result.err
+		}
+		return SerialTransferResponse{DeviceID: a.deviceID, TransferID: result.transferID, Bytes: result.bytes, Accepted: true}, nil
+	case <-ctx.Done():
+		return SerialTransferResponse{}, ctx.Err()
 	}
 }
 
@@ -347,6 +381,14 @@ func (a *serialActor) run() {
 	var port serial.Port
 	var readCh chan serialReadResult
 	var active *pendingSerialRequest
+	var transfer *serialTransfer
+	transferPump := make(chan struct{}, 1)
+	signalTransfer := func() {
+		select {
+		case transferPump <- struct{}{}:
+		default:
+		}
+	}
 	opened := false
 	reconnect := time.NewTimer(a.reconnectDelay())
 	if !reconnect.Stop() {
@@ -359,6 +401,9 @@ func (a *serialActor) run() {
 		}
 		if active != nil {
 			active.finish(serialCommandResult{err: io.ErrClosedPipe})
+		}
+		if transfer != nil {
+			a.recordTransferEvent("transfer_cancelled", transfer, nil)
 		}
 	}()
 	for {
@@ -378,6 +423,43 @@ func (a *serialActor) run() {
 					reconnect.Reset(a.reconnectDelay())
 				}
 			}
+		case <-transferPump:
+			if transfer == nil {
+				break
+			}
+			if port == nil {
+				err := fmt.Errorf("serial device %q is not open", a.deviceID)
+				a.recordTransferEvent("transfer_failed", transfer, err)
+				transfer = nil
+				break
+			}
+			end := transfer.offset + serialWriteChunkBytes
+			if end > len(transfer.data) {
+				end = len(transfer.data)
+			}
+			n, err := serialWriteAll(context.Background(), port, transfer.data[transfer.offset:end])
+			if n > 0 {
+				transfer.offset += n
+				a.recordTransferEvent("transfer_progress", transfer, nil)
+			}
+			if err != nil {
+				a.setError(err)
+				a.recordTransferEvent("transfer_failed", transfer, err)
+				_ = port.Close()
+				port = nil
+				readCh = nil
+				if opened {
+					reconnect.Reset(a.reconnectDelay())
+				}
+				transfer = nil
+				break
+			}
+			if transfer.offset >= len(transfer.data) {
+				a.recordTransferEvent("transfer_completed", transfer, nil)
+				transfer = nil
+				break
+			}
+			signalTransfer()
 		case command := <-a.commands:
 			switch command.kind {
 			case "open":
@@ -398,6 +480,10 @@ func (a *serialActor) run() {
 			case "write":
 				if port == nil {
 					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open", a.deviceID)}
+					break
+				}
+				if transfer != nil {
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is busy with transfer %q", a.deviceID, transfer.id)}
 					break
 				}
 				n, err := serialWriteAll(command.ctx, port, command.data)
@@ -422,6 +508,10 @@ func (a *serialActor) run() {
 				}
 				if active != nil {
 					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q already has a pending request", a.deviceID)}
+					break
+				}
+				if transfer != nil {
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is busy with transfer %q", a.deviceID, transfer.id)}
 					break
 				}
 				timeoutMillis := command.request.timeoutMillis
@@ -460,13 +550,42 @@ func (a *serialActor) run() {
 					active.finish(serialCommandResult{err: io.ErrShortWrite})
 					active = nil
 				}
+			case "transfer":
+				if port == nil {
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open", a.deviceID)}
+					break
+				}
+				if active != nil {
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q already has a pending request", a.deviceID)}
+					break
+				}
+				if transfer != nil {
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is busy with transfer %q", a.deviceID, transfer.id)}
+					break
+				}
+				if len(command.data) == 0 {
+					command.reply <- serialCommandResult{err: fmt.Errorf("serial transfer data is empty")}
+					break
+				}
+				transfer = &serialTransfer{
+					id:     nextSerialTransferID(),
+					data:   append([]byte(nil), command.data...),
+					status: "running",
+				}
+				a.recordTransferEvent("transfer_started", transfer, nil)
+				command.reply <- serialCommandResult{transferID: transfer.id, bytes: len(transfer.data)}
+				signalTransfer()
 			case "status":
-				command.reply <- serialCommandResult{status: a.snapshotStatus()}
+				command.reply <- serialCommandResult{status: a.snapshotStatus(transfer)}
 			case "close":
 				opened = false
 				if active != nil {
 					active.finish(serialCommandResult{err: io.ErrClosedPipe})
 					active = nil
+				}
+				if transfer != nil {
+					a.recordTransferEvent("transfer_cancelled", transfer, nil)
+					transfer = nil
 				}
 				if port != nil {
 					_ = port.Close()
@@ -602,11 +721,11 @@ func (r *pendingSerialRequest) finish(result serialCommandResult) {
 	r.reply <- result
 }
 
-func (a *serialActor) snapshotStatus() SerialStatusResponse {
+func (a *serialActor) snapshotStatus(transfer *serialTransfer) SerialStatusResponse {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	recent := append([]SerialEvent(nil), a.recent...)
-	return SerialStatusResponse{
+	resp := SerialStatusResponse{
 		DeviceID: a.deviceID,
 		Path:     a.path,
 		Open:     a.isOpen,
@@ -614,6 +733,14 @@ func (a *serialActor) snapshotStatus() SerialStatusResponse {
 		Error:    a.err,
 		Recent:   recent,
 	}
+	if transfer != nil {
+		resp.Busy = true
+		resp.TransferID = transfer.id
+		resp.TransferStatus = transfer.status
+		resp.TransferBytes = transfer.offset
+		resp.TransferTotal = len(transfer.data)
+	}
+	return resp
 }
 
 func (a *serialActor) setOpen() {
@@ -688,6 +815,37 @@ func (a *serialActor) recordEvent(kind string, data []byte, err error) {
 		hardwareEvent.Error = err.Error()
 	}
 	a.emit(hardwareEvent)
+}
+
+func (a *serialActor) recordTransferEvent(kind string, transfer *serialTransfer, err error) {
+	if transfer == nil {
+		return
+	}
+	status := strings.TrimPrefix(kind, "transfer_")
+	if kind == "transfer_progress" {
+		status = "running"
+	}
+	if status != "" {
+		transfer.status = status
+	}
+	payload := map[string]any{
+		"transfer_id":   transfer.id,
+		"status":        transfer.status,
+		"bytes_written": transfer.offset,
+		"total_bytes":   len(transfer.data),
+	}
+	if err != nil {
+		payload["error"] = err.Error()
+	}
+	data, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		data = []byte(`{"error":"transfer payload encoding failed"}`)
+	}
+	a.recordEvent(kind, data, err)
+}
+
+func nextSerialTransferID() string {
+	return fmt.Sprintf("xfer_%d_%d", time.Now().UnixNano(), atomic.AddUint64(&serialTransferSeq, 1))
 }
 
 func (a *serialActor) reconnectDelay() time.Duration {

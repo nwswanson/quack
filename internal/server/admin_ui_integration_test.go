@@ -440,6 +440,10 @@ func (s *recordingHardwareService) WriteSerial(context.Context, hardware.SerialW
 	return hardware.SerialWriteResponse{}, nil
 }
 
+func (s *recordingHardwareService) TransferSerial(context.Context, hardware.SerialTransferRequest) (hardware.SerialTransferResponse, error) {
+	return hardware.SerialTransferResponse{}, nil
+}
+
 func (s *recordingHardwareService) RequestSerial(context.Context, hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error) {
 	return hardware.SerialRequestResponse{}, nil
 }

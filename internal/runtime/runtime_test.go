@@ -2144,6 +2144,10 @@ func (h *serialTerminalHardware) WriteSerial(_ context.Context, req hardware.Ser
 	return hardware.SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
 }
 
+func (h *serialTerminalHardware) TransferSerial(_ context.Context, req hardware.SerialTransferRequest) (hardware.SerialTransferResponse, error) {
+	return hardware.SerialTransferResponse{DeviceID: req.DeviceID, TransferID: "xfer-test", Bytes: len(req.Data), Accepted: true}, nil
+}
+
 func (h *serialTerminalHardware) RequestSerial(context.Context, hardware.SerialRequestRequest) (hardware.SerialRequestResponse, error) {
 	return hardware.SerialRequestResponse{}, nil
 }

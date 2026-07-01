@@ -304,6 +304,61 @@ Returns:
 `write` requires the device to already be open. It does not open the port
 implicitly.
 
+### transfer
+
+```python
+transfer = serial.transfer("weather_station", firmware_bytes)
+```
+
+`data` may be `bytes` or `string`.
+
+Returns immediately after the host accepts the transfer:
+
+```python
+{
+    "id": "weather_station",
+    "transfer_id": "xfer_...",
+    "bytes": 16777216,
+    "accepted": True,
+}
+```
+
+`transfer` requires the device to already be open. The serial actor owns the
+transfer after acceptance, writes it in bounded chunks, and marks the device
+busy until the transfer completes, fails, or is cancelled by closing the port.
+Normal writes, requests, and second transfers are rejected while the device is
+busy.
+
+Transfer lifecycle is reported through hardware events:
+
+```text
+hardware.serial.weather_station.transfer_started
+hardware.serial.weather_station.transfer_progress
+hardware.serial.weather_station.transfer_completed
+hardware.serial.weather_station.transfer_failed
+hardware.serial.weather_station.transfer_cancelled
+```
+
+Transfer event payloads are small JSON objects:
+
+```json
+{
+  "transfer_id": "xfer_...",
+  "status": "running",
+  "bytes_written": 4096,
+  "total_bytes": 16777216
+}
+```
+
+Raw transfer bytes are not emitted as hardware event payloads. Site pipes should
+carry transfer lifecycle and progress events, not firmware bodies.
+
+`serial.transfer(alias, bytes)` still receives the full byte value in the
+Starlark handler. For browser uploads, configure route request limits with that
+memory use in mind. A 16 MiB firmware image may be reasonable for a dedicated
+upload route, but it is intentionally a different operational profile from an
+interactive terminal command.
+
 ### request
 
 ```python
@@ -357,6 +412,11 @@ Returns:
     "open": True,
     "status": "open",
     "error": "",
+    "busy": False,
+    "transfer_id": "",
+    "transfer_status": "",
+    "transfer_bytes": 0,
+    "transfer_total": 0,
     "recent": [
         {
             "at": "2026-06-26T15:04:05Z",

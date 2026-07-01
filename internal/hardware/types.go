@@ -28,6 +28,7 @@ type Service interface {
 	WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error)
 	OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
+	TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error)
 	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
 	SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error)
 	CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error)
@@ -154,6 +155,21 @@ type SerialWriteResponse struct {
 	Bytes    int
 }
 
+type SerialTransferRequest struct {
+	DeviceID string
+	Site     string
+	Path     string
+	Options  SerialOptions
+	Data     []byte
+}
+
+type SerialTransferResponse struct {
+	DeviceID   string
+	TransferID string
+	Bytes      int
+	Accepted   bool
+}
+
 type SerialRequestRequest struct {
 	DeviceID      string
 	Site          string
@@ -179,12 +195,17 @@ type SerialStatusRequest struct {
 }
 
 type SerialStatusResponse struct {
-	DeviceID string
-	Path     string
-	Open     bool
-	Status   string
-	Error    string
-	Recent   []SerialEvent
+	DeviceID       string
+	Path           string
+	Open           bool
+	Status         string
+	Error          string
+	Busy           bool
+	TransferID     string
+	TransferStatus string
+	TransferBytes  int
+	TransferTotal  int
+	Recent         []SerialEvent
 }
 
 type SerialCloseRequest struct {
@@ -274,6 +295,7 @@ type SerialProvider interface {
 	WatchHardwareEvents(ctx context.Context, req WatchHardwareEventsRequest) (<-chan HardwareEvent, error)
 	OpenSerial(ctx context.Context, req SerialOpenRequest) (SerialOpenResponse, error)
 	WriteSerial(ctx context.Context, req SerialWriteRequest) (SerialWriteResponse, error)
+	TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error)
 	RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error)
 	SerialStatus(ctx context.Context, req SerialStatusRequest) (SerialStatusResponse, error)
 	CloseSerial(ctx context.Context, req SerialCloseRequest) (SerialCloseResponse, error)
@@ -377,6 +399,14 @@ func (s *LocalService) WriteSerial(ctx context.Context, req SerialWriteRequest) 
 		return SerialWriteResponse{}, err
 	}
 	return provider.WriteSerial(ctx, req)
+}
+
+func (s *LocalService) TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error) {
+	provider, err := s.serialProvider()
+	if err != nil {
+		return SerialTransferResponse{}, err
+	}
+	return provider.TransferSerial(ctx, req)
 }
 
 func (s *LocalService) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
@@ -689,6 +719,23 @@ func (s *BoundService) WriteSerial(ctx context.Context, req SerialWriteRequest) 
 	resp, err := s.upstream.WriteSerial(ctx, upstreamReq)
 	if err != nil {
 		return SerialWriteResponse{}, err
+	}
+	resp.DeviceID = strings.TrimSpace(req.DeviceID)
+	return resp, nil
+}
+
+func (s *BoundService) TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error) {
+	device, _, err := s.resolveSerialAlias(ctx, req.Site, req.DeviceID, true, false)
+	if err != nil {
+		return SerialTransferResponse{}, err
+	}
+	upstreamReq := req
+	upstreamReq.Path = device.Path
+	upstreamReq.DeviceID = device.ID
+	upstreamReq.Options = effectiveSerialOptions(device.Serial, req.Options)
+	resp, err := s.upstream.TransferSerial(ctx, upstreamReq)
+	if err != nil {
+		return SerialTransferResponse{}, err
 	}
 	resp.DeviceID = strings.TrimSpace(req.DeviceID)
 	return resp, nil

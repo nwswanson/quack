@@ -172,6 +172,20 @@ func TestBoundServiceResolvesSerialAliasAndPermissions(t *testing.T) {
 		t.Fatalf("write response device id = %q, want alias", writeResp.DeviceID)
 	}
 
+	transferResp, err := service.TransferSerial(context.Background(), SerialTransferRequest{Site: "acme", DeviceID: "meter", Data: []byte("firmware")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upstream.serialTransferReq.Path != "/dev/ttyUSB0" || upstream.serialTransferReq.DeviceID != "meter_01" {
+		t.Fatalf("upstream serial transfer req = %+v, want physical path/id", upstream.serialTransferReq)
+	}
+	if upstream.serialTransferReq.Options.BaudRate != 115200 {
+		t.Fatalf("transfer baud = %d, want configured 115200", upstream.serialTransferReq.Options.BaudRate)
+	}
+	if transferResp.DeviceID != "meter" || transferResp.TransferID != "xfer-test" || !transferResp.Accepted {
+		t.Fatalf("transfer response = %+v, want alias/accepted", transferResp)
+	}
+
 	requestResp, err := service.RequestSerial(context.Background(), SerialRequestRequest{Site: "acme", DeviceID: "meter", Data: []byte("READ\n"), Until: []byte("\n")})
 	if err != nil {
 		t.Fatal(err)
@@ -252,6 +266,52 @@ func TestBoundServiceMapsSerialReadEventsToSiteAliasTopics(t *testing.T) {
 	}
 }
 
+func TestBoundServiceMapsSerialTransferEventsToSiteAliasTopics(t *testing.T) {
+	upstream := &recordingService{
+		events: make(chan HardwareEvent, 1),
+	}
+	service, err := NewBoundService(upstream, Config{
+		Devices: []DeviceDescriptor{{ID: "meter_01", Kind: DeviceKindSerial, Path: "/dev/ttyUSB0"}},
+		SiteDeviceBindings: []SiteDeviceBinding{{
+			Site:        "acme",
+			Alias:       "meter",
+			DeviceID:    "meter_01",
+			Permissions: DevicePermissions{SerialRead: true, SerialWrite: true},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := service.WatchHardwareEvents(ctx, WatchHardwareEventsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream.events <- HardwareEvent{
+		DeviceID:      "meter_01",
+		Type:          "serial.transfer_progress",
+		Generation:    "gen-1",
+		Seq:           8,
+		Bytes:         []byte(`{"transfer_id":"xfer-1","bytes_written":4096,"total_bytes":8192}`),
+		Origin:        "hardware.serial",
+		CausationID:   "cause",
+		CorrelationID: "corr",
+	}
+
+	select {
+	case event := <-events:
+		if event.Site != "acme" || event.DeviceAlias != "meter" || event.RuntimeTopic != "hardware.serial.meter.transfer_progress" {
+			t.Fatalf("mapped event = %+v, want acme meter transfer_progress topic", event)
+		}
+		if string(event.Bytes) != `{"transfer_id":"xfer-1","bytes_written":4096,"total_bytes":8192}` || event.CorrelationID != "corr" {
+			t.Fatalf("mapped transfer event = %+v, want preserved payload/meta", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mapped transfer event")
+	}
+}
+
 func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 	t.Helper()
 	service, err := NewBoundService(upstream, Config{
@@ -292,15 +352,16 @@ func newTestBoundService(t *testing.T, upstream Service) *BoundService {
 }
 
 type recordingService struct {
-	captureReq       CaptureRequest
-	cancelReq        CancelCaptureRequest
-	serialOpenReq    SerialOpenRequest
-	serialWriteReq   SerialWriteRequest
-	serialRequestReq SerialRequestRequest
-	serialStatusReq  SerialStatusRequest
-	frame            CaptureResponse
-	captureErr       error
-	events           chan HardwareEvent
+	captureReq        CaptureRequest
+	cancelReq         CancelCaptureRequest
+	serialOpenReq     SerialOpenRequest
+	serialWriteReq    SerialWriteRequest
+	serialTransferReq SerialTransferRequest
+	serialRequestReq  SerialRequestRequest
+	serialStatusReq   SerialStatusRequest
+	frame             CaptureResponse
+	captureErr        error
+	events            chan HardwareEvent
 }
 
 func (s *recordingService) ListDevices(context.Context, ListDevicesRequest) (ListDevicesResponse, error) {
@@ -343,6 +404,11 @@ func (s *recordingService) OpenSerial(_ context.Context, req SerialOpenRequest) 
 func (s *recordingService) WriteSerial(_ context.Context, req SerialWriteRequest) (SerialWriteResponse, error) {
 	s.serialWriteReq = req
 	return SerialWriteResponse{DeviceID: req.DeviceID, Bytes: len(req.Data)}, nil
+}
+
+func (s *recordingService) TransferSerial(_ context.Context, req SerialTransferRequest) (SerialTransferResponse, error) {
+	s.serialTransferReq = req
+	return SerialTransferResponse{DeviceID: req.DeviceID, TransferID: "xfer-test", Bytes: len(req.Data), Accepted: true}, nil
 }
 
 func (s *recordingService) RequestSerial(_ context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {

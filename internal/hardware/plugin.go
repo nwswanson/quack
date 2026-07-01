@@ -115,6 +115,15 @@ func (s *rpcServer) WriteSerial(req SerialWriteRequest, resp *SerialWriteRespons
 	return nil
 }
 
+func (s *rpcServer) TransferSerial(req SerialTransferRequest, resp *SerialTransferResponse) error {
+	out, err := s.impl.TransferSerial(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
 func (s *rpcServer) RequestSerial(req SerialRequestRequest, resp *SerialRequestResponse) error {
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -220,6 +229,14 @@ func (c *rpcClient) WriteSerial(ctx context.Context, req SerialWriteRequest) (Se
 	var resp SerialWriteResponse
 	err := callRPC(ctx, func() error {
 		return c.client.Call("Plugin.WriteSerial", req, &resp)
+	}, nil)
+	return resp, err
+}
+
+func (c *rpcClient) TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error) {
+	var resp SerialTransferResponse
+	err := callRPC(ctx, func() error {
+		return c.client.Call("Plugin.TransferSerial", req, &resp)
 	}, nil)
 	return resp, err
 }
@@ -351,6 +368,13 @@ func (s *ClientService) WriteSerial(ctx context.Context, req SerialWriteRequest)
 		return SerialWriteResponse{}, ErrNotConfigured
 	}
 	return s.impl.WriteSerial(ctx, req)
+}
+
+func (s *ClientService) TransferSerial(ctx context.Context, req SerialTransferRequest) (SerialTransferResponse, error) {
+	if s == nil || s.impl == nil {
+		return SerialTransferResponse{}, ErrNotConfigured
+	}
+	return s.impl.TransferSerial(ctx, req)
 }
 
 func (s *ClientService) RequestSerial(ctx context.Context, req SerialRequestRequest) (SerialRequestResponse, error) {
