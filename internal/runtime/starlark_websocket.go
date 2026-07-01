@@ -218,6 +218,8 @@ func websocketServerEventValue(event WebSocketServerEvent) starlark.Value {
 		"action_id":      starlark.String(event.ActionID),
 		"site":           starlark.String(event.Site),
 		"version":        starlark.MakeInt64(event.Version),
+		// TODO: This is very duplicative. payload_text is a workaround because JSON was involved in marshalling
+		// .payload, and so streams of 1 strings from a serial terminal became 1e10 what have you
 		"payload":        websocketPayloadValue(event.Payload),
 		"payload_text":   starlark.String(string(event.Payload)),
 		"payload_base64": starlark.String(base64.StdEncoding.EncodeToString(event.Payload)),

@@ -433,7 +433,7 @@ def on_event(ctx, event):
     ws.send(ctx.conn_id, event.payload)
 
 def on_hardware_event(ctx, event):
-    _apply_serial_event(event.topic, event.payload, event.payload_text)
+    _apply_serial_event(event.topic, event.payload, getattr(event, "payload_text", _serial_text(event.payload)))
 
 def on_write_request(ctx, event):
     _apply_write_request(event)

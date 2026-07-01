@@ -134,10 +134,26 @@ function appendTerminalPrefix(line) {
 
 function appendReadChunk(line) {
   const text = line.text;
-  if (state.terminalAtLineStart) {
-    appendTerminalPrefix(line);
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (char !== "\n" && char !== "\r") {
+      continue;
+    }
+    if (start < i && state.terminalAtLineStart) {
+      appendTerminalPrefix(line);
+    }
+    const end = char === "\r" && text[i + 1] === "\n" ? i + 2 : i + 1;
+    appendTerminalText(text.slice(start, end));
+    start = end;
+    i = end - 1;
   }
-  appendTerminalText(text);
+  if (start < text.length) {
+    if (state.terminalAtLineStart) {
+      appendTerminalPrefix(line);
+    }
+    appendTerminalText(text.slice(start));
+  }
 }
 
 function appendTerminalLine(line) {
