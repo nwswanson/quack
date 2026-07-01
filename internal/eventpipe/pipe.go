@@ -55,6 +55,13 @@ type Event struct {
 	Headers       map[string]string `json:"headers,omitempty"`
 }
 
+type PublishStats struct {
+	Accepted       bool
+	DroppedEvents  int64
+	RetainedEvents int64
+	RetainedBytes  int64
+}
+
 type Store struct {
 	mu       sync.Mutex
 	pipes    map[string]*pipe
@@ -86,15 +93,20 @@ func NewStore() *Store {
 }
 
 func (s *Store) Publish(config Config, event Event) (Event, bool) {
+	event, stats := s.PublishWithStats(config, event)
+	return event, stats.Accepted
+}
+
+func (s *Store) PublishWithStats(config Config, event Event) (Event, PublishStats) {
 	if s == nil {
-		return event, false
+		return event, PublishStats{}
 	}
 	config = normalizeConfig(config)
 	if config.Name == "" {
 		config.Name = event.Pipe
 	}
 	if config.Name == "" {
-		return event, false
+		return event, PublishStats{}
 	}
 	event.Site = strings.TrimSpace(event.Site)
 	event.Topic = nonEmpty(event.Topic, config.Name)
@@ -102,12 +114,12 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	s.mu.Lock()
 	if !s.admitSiteLocked(event.Site, config.Name, event.Topic, config.SiteLimits) {
 		s.mu.Unlock()
-		return event, false
+		return event, PublishStats{DroppedEvents: 1}
 	}
 	if !s.admitTopicLocked(event.Site, config, strings.TrimSpace(event.Topic)) {
 		s.rollbackSiteLocked(event.Site, config.Name, event.Topic)
 		s.mu.Unlock()
-		return event, false
+		return event, PublishStats{DroppedEvents: 1}
 	}
 	p := s.pipes[key]
 	if p == nil {
@@ -125,7 +137,7 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 		s.mu.Lock()
 		s.rollbackSiteLocked(event.Site, config.Name, event.Topic)
 		s.mu.Unlock()
-		return event, false
+		return event, PublishStats{DroppedEvents: 1}
 	}
 	p.next++
 	event.Pipe = config.Name
@@ -144,11 +156,16 @@ func (s *Store) Publish(config Config, event Event) (Event, bool) {
 	}
 	event.Payload = append([]byte(nil), event.Payload...)
 	event.Headers = cloneHeaders(event.Headers)
-	p.append(event)
+	stats := PublishStats{Accepted: true}
+	if p.append(event) {
+		stats.DroppedEvents++
+	}
 	limits := p.config.SiteLimits
+	stats.RetainedEvents, stats.RetainedBytes = p.retainedUsageLocked()
 	p.mu.Unlock()
-	s.pruneSite(event.Site, limits)
-	return event, true
+	stats.DroppedEvents += s.pruneSite(event.Site, limits)
+	stats.RetainedEvents, stats.RetainedBytes = s.siteRetainedUsage(event.Site)
+	return event, stats
 }
 
 func (s *Store) admitSiteLocked(site string, pipeName string, topic string, limits Limits) bool {
@@ -204,19 +221,21 @@ func (s *Store) topicRetainedLocked(site string, topic string) bool {
 	return false
 }
 
-func (s *Store) pruneSite(site string, limits Limits) {
+func (s *Store) pruneSite(site string, limits Limits) int64 {
+	var dropped int64
 	if limits.MaxRetainedEvents <= 0 && limits.MaxRetainedBytes <= 0 {
-		return
+		return 0
 	}
 	for {
 		events, bytes := s.siteRetainedUsage(site)
 		if (limits.MaxRetainedEvents <= 0 || events <= limits.MaxRetainedEvents) &&
 			(limits.MaxRetainedBytes <= 0 || bytes <= limits.MaxRetainedBytes) {
-			return
+			return dropped
 		}
 		if !s.dropOldestSiteEvent(site) {
-			return
+			return dropped
 		}
+		dropped++
 	}
 }
 
@@ -373,15 +392,15 @@ func (p *pipe) setConfig(config Config) {
 	p.count = len(events)
 }
 
-func (p *pipe) append(event Event) {
+func (p *pipe) append(event Event) bool {
 	if p.config.Unlimited {
 		p.events = append(p.events, event)
 		p.start = 0
 		p.count = len(p.events)
-		return
+		return false
 	}
 	if p.config.Retain <= 0 {
-		return
+		return false
 	}
 	if len(p.events) != p.config.Retain {
 		p.events = make([]Event, p.config.Retain)
@@ -391,10 +410,21 @@ func (p *pipe) append(event Event) {
 	if p.count < p.config.Retain {
 		p.events[(p.start+p.count)%len(p.events)] = event
 		p.count++
-		return
+		return false
 	}
 	p.events[p.start] = event
 	p.start = (p.start + 1) % len(p.events)
+	return true
+}
+
+func (p *pipe) retainedUsageLocked() (int64, int64) {
+	var events int64
+	var bytes int64
+	for _, event := range p.orderedEvents() {
+		events++
+		bytes += retainedEventBytes(event)
+	}
+	return events, bytes
 }
 
 func (p *pipe) orderedEvents() []Event {

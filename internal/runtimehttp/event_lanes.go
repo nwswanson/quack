@@ -3,6 +3,7 @@ package runtimehttp
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 type eventLaneRegistry struct {
@@ -20,16 +21,25 @@ func newEventLaneRegistry() *eventLaneRegistry {
 }
 
 func (r *eventLaneRegistry) Do(ctx context.Context, key string, fn func() error) error {
+	_, _, err := r.DoMeasured(ctx, key, fn)
+	return err
+}
+
+func (r *eventLaneRegistry) DoMeasured(ctx context.Context, key string, fn func() error) (time.Duration, time.Duration, error) {
 	lane := r.acquire(key)
 	defer r.release(key, lane)
 
+	waitStarted := time.Now()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return time.Since(waitStarted), 0, ctx.Err()
 	case <-lane.ch:
 	}
+	wait := time.Since(waitStarted)
+	holdStarted := time.Now()
 	defer func() { lane.ch <- struct{}{} }()
-	return fn()
+	err := fn()
+	return wait, time.Since(holdStarted), err
 }
 
 func (r *eventLaneRegistry) acquire(key string) *eventLane {

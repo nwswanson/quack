@@ -639,6 +639,135 @@ func TestHandlerNestedPublishCarriesCausationAndCorrelation(t *testing.T) {
 	}
 }
 
+func TestHandlerEmitsRuntimeTraceForPublishHandlerAndEffects(t *testing.T) {
+	logs := logbuffer.New(20)
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		return []appruntime.WebSocketEffect{{
+			Type:    appruntime.WebSocketEffectPublish,
+			Topic:   "trace.done",
+			Payload: []byte(`{"type":"done"}`),
+		}}, nil
+	}}
+	handler := New(runtime, WithLogBuffer(logs), WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"trace.*","key_by":"selector","retain":64}]`,
+			appsettings.SettingRuntimeEvents: `[{"selector":"trace.start","concurrency":"serial_by_topic","on_event":"app/trace.star:on_event"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffectsFromHandler(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "trace.start",
+		Payload: []byte(`{"type":"start"}`),
+	}}, websocketHandlerEdge("/ws", "on_message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	published := traceEventByMessage(t, logs, "runtime.event.published")
+	if published.Attributes["event_id"] == "" || published.Attributes["trace_id"] == "" || published.Attributes["correlation_id"] == "" {
+		t.Fatalf("published trace attrs = %#v, want event and trace identifiers", published.Attributes)
+	}
+	if published.Attributes["event_subject"] != "trace.start" || published.Attributes["event_source"] != "ws:/ws" {
+		t.Fatalf("published trace attrs = %#v, want subject and websocket source", published.Attributes)
+	}
+	if published.Attributes["pipe_lag"] != "1" || published.Attributes["dropped_event_count"] != "0" {
+		t.Fatalf("published trace attrs = %#v, want pipe lag and drop count", published.Attributes)
+	}
+
+	handlerTrace := traceEventByMessage(t, logs, "runtime.handler")
+	if handlerTrace.Route != "app/trace.star" || handlerTrace.Attributes["handler"] != "app/trace.star:on_event" {
+		t.Fatalf("handler trace = %#v, want route and handler", handlerTrace)
+	}
+	for _, key := range []string{"handler_duration_ms", "queue_delay_ms", "lock_wait_ms", "lock_hold_ms", "handler_failure_count"} {
+		if _, ok := handlerTrace.Attributes[key]; !ok {
+			t.Fatalf("handler trace attrs = %#v, missing %s", handlerTrace.Attributes, key)
+		}
+	}
+	if !strings.Contains(handlerTrace.Attributes["effect_list"], `"type":"events.publish"`) || !strings.Contains(handlerTrace.Attributes["effect_list"], `"topic":"trace.done"`) {
+		t.Fatalf("handler effect list = %q, want publish effect", handlerTrace.Attributes["effect_list"])
+	}
+
+	effectTrace := traceEventByMessage(t, logs, "runtime.effect")
+	if effectTrace.Attributes["effect_type"] != "events.publish" || effectTrace.Attributes["effect_result"] != "ok" {
+		t.Fatalf("effect trace attrs = %#v, want successful publish effect", effectTrace.Attributes)
+	}
+}
+
+func TestHandlerEmitsRuntimeTraceForDroppedPipeEvent(t *testing.T) {
+	logs := logbuffer.New(20)
+	handler := New(&recordingRuntime{}, WithLogBuffer(logs), WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"drop.new","retain":1,"overflow":"drop_new"}]`,
+		},
+	}}}))
+
+	for i := 0; i < 2; i++ {
+		err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+			Type:    appruntime.WebSocketEffectPublish,
+			Topic:   "drop.new",
+			Payload: []byte(fmt.Sprintf(`{"n":%d}`, i)),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dropped := traceEventByMessage(t, logs, "runtime.event.dropped")
+	if dropped.Attributes["effect_result"] != "dropped" || dropped.Attributes["dropped_event_count"] != "1" {
+		t.Fatalf("dropped trace attrs = %#v, want dropped count", dropped.Attributes)
+	}
+	if dropped.Attributes["event_subject"] != "drop.new" {
+		t.Fatalf("dropped trace attrs = %#v, want event subject", dropped.Attributes)
+	}
+}
+
+func TestHandlerEmitsRuntimeTraceForSubscriberFailures(t *testing.T) {
+	logs := logbuffer.New(20)
+	runtime := &recordingRuntime{websocket: func(req appruntime.WebSocketInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		if req.EventType == appruntime.WebSocketEventEvent {
+			return nil, appruntime.ErrInvocationFailure
+		}
+		return nil, nil
+	}}
+	handler := New(runtime, WithLogBuffer(logs), WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes: `[{"name":"room.1","retain":64}]`,
+		},
+	}}}))
+	connID, _, err := handler.sockets.reserve("foo", 3, "/socket", "", nil, websocketConnectionLimits{maxTotal: 10, maxPerSite: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.sockets.subscribe(connID, "room.1")
+
+	err = handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:    appruntime.WebSocketEffectPublish,
+		Topic:   "room.1",
+		Payload: []byte(`{"type":"message"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subscriber := traceEventByMessage(t, logs, "runtime.subscriber")
+	if subscriber.Level != "error" || subscriber.Attributes["handler_result"] != "error" {
+		t.Fatalf("subscriber trace = %#v, want error result", subscriber)
+	}
+	if subscriber.Attributes["subscriber_failure_count"] != "1" || subscriber.Attributes["error_kind"] != "invocation_failure" {
+		t.Fatalf("subscriber attrs = %#v, want failure count and kind", subscriber.Attributes)
+	}
+}
+
 func TestHandlerAppliesSiteTopicLimitFromServerSettings(t *testing.T) {
 	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{
 		settings: domain.ServerSettings{MaxTopicsPerSite: 1},
@@ -908,6 +1037,17 @@ func assertRuntimeGuardLog(t *testing.T, logs *logbuffer.Service, message string
 		}
 	}
 	t.Fatalf("runtime logs = %#v, want message %q", logs.Tail(logbuffer.Filter{Site: "foo"}, 10), message)
+}
+
+func traceEventByMessage(t *testing.T, logs *logbuffer.Service, message string) logbuffer.Event {
+	t.Helper()
+	for _, event := range logs.Tail(logbuffer.Filter{Site: "foo"}, 50) {
+		if event.Source == runtimeTraceSource && event.Message == message {
+			return event
+		}
+	}
+	t.Fatalf("runtime trace logs = %#v, want message %q", logs.Tail(logbuffer.Filter{Site: "foo"}, 50), message)
+	return logbuffer.Event{}
 }
 
 func TestHandlerSelectorPipeCanRetainBySelector(t *testing.T) {

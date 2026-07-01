@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -211,16 +212,31 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 		ctx = context.WithValue(ctx, dispatchTraceContextKey{}, newDispatchTrace())
 	}
 	for _, effect := range effects {
+		effectStarted := time.Now()
+		effectAttrs := effectTraceAttrs(effect)
+		effectAttrs["handler"] = handler
 		switch effect.Type {
 		case appruntime.WebSocketEffectAccept:
 		case appruntime.WebSocketEffectSend:
 			if err := h.sockets.send(effect.ConnID, effect.Payload); err != nil {
+				effectAttrs["effect_result"] = "error"
+				effectAttrs["duration_ms"] = durationMillis(time.Since(effectStarted))
+				effectAttrs["error_kind"] = "subscriber_failure"
+				effectAttrs["error"] = err.Error()
+				h.addTrace(traceRecord{Site: site, Message: "runtime.effect", Level: "error", Attrs: effectAttrs})
 				return err
 			}
 		case appruntime.WebSocketEffectBroadcast:
-			h.sockets.broadcast(site, effect.Topic, effect.Payload)
+			sent, failed := h.sockets.broadcastMeasured(site, effect.Topic, effect.Payload)
+			effectAttrs["subscriber_count"] = strconv.Itoa(sent + failed)
+			effectAttrs["subscriber_failure_count"] = strconv.Itoa(failed)
 		case appruntime.WebSocketEffectSubscribe:
 			if _, err := h.declaredPipe(ctx, site, effect.Topic); err != nil {
+				effectAttrs["effect_result"] = "error"
+				effectAttrs["duration_ms"] = durationMillis(time.Since(effectStarted))
+				effectAttrs["error_kind"] = "pipe_not_declared"
+				effectAttrs["error"] = err.Error()
+				h.addTrace(traceRecord{Site: site, Message: "runtime.effect", Level: "error", Attrs: effectAttrs})
 				return err
 			}
 			h.sockets.subscribe(effect.ConnID, effect.Topic)
@@ -230,6 +246,11 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 			h.sockets.unsubscribeAll(effect.ConnID)
 		case appruntime.WebSocketEffectPublish:
 			if err := h.dispatchEventFromHandler(ctx, site, effect.Topic, effect.Payload, handler); err != nil {
+				effectAttrs["effect_result"] = "error"
+				effectAttrs["duration_ms"] = durationMillis(time.Since(effectStarted))
+				effectAttrs["error_kind"] = runtimeErrorKind(err)
+				effectAttrs["error"] = err.Error()
+				h.addTrace(traceRecord{Site: site, Message: "runtime.effect", Level: "error", Attrs: effectAttrs})
 				return err
 			}
 		case appruntime.WebSocketEffectSetTimer:
@@ -248,11 +269,19 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 				code = 1000
 			}
 			if err := h.sockets.close(effect.ConnID, code, effect.Reason); err != nil {
+				effectAttrs["effect_result"] = "error"
+				effectAttrs["duration_ms"] = durationMillis(time.Since(effectStarted))
+				effectAttrs["error_kind"] = "subscriber_failure"
+				effectAttrs["error"] = err.Error()
+				h.addTrace(traceRecord{Site: site, Message: "runtime.effect", Level: "error", Attrs: effectAttrs})
 				return err
 			}
 		default:
 			return fmt.Errorf("%w: unknown websocket effect %s", appruntime.ErrInvocationFailure, effect.Type)
 		}
+		effectAttrs["effect_result"] = "ok"
+		effectAttrs["duration_ms"] = durationMillis(time.Since(effectStarted))
+		h.addTrace(traceRecord{Site: site, Message: "runtime.effect", Attrs: effectAttrs})
 	}
 	return nil
 }
@@ -321,13 +350,25 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 	if err != nil {
 		return err
 	}
-	event, accepted := h.pipes.Publish(config, eventpipe.Event{
+	publishedAt := time.Now()
+	event, publishStats := h.pipes.PublishWithStats(config, eventpipe.Event{
 		Site: site, Version: settings.version, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName,
 		CausationID: trace.currentEventID, CorrelationID: trace.correlationID, Payload: payload, Headers: headers,
 	})
-	if !accepted {
+	publishAttrs := baseTraceAttrs(trace, event)
+	publishAttrs["handler"] = handler
+	publishAttrs["pipe_lag"] = strconv.FormatUint(event.Seq, 10)
+	publishAttrs["dropped_event_count"] = strconv.FormatInt(publishStats.DroppedEvents, 10)
+	publishAttrs["retained_event_count"] = strconv.FormatInt(publishStats.RetainedEvents, 10)
+	publishAttrs["retained_bytes"] = strconv.FormatInt(publishStats.RetainedBytes, 10)
+	publishAttrs["effect_result"] = "ok"
+	if !publishStats.Accepted {
+		publishAttrs["effect_result"] = "dropped"
+		h.addTrace(traceRecord{Site: site, Version: settings.version, Message: "runtime.event.dropped", Attrs: publishAttrs})
 		return nil
 	}
+	publishAttrs["duration_ms"] = durationMillis(time.Since(publishedAt))
+	h.addTrace(traceRecord{Site: site, Version: settings.version, Message: "runtime.event.published", Attrs: publishAttrs})
 	trace.setRootEventID(event.ID)
 	parentEventID := trace.currentEventID
 	trace.currentEventID = event.ID
@@ -335,12 +376,17 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 		trace.currentEventID = parentEventID
 	}()
 	envelope := runtimeEventEnvelope(event)
+	handlerFailureCount := 0
 	for _, route := range settings.matchingRoutes(event.Topic) {
 		entrypoint, handler, err := manifest.SplitEventHandler(route.OnEvent)
 		if err != nil {
 			return err
 		}
 		var effects []appruntime.WebSocketEffect
+		started := time.Now()
+		queueDelay := time.Since(event.Time)
+		lockWait := time.Duration(0)
+		lockHold := time.Duration(0)
 		invoke := func() error {
 			var invokeErr error
 			effects, invokeErr = h.runtime.InvokeEvent(ctx, appruntime.EventInvocationRequest{
@@ -350,28 +396,71 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 			return invokeErr
 		}
 		if strings.TrimSpace(route.Concurrency) == "serial_by_topic" {
-			err = h.lanes.Do(ctx, eventLaneKey(site, settings.version, route, event.Topic), invoke)
+			lockWait, lockHold, err = h.lanes.DoMeasured(ctx, eventLaneKey(site, settings.version, route, event.Topic), invoke)
 		} else {
 			err = invoke()
 		}
+		handlerAttrs := baseTraceAttrs(trace, event)
+		handlerAttrs["handler"] = route.OnEvent
+		handlerAttrs["handler_entrypoint"] = entrypoint
+		handlerAttrs["handler_function"] = handler
+		handlerAttrs["handler_duration_ms"] = durationMillis(time.Since(started))
+		handlerAttrs["queue_delay_ms"] = durationMillis(queueDelay)
+		handlerAttrs["lock_wait_ms"] = durationMillis(lockWait)
+		handlerAttrs["lock_hold_ms"] = durationMillis(lockHold)
+		handlerAttrs["effect_list"] = effectList(effects)
 		if err != nil {
+			handlerFailureCount++
+			handlerAttrs["handler_result"] = "error"
+			handlerAttrs["handler_failure_count"] = strconv.Itoa(handlerFailureCount)
+			handlerAttrs["error_kind"] = runtimeErrorKind(err)
+			handlerAttrs["error"] = err.Error()
+			h.addTrace(traceRecord{Site: site, Version: settings.version, Route: entrypoint, Message: "runtime.handler", Level: "error", Attrs: handlerAttrs})
 			continue
 		}
+		handlerAttrs["handler_result"] = "ok"
+		handlerAttrs["handler_failure_count"] = strconv.Itoa(handlerFailureCount)
+		h.addTrace(traceRecord{Site: site, Version: settings.version, Route: entrypoint, Message: "runtime.handler", Attrs: handlerAttrs})
 		if err := h.applyEffectsFromHandler(ctx, site, effects, route.OnEvent); err != nil {
 			return err
 		}
 	}
+	subscriberFailureCount := 0
 	for _, snapshot := range h.sockets.subscriberSnapshots(site, event.Topic) {
+		started := time.Now()
 		effects, err := h.runtime.InvokeWebSocket(ctx, appruntime.WebSocketInvocationRequest{
 			Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Query: snapshot.query,
 			Headers: snapshot.headers, ConnID: snapshot.id, EventType: appruntime.WebSocketEventEvent,
 			Event: webSocketServerEventFromPipeEvent(event),
 		})
+		subscriberAttrs := baseTraceAttrs(trace, event)
+		subscriberAttrs["handler"] = websocketHandlerEdge(snapshot.route, "on_event")
+		subscriberAttrs["conn_id"] = snapshot.id
+		subscriberAttrs["handler_duration_ms"] = durationMillis(time.Since(started))
+		subscriberAttrs["queue_delay_ms"] = durationMillis(time.Since(event.Time))
+		subscriberAttrs["effect_list"] = effectList(effects)
 		if err != nil {
+			subscriberFailureCount++
+			subscriberAttrs["handler_result"] = "error"
+			subscriberAttrs["subscriber_failure_count"] = strconv.Itoa(subscriberFailureCount)
+			subscriberAttrs["error_kind"] = runtimeErrorKind(err)
+			subscriberAttrs["error"] = err.Error()
+			h.addTrace(traceRecord{Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Message: "runtime.subscriber", Level: "error", Attrs: subscriberAttrs})
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event invocation failed")
 			continue
 		}
+		subscriberAttrs["handler_result"] = "ok"
+		subscriberAttrs["subscriber_failure_count"] = strconv.Itoa(subscriberFailureCount)
+		h.addTrace(traceRecord{Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Message: "runtime.subscriber", Attrs: subscriberAttrs})
 		if err := h.applyEffectsFromHandler(ctx, snapshot.site, effects, websocketHandlerEdge(snapshot.route, "on_event")); err != nil {
+			subscriberFailureCount++
+			failureAttrs := baseTraceAttrs(trace, event)
+			failureAttrs["handler"] = websocketHandlerEdge(snapshot.route, "on_event")
+			failureAttrs["conn_id"] = snapshot.id
+			failureAttrs["subscriber_failure_count"] = strconv.Itoa(subscriberFailureCount)
+			failureAttrs["error_kind"] = runtimeErrorKind(err)
+			failureAttrs["error"] = err.Error()
+			h.addTrace(traceRecord{Site: snapshot.site, Version: snapshot.version, Route: snapshot.route, Message: "runtime.subscriber.effect_failed", Level: "error", Attrs: failureAttrs})
 			_ = h.sockets.close(snapshot.id, 1011, "runtime event effect failed")
 			continue
 		}
@@ -905,9 +994,20 @@ func (m *socketManager) sendFrame(connID string, opcode byte, payload []byte) er
 }
 
 func (m *socketManager) broadcast(site string, topic string, payload []byte) {
+	m.broadcastMeasured(site, topic, payload)
+}
+
+func (m *socketManager) broadcastMeasured(site string, topic string, payload []byte) (int, int) {
+	sent := 0
+	failed := 0
 	for _, snapshot := range m.subscriberSnapshots(site, topic) {
-		_ = m.send(snapshot.id, payload)
+		if err := m.send(snapshot.id, payload); err != nil {
+			failed++
+			continue
+		}
+		sent++
 	}
+	return sent, failed
 }
 
 func scopedTopic(site string, topic string) string {

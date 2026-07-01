@@ -53,6 +53,37 @@ func TestStorePublishDropNewRejectsWhenFull(t *testing.T) {
 	}
 }
 
+func TestStorePublishWithStatsReportsRingDropsAndRetention(t *testing.T) {
+	store := NewStore()
+	config := Config{Name: "sensor", Retain: 2}
+	if _, stats := store.PublishWithStats(config, Event{Site: "site", Payload: []byte("1")}); !stats.Accepted || stats.DroppedEvents != 0 || stats.RetainedEvents != 1 {
+		t.Fatalf("first stats = %+v, want accepted with one retained event", stats)
+	}
+	if _, stats := store.PublishWithStats(config, Event{Site: "site", Payload: []byte("2")}); !stats.Accepted || stats.DroppedEvents != 0 || stats.RetainedEvents != 2 {
+		t.Fatalf("second stats = %+v, want accepted with two retained events", stats)
+	}
+	if _, stats := store.PublishWithStats(config, Event{Site: "site", Payload: []byte("3")}); !stats.Accepted || stats.DroppedEvents != 1 || stats.RetainedEvents != 2 || stats.RetainedBytes <= 0 {
+		t.Fatalf("third stats = %+v, want one ring drop and retained byte count", stats)
+	}
+	if got := payloads(store.Recent("site", config)); got != "23" {
+		t.Fatalf("recent payloads = %q, want newest retained events", got)
+	}
+}
+
+func TestStorePublishWithStatsReportsRejectedDropNew(t *testing.T) {
+	store := NewStore()
+	config := Config{Name: "sensor", Retain: 1, Overflow: DropNew}
+	if _, stats := store.PublishWithStats(config, Event{Site: "site", Payload: []byte("first")}); !stats.Accepted {
+		t.Fatalf("first stats = %+v, want accepted", stats)
+	}
+	if _, stats := store.PublishWithStats(config, Event{Site: "site", Payload: []byte("second")}); stats.Accepted || stats.DroppedEvents != 1 {
+		t.Fatalf("second stats = %+v, want rejected drop count", stats)
+	}
+	if got := payloads(store.Recent("site", config)); got != "first" {
+		t.Fatalf("recent payloads = %q, want first event retained", got)
+	}
+}
+
 func TestStorePublishRetainedRingKeepsChronologicalOrder(t *testing.T) {
 	store := NewStore()
 	config := Config{Name: "sensor", Retain: 3}
@@ -180,6 +211,23 @@ func TestStorePublishPrunesOldestRetainedEventsPerSite(t *testing.T) {
 	}
 	if got := payloads(store.Recent("site", Config{Name: "two"})); got != "2" {
 		t.Fatalf("two payloads = %q, want retained second event", got)
+	}
+}
+
+func TestStorePublishWithStatsIncludesSitePruningDrops(t *testing.T) {
+	store := NewStore()
+	limits := Limits{MaxRetainedEvents: 1}
+	if _, stats := store.PublishWithStats(Config{Name: "one", Retain: 3, SiteLimits: limits}, Event{Site: "site", Topic: "one", Payload: []byte("1")}); !stats.Accepted || stats.DroppedEvents != 0 {
+		t.Fatalf("first stats = %+v, want accepted without drops", stats)
+	}
+	if _, stats := store.PublishWithStats(Config{Name: "two", Retain: 3, SiteLimits: limits}, Event{Site: "site", Topic: "two", Payload: []byte("2")}); !stats.Accepted || stats.DroppedEvents != 1 || stats.RetainedEvents != 1 {
+		t.Fatalf("second stats = %+v, want one site-pruned drop", stats)
+	}
+	if got := payloads(store.Recent("site", Config{Name: "one"})); got != "" {
+		t.Fatalf("one payloads = %q, want first pipe pruned", got)
+	}
+	if got := payloads(store.Recent("site", Config{Name: "two"})); got != "2" {
+		t.Fatalf("two payloads = %q, want second pipe retained", got)
 	}
 }
 
