@@ -230,6 +230,7 @@ type WebSocketServerEvent struct {
 	Seq           uint64
 	CausationID   string
 	CorrelationID string
+	ActionID      string
 	Site          string
 	Version       int64
 	Payload       []byte
@@ -245,6 +246,7 @@ type EventEnvelope struct {
 	Seq           uint64
 	CausationID   string
 	CorrelationID string
+	ActionID      string
 	Site          string
 	Version       int64
 	Payload       []byte
@@ -291,6 +293,7 @@ type WebSocketEffect struct {
 	After    string
 	ID       string
 	Mode     string
+	ActionID string
 	MS       int64
 	UnixMS   int64
 	JitterMS int64

@@ -63,6 +63,9 @@ func baseTraceAttrs(trace *dispatchTrace, event eventpipe.Event) map[string]stri
 	if !event.Time.IsZero() {
 		attrs["event_time"] = event.Time.Format(time.RFC3339Nano)
 	}
+	if event.ActionID != "" {
+		attrs["action_id"] = event.ActionID
+	}
 	return attrs
 }
 
@@ -103,6 +106,9 @@ func effectTraceAttrs(effect appruntime.WebSocketEffect) map[string]string {
 	if effect.ID != "" {
 		attrs["timer_id"] = effect.ID
 	}
+	if effect.ActionID != "" {
+		attrs["action_id"] = effect.ActionID
+	}
 	if len(effect.Payload) > 0 {
 		attrs["payload_bytes"] = strconv.Itoa(len(effect.Payload))
 	}
@@ -127,6 +133,9 @@ func effectList(effects []appruntime.WebSocketEffect) string {
 		}
 		if effect.ID != "" {
 			item["id"] = effect.ID
+		}
+		if effect.ActionID != "" {
+			item["action_id"] = effect.ActionID
 		}
 		items = append(items, item)
 	}

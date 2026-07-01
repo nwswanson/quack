@@ -66,7 +66,7 @@ func New(runtime appruntime.Service, opts ...Option) Handler {
 		return h.dispatchEventWithSource(ctx, timer.Site, timer.Topic, timer.Payload, "runtime", "timers", map[string]string{
 			"timer.id":  timer.ID,
 			"timer.key": timer.Key,
-		})
+		}, timer.ActionID)
 	})
 	return h
 }

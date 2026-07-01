@@ -51,6 +51,7 @@ type Event struct {
 	Seq           uint64            `json:"seq"`
 	CausationID   string            `json:"causation_id,omitempty"`
 	CorrelationID string            `json:"correlation_id,omitempty"`
+	ActionID      string            `json:"action_id,omitempty"`
 	Payload       []byte            `json:"payload,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
 }
@@ -287,7 +288,7 @@ func (s *Store) sitePipes(site string) []*pipe {
 }
 
 func retainedEventBytes(event Event) int64 {
-	n := len(event.Payload) + len(event.ID) + len(event.Site) + len(event.Pipe) + len(event.Topic) + len(event.Type) + len(event.Source) + len(event.SourceKind) + len(event.SourceName) + len(event.CausationID) + len(event.CorrelationID)
+	n := len(event.Payload) + len(event.ID) + len(event.Site) + len(event.Pipe) + len(event.Topic) + len(event.Type) + len(event.Source) + len(event.SourceKind) + len(event.SourceName) + len(event.CausationID) + len(event.CorrelationID) + len(event.ActionID)
 	for key, value := range event.Headers {
 		n += len(key) + len(value)
 	}

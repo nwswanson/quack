@@ -500,6 +500,54 @@ func TestHandlerTimerAfterPublishesDelayedEvent(t *testing.T) {
 	}
 }
 
+func TestHandlerTimerAfterCarriesActionID(t *testing.T) {
+	runtime := &recordingRuntime{}
+	handler := New(runtime, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"image.resize.*","key_by":"selector","retain":4}]`,
+			appsettings.SettingRuntimeEvents: `[{"selector":"image.resize.*","on_event":"app/image.star:on_event"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:     appruntime.WebSocketEffectTimerAfter,
+		ID:       "tmr-action",
+		MS:       10,
+		Topic:    "image.resize.progress",
+		ActionID: "act_resize",
+		Payload:  []byte(`{"percent":10}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	event := waitForRecentEvent(t, handler, "foo", "image.resize.*", 500*time.Millisecond)
+	if event.ActionID != "act_resize" {
+		t.Fatalf("timer event = %#v, want action id", event)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		runtime.mu.Lock()
+		n := len(runtime.eventRequests)
+		var got appruntime.EventInvocationRequest
+		if n > 0 {
+			got = runtime.eventRequests[n-1]
+		}
+		runtime.mu.Unlock()
+		if n > 0 {
+			if got.Event.ActionID != "act_resize" {
+				t.Fatalf("event request = %#v, want action id", got)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for timer event handler invocation")
+}
+
 func TestHandlerTimerKeepExistingCoalescesByKey(t *testing.T) {
 	handler := New(&recordingRuntime{}, WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
 		Site:    "foo",
@@ -636,6 +684,54 @@ func TestHandlerNestedPublishCarriesCausationAndCorrelation(t *testing.T) {
 	}
 	if child.CausationID != parent.ID || child.CorrelationID != parent.CorrelationID {
 		t.Fatalf("child envelope = %#v parent = %#v, want causation and correlation propagation", child, parent)
+	}
+}
+
+func TestHandlerPropagatesActionIDThroughNestedPublishesAndTrace(t *testing.T) {
+	logs := logbuffer.New(20)
+	runtime := &recordingRuntime{event: func(req appruntime.EventInvocationRequest) ([]appruntime.WebSocketEffect, error) {
+		if req.Topic == "image.resize.requested" {
+			return []appruntime.WebSocketEffect{{
+				Type:    appruntime.WebSocketEffectPublish,
+				Topic:   "image.resize.progress",
+				Payload: []byte(`{"percent":50}`),
+			}}, nil
+		}
+		return nil, nil
+	}}
+	handler := New(runtime, WithLogBuffer(logs), WithSettings(eventSettingsFixture{manifests: []domain.CurrentSiteManifest{{
+		Site:    "foo",
+		SiteSHA: "foo-sha",
+		Version: 3,
+		Settings: map[string]string{
+			appsettings.SettingRuntimePipes:  `[{"selector":"image.resize.*","key_by":"selector","retain":64}]`,
+			appsettings.SettingRuntimeEvents: `[{"selector":"image.resize.*","on_event":"app/image.star:on_event"}]`,
+		},
+	}}}))
+
+	err := handler.applyEffects(context.Background(), "foo", []appruntime.WebSocketEffect{{
+		Type:     appruntime.WebSocketEffectPublish,
+		Topic:    "image.resize.requested",
+		ActionID: "act_resize",
+		Payload:  []byte(`{"image":"input.jpg"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.eventRequests) != 2 {
+		t.Fatalf("event requests = %#v, want requested and progress events", runtime.eventRequests)
+	}
+	parent := runtime.eventRequests[0].Event
+	child := runtime.eventRequests[1].Event
+	if parent.ActionID != "act_resize" || child.ActionID != "act_resize" {
+		t.Fatalf("parent = %#v child = %#v, want action id propagated", parent, child)
+	}
+	if child.CausationID != parent.ID {
+		t.Fatalf("child causation = %q parent id = %q", child.CausationID, parent.ID)
+	}
+	published := traceEventByMessage(t, logs, "runtime.event.published")
+	if published.Attributes["action_id"] != "act_resize" {
+		t.Fatalf("published trace attrs = %#v, want action id", published.Attributes)
 	}
 }
 

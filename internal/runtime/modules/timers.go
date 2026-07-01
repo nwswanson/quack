@@ -129,7 +129,7 @@ func timerSet(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple
 }
 
 func queueTimerEffect(thread *starlark.Thread, fnName string, effectType string, topic string, payload starlark.Value, key string, mode string, fields map[string]starlark.Value) (starlark.Value, error) {
-	effect, err := timerEffect(effectType, topic, payload, key, mode, fields)
+	effect, err := timerEffect(thread, effectType, topic, payload, key, mode, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func queueTimerEffect(thread *starlark.Thread, fnName string, effectType string,
 	return starlark.None, nil
 }
 
-func timerEffect(effectType string, topic string, payload starlark.Value, key string, mode string, fields map[string]starlark.Value) (starlark.Value, error) {
+func timerEffect(thread *starlark.Thread, effectType string, topic string, payload starlark.Value, key string, mode string, fields map[string]starlark.Value) (starlark.Value, error) {
 	if strings.TrimSpace(topic) == "" {
 		return nil, fmt.Errorf("%s requires topic", effectType)
 	}

@@ -212,6 +212,11 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 		ctx = context.WithValue(ctx, dispatchTraceContextKey{}, newDispatchTrace())
 	}
 	for _, effect := range effects {
+		if effect.ActionID == "" {
+			if trace := dispatchTraceFromContext(ctx); trace != nil {
+				effect.ActionID = trace.currentActionID
+			}
+		}
 		effectStarted := time.Now()
 		effectAttrs := effectTraceAttrs(effect)
 		effectAttrs["handler"] = handler
@@ -245,7 +250,7 @@ func (h Handler) applyEffectsFromHandler(ctx context.Context, site string, effec
 		case appruntime.WebSocketEffectUnsubscribeAll:
 			h.sockets.unsubscribeAll(effect.ConnID)
 		case appruntime.WebSocketEffectPublish:
-			if err := h.dispatchEventFromHandler(ctx, site, effect.Topic, effect.Payload, handler); err != nil {
+			if err := h.dispatchEventWithSourceAndHandler(ctx, site, effect.Topic, effect.Payload, sourceKindForHandler(handler), sourceNameForHandler(handler), nil, handler, effect.ActionID); err != nil {
 				effectAttrs["effect_result"] = "error"
 				effectAttrs["duration_ms"] = durationMillis(time.Since(effectStarted))
 				effectAttrs["error_kind"] = runtimeErrorKind(err)
@@ -310,14 +315,18 @@ func (h Handler) dispatchEvent(ctx context.Context, site string, topic string, p
 }
 
 func (h Handler) dispatchEventFromHandler(ctx context.Context, site string, topic string, payload []byte, handler string) error {
-	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, sourceKindForHandler(handler), sourceNameForHandler(handler), nil, handler)
+	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, sourceKindForHandler(handler), sourceNameForHandler(handler), nil, handler, "")
 }
 
-func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string) error {
-	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, sourceKind, sourceName, headers, "")
+func (h Handler) dispatchEventWithSource(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string, actionID ...string) error {
+	id := ""
+	if len(actionID) > 0 {
+		id = actionID[0]
+	}
+	return h.dispatchEventWithSourceAndHandler(ctx, site, topic, payload, sourceKind, sourceName, headers, "", id)
 }
 
-func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string, handler string) error {
+func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site string, topic string, payload []byte, sourceKind string, sourceName string, headers map[string]string, handler string, actionID string) error {
 	settings, err := h.siteEventSettings(ctx, site)
 	if err != nil {
 		return err
@@ -350,10 +359,14 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 	if err != nil {
 		return err
 	}
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" {
+		actionID = trace.currentActionID
+	}
 	publishedAt := time.Now()
 	event, publishStats := h.pipes.PublishWithStats(config, eventpipe.Event{
 		Site: site, Version: settings.version, Pipe: config.Name, Topic: topic, SourceKind: sourceKind, SourceName: sourceName,
-		CausationID: trace.currentEventID, CorrelationID: trace.correlationID, Payload: payload, Headers: headers,
+		CausationID: trace.currentEventID, CorrelationID: trace.correlationID, ActionID: actionID, Payload: payload, Headers: headers,
 	})
 	publishAttrs := baseTraceAttrs(trace, event)
 	publishAttrs["handler"] = handler
@@ -371,9 +384,12 @@ func (h Handler) dispatchEventWithSourceAndHandler(ctx context.Context, site str
 	h.addTrace(traceRecord{Site: site, Version: settings.version, Message: "runtime.event.published", Attrs: publishAttrs})
 	trace.setRootEventID(event.ID)
 	parentEventID := trace.currentEventID
+	parentActionID := trace.currentActionID
 	trace.currentEventID = event.ID
+	trace.currentActionID = event.ActionID
 	defer func() {
 		trace.currentEventID = parentEventID
+		trace.currentActionID = parentActionID
 	}()
 	envelope := runtimeEventEnvelope(event)
 	handlerFailureCount := 0
@@ -472,7 +488,7 @@ func runtimeEventEnvelope(event eventpipe.Event) appruntime.EventEnvelope {
 	return appruntime.EventEnvelope{
 		ID: event.ID, Pipe: event.Pipe, Topic: event.Topic, Type: event.Type, Source: event.Source,
 		Time: event.Time, Seq: event.Seq, CausationID: event.CausationID, CorrelationID: event.CorrelationID,
-		Site: event.Site, Version: event.Version, Payload: event.Payload,
+		ActionID: event.ActionID, Site: event.Site, Version: event.Version, Payload: event.Payload,
 	}
 }
 
@@ -480,7 +496,7 @@ func webSocketServerEventFromPipeEvent(event eventpipe.Event) appruntime.WebSock
 	return appruntime.WebSocketServerEvent{
 		ID: event.ID, Pipe: event.Pipe, Topic: event.Topic, Type: event.Type, Source: event.Source,
 		Time: event.Time, Seq: event.Seq, CausationID: event.CausationID, CorrelationID: event.CorrelationID,
-		Site: event.Site, Version: event.Version, Payload: event.Payload,
+		ActionID: event.ActionID, Site: event.Site, Version: event.Version, Payload: event.Payload,
 	}
 }
 

@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -213,6 +215,7 @@ func websocketServerEventValue(event WebSocketServerEvent) starlark.Value {
 		"seq":            starlark.MakeUint64(event.Seq),
 		"causation_id":   starlark.String(event.CausationID),
 		"correlation_id": starlark.String(event.CorrelationID),
+		"action_id":      starlark.String(event.ActionID),
 		"site":           starlark.String(event.Site),
 		"version":        starlark.MakeInt64(event.Version),
 		"payload":        websocketPayloadValue(event.Payload),
@@ -223,7 +226,7 @@ func webSocketServerEventFromEnvelope(envelope EventEnvelope) WebSocketServerEve
 	return WebSocketServerEvent{
 		ID: envelope.ID, Pipe: envelope.Pipe, Topic: envelope.Topic, Type: envelope.Type, Source: envelope.Source,
 		Time: envelope.Time, Seq: envelope.Seq, CausationID: envelope.CausationID, CorrelationID: envelope.CorrelationID,
-		Site: envelope.Site, Version: envelope.Version, Payload: envelope.Payload,
+		ActionID: envelope.ActionID, Site: envelope.Site, Version: envelope.Version, Payload: envelope.Payload,
 	}
 }
 
@@ -274,6 +277,7 @@ func websocketEffectFromValue(v starlark.Value) (WebSocketEffect, error) {
 	effect.Reason, _ = dictOptionalString(dict, "reason")
 	effect.ID, _ = dictOptionalString(dict, "id")
 	effect.Mode, _ = dictOptionalString(dict, "mode")
+	effect.ActionID, _ = dictOptionalString(dict, "action_id")
 	if code, ok, err := dictOptionalInt(dict, "code"); err != nil {
 		return WebSocketEffect{}, err
 	} else if ok {
@@ -377,7 +381,8 @@ var (
 	}})
 
 	sharedEventsModule = frozenModule(&starlarkstruct.Module{Name: "events", Members: starlark.StringDict{
-		"publish": starlark.NewBuiltin("events.publish", makeEffectBuiltin(WebSocketEffectPublish, []string{"topic", "payload"})),
+		"publish":       starlark.NewBuiltin("events.publish", makeEffectBuiltin(WebSocketEffectPublish, []string{"topic", "payload", "action_id?"})),
+		"new_action_id": starlark.NewBuiltin("events.new_action_id", newActionIDBuiltin),
 	}})
 
 	sharedTimersModule = frozenModule(modules.NewTimersModule())
@@ -402,7 +407,7 @@ func timersModule() *starlarkstruct.Module {
 
 func makeEffectBuiltin(effectType WebSocketEffectType, fields []string) func(*starlark.Thread, *starlark.Builtin, starlark.Tuple, []starlark.Tuple) (starlark.Value, error) {
 	return func(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
-		var connID, topic, key, after, reason string
+		var connID, topic, key, after, reason, actionID string
 		var code int
 		var payload starlark.Value = starlark.None
 		var event starlark.Value = starlark.None
@@ -425,6 +430,8 @@ func makeEffectBuiltin(effectType WebSocketEffectType, fields []string) func(*st
 				targets = append(targets, field, &payload)
 			case "event?":
 				targets = append(targets, field, &event)
+			case "action_id?":
+				targets = append(targets, field, &actionID)
 			}
 		}
 		if err := starlark.UnpackArgs(fn.Name(), args, kwargs, targets...); err != nil {
@@ -459,11 +466,25 @@ func makeEffectBuiltin(effectType WebSocketEffectType, fields []string) func(*st
 		if event != starlark.None {
 			_ = out.SetKey(starlark.String("payload"), event)
 		}
+		if actionID != "" {
+			_ = out.SetKey(starlark.String("action_id"), starlark.String(actionID))
+		}
 		if err := modules.QueueEffect(thread, fn.Name(), out); err != nil {
 			return nil, err
 		}
 		return starlark.None, nil
 	}
+}
+
+func newActionIDBuiltin(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := starlark.UnpackArgs(fn.Name(), args, kwargs); err != nil {
+		return nil, err
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return starlark.String("act_fallback"), nil
+	}
+	return starlark.String("act_" + base64.RawURLEncoding.EncodeToString(b[:])), nil
 }
 
 func dictString(dict *starlark.Dict, key string) (string, error) {

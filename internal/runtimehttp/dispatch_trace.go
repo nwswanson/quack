@@ -9,12 +9,13 @@ import (
 type dispatchTraceContextKey struct{}
 
 type dispatchTrace struct {
-	rootEventID    string
-	currentEventID string
-	correlationID  string
-	depth          int
-	publishCount   int
-	edges          map[string]struct{}
+	rootEventID     string
+	currentEventID  string
+	currentActionID string
+	correlationID   string
+	depth           int
+	publishCount    int
+	edges           map[string]struct{}
 }
 
 func newDispatchTrace() *dispatchTrace {

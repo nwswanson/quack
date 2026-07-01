@@ -28,6 +28,7 @@ type scheduledTimer struct {
 	Topic    string
 	Payload  []byte
 	Key      string
+	ActionID string
 	Interval time.Duration
 	Jitter   time.Duration
 }
@@ -77,7 +78,7 @@ func (s *timerScheduler) schedule(site string, effect appruntime.WebSocketEffect
 	key := strings.TrimSpace(effect.Key)
 	timer := scheduledTimer{
 		ID: id, Site: strings.TrimSpace(site), Topic: strings.TrimSpace(effect.Topic),
-		Payload: append([]byte(nil), effect.Payload...), Key: key,
+		Payload: append([]byte(nil), effect.Payload...), Key: key, ActionID: strings.TrimSpace(effect.ActionID),
 	}
 	var deadline time.Time
 	switch effect.Type {

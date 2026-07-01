@@ -280,6 +280,35 @@ event type; otherwise the event type falls back to the topic.
 
 Think of it as a local event-bus trigger for server push.
 
+### Action IDs
+
+Some event chains represent one longer workflow made of many fast handler
+invocations. Use `action_id` to group those events in traces without creating a
+separate action runtime.
+
+```python
+def on_message(ctx, msg):
+    action_id = events.new_action_id()
+    events.publish("image.resize.requested", {
+        "image": msg["image"],
+    }, action_id=action_id)
+
+def on_event(ctx, event):
+    events.publish("image.resize.progress", {"percent": 50})
+    events.publish("image.resize.completed", {"url": "/out.jpg"})
+```
+
+`events.new_action_id()` returns an `act_...` ID. `events.publish` accepts an
+optional `action_id` argument and stores it on the event envelope. When a handler
+is already processing an event with an action ID, nested publishes inherit that
+ID unless a different `action_id` is passed explicitly.
+
+Use explicit `action_id` sparingly. Setting it manually can merge unrelated
+work into one trace history or split one workflow into multiple histories.
+Prefer `events.new_action_id()` at the workflow boundary and implicit propagation
+inside event handlers unless you are bridging to an existing external job ID and
+have verified the ID is stable and scoped.
+
 ## Timer Effects
 
 ```python

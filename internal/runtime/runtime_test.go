@@ -990,6 +990,54 @@ def on_message(ctx, msg):
 	}
 }
 
+func TestStarlarkExecutorEventsModuleGeneratesAndPublishesActionID(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_message(ctx, msg):
+    action_id = events.new_action_id()
+    events.publish("image.resize.requested", {"image": msg["image"]}, action_id=action_id)
+`})
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{"image":"input.jpg"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 {
+		t.Fatalf("message effects = %#v, want requested publish", effects)
+	}
+	actionID := effects[0].ActionID
+	if !strings.HasPrefix(actionID, "act_") {
+		t.Fatalf("action id = %q, want generated act_ id", actionID)
+	}
+	if effects[0].Type != WebSocketEffectPublish || effects[0].Topic != "image.resize.requested" || string(effects[0].Payload) != `{"image":"input.jpg"}` {
+		t.Fatalf("requested effect = %#v payload=%s", effects[0], effects[0].Payload)
+	}
+}
+
+func TestStarlarkExecutorEventsPublishCanExplicitlySetActionID(t *testing.T) {
+	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
+def on_message(ctx, msg):
+    events.publish("image.resize.progress", {"percent": 5}, action_id="act_manual")
+`})
+
+	effects, err := executor.InvokeWebSocket(context.Background(), Bundle{
+		Site: "foo", Version: 1, Routes: []Route{{Path: "/ws", Kind: RouteWebSocket, Entrypoint: "socket.star"}},
+	}, WebSocketEvent{
+		Site: "foo", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || effects[0].ActionID != "act_manual" {
+		t.Fatalf("effects = %#v, want explicit action id", effects)
+	}
+}
+
 func TestStarlarkExecutorDiscardsCollectedEffectsOnHandlerFailure(t *testing.T) {
 	executor := newTestStarlarkExecutor(t, map[string]string{"socket.star": `
 def on_message(ctx, msg):
