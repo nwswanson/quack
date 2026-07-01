@@ -1,5 +1,7 @@
 # Quack
-![image](quack.jpg)
+
+![image](quack.jpg  | width=400 )
+
 Quack is a small self-hosted app server for publishing weird little web things instantly.
 
 Point Quack at a directory, give it a site name, and it serves the current version by hostname. That is the main trick: easy static file hosting with versioning, rollback, and a tiny control plane.
