@@ -1500,6 +1500,31 @@ func TestDemoSerialTerminalPipesWebSocketExecutes(t *testing.T) {
 		t.Fatalf("hardware event effects = %+v, want terminal read publish", effects)
 	}
 
+	numericChunk := strings.Repeat("1", 400)
+	effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+		Site: "demo-serial-terminal-pipes", Version: 1, Entrypoint: "api/terminal.star", Handler: "on_hardware_event",
+		Topic: "hardware.serial.meter.read", Payload: []byte(numericChunk),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundNumericRead := false
+	for _, effect := range effects {
+		payload := string(effect.Payload)
+		if effect.Type == WebSocketEffectPublish &&
+			effect.Topic == "serial-terminal-pipes.session" &&
+			strings.Contains(payload, `"type":"terminal"`) &&
+			strings.Contains(payload, `"text":"`+numericChunk+`"`) {
+			foundNumericRead = true
+		}
+		if strings.Contains(payload, "e+") {
+			t.Fatalf("numeric hardware event effects = %+v, want raw serial text without float formatting", effects)
+		}
+	}
+	if !foundNumericRead {
+		t.Fatalf("numeric hardware event effects = %+v, want raw numeric terminal read publish", effects)
+	}
+
 	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
 		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventEvent,
 		Event: WebSocketServerEvent{Topic: "serial-terminal-pipes.session", Payload: terminalPayload},

@@ -219,6 +219,8 @@ func websocketServerEventValue(event WebSocketServerEvent) starlark.Value {
 		"site":           starlark.String(event.Site),
 		"version":        starlark.MakeInt64(event.Version),
 		"payload":        websocketPayloadValue(event.Payload),
+		"payload_text":   starlark.String(string(event.Payload)),
+		"payload_base64": starlark.String(base64.StdEncoding.EncodeToString(event.Payload)),
 	})
 }
 

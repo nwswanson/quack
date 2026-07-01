@@ -191,7 +191,7 @@ def _serial_text(payload):
         return payload
     return str(payload)
 
-def _apply_serial_event(topic, payload):
+def _apply_serial_event(topic, payload, payload_text = ""):
     alias, kind = _topic_parts(topic)
     state = _state()
     if alias == "" or alias != state.get("selected", ""):
@@ -223,7 +223,7 @@ def _apply_serial_event(topic, payload):
         return
 
     if kind == "read":
-        _append_terminal_and_publish(_terminal("read", _serial_text(payload)))
+        _append_terminal_and_publish(_terminal("read", payload_text))
         return
 
     if kind == "read_error" or kind == "write_error" or kind == "disconnected":
@@ -433,7 +433,7 @@ def on_event(ctx, event):
     ws.send(ctx.conn_id, event.payload)
 
 def on_hardware_event(ctx, event):
-    _apply_serial_event(event.topic, event.payload)
+    _apply_serial_event(event.topic, event.payload, event.payload_text)
 
 def on_write_request(ctx, event):
     _apply_write_request(event)

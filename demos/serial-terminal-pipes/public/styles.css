@@ -5,8 +5,6 @@
   --panel-soft: #edf2f4;
   --terminal: #0b1113;
   --terminal-text: #d9f8e8;
-  --debug: #13181c;
-  --debug-text: #ccd8df;
   --text: #172026;
   --muted: #61717d;
   --border: #cbd7de;
@@ -24,8 +22,6 @@
     --panel-soft: #252e33;
     --terminal: #070a0b;
     --terminal-text: #d5fbe5;
-    --debug: #11171a;
-    --debug-text: #c8d6de;
     --text: #eef4f5;
     --muted: #a5b0b8;
     --border: #354149;
@@ -58,10 +54,10 @@ main {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
-  width: min(1600px, calc(100vw - 24px));
+  width: 100%;
   height: 100vh;
-  margin: 0 auto;
-  padding: 14px 0;
+  margin: 0;
+  padding: 14px 12px;
 }
 
 .topbar {
@@ -115,8 +111,7 @@ p {
 }
 
 .controls,
-.terminal-panel,
-.debug-panel {
+.terminal-panel {
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border);
@@ -220,26 +215,16 @@ select:disabled {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 24vw);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
-.terminal-panel,
-.debug-panel {
-  display: grid;
-}
-
 .terminal-panel {
+  display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
-.debug-panel {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.terminal-head,
-.debug-head {
+.terminal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -250,8 +235,7 @@ select:disabled {
   font-weight: 800;
 }
 
-.terminal,
-.debug-log {
+.terminal {
   min-height: 0;
   margin: 0;
   overflow: auto;
@@ -261,12 +245,6 @@ select:disabled {
   font: 0.92rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.debug-log {
-  color: var(--debug-text);
-  background: var(--debug);
-  font-size: 0.8rem;
 }
 
 .command-line {
@@ -295,21 +273,18 @@ select:disabled {
     min-height: 100vh;
   }
 
-  .controls,
-  .workspace {
+  .controls {
     grid-template-columns: 1fr;
   }
 
-  .terminal-panel,
-  .debug-panel {
+  .terminal-panel {
     min-height: 58vh;
   }
 }
 
 @media (max-width: 680px) {
   main {
-    width: min(100vw - 16px, 1600px);
-    padding: 8px 0;
+    padding: 8px;
   }
 
   .topbar {

@@ -11,6 +11,7 @@ const state = {
   reconnectTimer: 0,
   reconnectDelay: 600,
   localSettingsWrite: false,
+  terminalAtLineStart: true,
 };
 
 const els = {
@@ -26,9 +27,7 @@ const els = {
   commandInput: document.getElementById("commandInput"),
   sendBtn: document.getElementById("sendBtn"),
   lineEnding: document.getElementById("lineEnding"),
-  debugLog: document.getElementById("debugLog"),
   clearTerminalBtn: document.getElementById("clearTerminalBtn"),
-  clearDebugBtn: document.getElementById("clearDebugBtn"),
 };
 
 function socketUrl() {
@@ -122,33 +121,66 @@ function renderState() {
   renderControls();
 }
 
+function appendTerminalText(text) {
+  if (text === "") return;
+  els.terminal.textContent += text;
+  state.terminalAtLineStart = text.endsWith("\n");
+}
+
+function appendTerminalPrefix(line) {
+  const action = line.action_id ? ` ${line.action_id}` : "";
+  appendTerminalText(`[${stamp(line.at)}${action}] `);
+}
+
+function appendReadChunk(line) {
+  const text = line.text;
+  if (state.terminalAtLineStart) {
+    appendTerminalPrefix(line);
+  }
+  appendTerminalText(text);
+}
+
+function appendTerminalLine(line) {
+  if (!state.terminalAtLineStart) {
+    appendTerminalText("\n");
+  }
+  appendTerminalPrefix(line);
+  appendTerminalText(line.text);
+  if (!state.terminalAtLineStart) {
+    appendTerminalText("\n");
+  }
+}
+
 function appendTerminal(line) {
   if (!line || typeof line.text !== "string") return;
-  const action = line.action_id ? ` ${line.action_id}` : "";
-  const prefix = `[${stamp(line.at)}${action}] `;
-  const text = line.text.endsWith("\n") ? line.text : `${line.text}\n`;
-  els.terminal.textContent += `${prefix}${text}`;
+  if (line.kind === "read") {
+    appendReadChunk(line);
+  } else {
+    appendTerminalLine(line);
+  }
   els.terminal.scrollTop = els.terminal.scrollHeight;
 }
 
 function setTerminal(lines) {
   els.terminal.textContent = "";
+  state.terminalAtLineStart = true;
   for (const line of Array.isArray(lines) ? lines : []) {
     appendTerminal(line);
   }
 }
 
-function appendDebug(entry) {
+function logDebug(entry) {
   if (!entry) return;
   const action = entry.action_id ? ` ${entry.action_id}` : "";
-  els.debugLog.textContent += `${stamp(entry.at)} ${entry.kind || "event"}${action}\n${JSON.stringify(entry.payload ?? {}, null, 2)}\n\n`;
-  els.debugLog.scrollTop = els.debugLog.scrollHeight;
+  console.debug(
+    `[serial-terminal-pipes] ${stamp(entry.at)} ${entry.kind || "event"}${action}`,
+    entry.payload ?? {},
+  );
 }
 
-function setDebug(entries) {
-  els.debugLog.textContent = "";
+function logDebugEntries(entries) {
   for (const entry of Array.isArray(entries) ? entries : []) {
-    appendDebug(entry);
+    logDebug(entry);
   }
 }
 
@@ -171,14 +203,14 @@ function handleMessage(event) {
   try {
     message = JSON.parse(event.data);
   } catch (err) {
-    appendDebug({ kind: "socket_error", payload: { message: event.data || err.message } });
+    console.warn("[serial-terminal-pipes] socket_error", { message: event.data || err.message });
     return;
   }
 
   if (message.type === "snapshot") {
     applySharedState(message.state);
     setTerminal(message.terminal);
-    setDebug(message.debug);
+    logDebugEntries(message.debug);
     return;
   }
   if (message.type === "state") {
@@ -190,15 +222,16 @@ function handleMessage(event) {
     return;
   }
   if (message.type === "debug") {
-    appendDebug(message.entry);
+    logDebug(message.entry);
     return;
   }
   if (message.type === "clear_terminal") {
     els.terminal.textContent = "";
+    state.terminalAtLineStart = true;
     return;
   }
   if (message.type === "clear_debug") {
-    els.debugLog.textContent = "";
+    console.debug("[serial-terminal-pipes] clear_debug");
     return;
   }
   if (message.type === "error") {
@@ -206,7 +239,7 @@ function handleMessage(event) {
     return;
   }
   if (message.type !== "ready") {
-    appendDebug({ kind: "socket_message", payload: message });
+    logDebug({ kind: "socket_message", payload: message });
   }
 }
 
@@ -274,6 +307,5 @@ els.commandForm.addEventListener("submit", (event) => {
 });
 els.lineEnding.addEventListener("change", syncSettings);
 els.clearTerminalBtn.addEventListener("click", () => send({ type: "clear_terminal" }));
-els.clearDebugBtn.addEventListener("click", () => send({ type: "clear_debug" }));
 
 connect();
