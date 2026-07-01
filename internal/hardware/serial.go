@@ -17,6 +17,8 @@ const (
 	serialStatusClosed = "closed"
 	serialStatusOpen   = "open"
 	serialStatusError  = "error"
+
+	serialWriteChunkBytes = 4096
 )
 
 type SerialDeviceProvider struct {
@@ -192,6 +194,7 @@ type serialActor struct {
 
 type serialCommand struct {
 	kind    string
+	ctx     context.Context
 	data    []byte
 	request serialRequest
 	reply   chan serialCommandResult
@@ -246,7 +249,7 @@ func newSerialActor(deviceID string, path string, options SerialOptions, openPor
 
 func (a *serialActor) write(ctx context.Context, data []byte) (SerialWriteResponse, error) {
 	reply := make(chan serialCommandResult, 1)
-	if err := a.send(ctx, serialCommand{kind: "write", data: append([]byte(nil), data...), reply: reply}); err != nil {
+	if err := a.send(ctx, serialCommand{kind: "write", ctx: ctx, data: append([]byte(nil), data...), reply: reply}); err != nil {
 		return SerialWriteResponse{}, err
 	}
 	select {
@@ -280,7 +283,7 @@ func (a *serialActor) request(ctx context.Context, req serialRequest) (SerialReq
 	reply := make(chan serialCommandResult, 1)
 	req.data = append([]byte(nil), req.data...)
 	req.until = append([]byte(nil), req.until...)
-	if err := a.send(ctx, serialCommand{kind: "request", request: req, reply: reply}); err != nil {
+	if err := a.send(ctx, serialCommand{kind: "request", ctx: ctx, request: req, reply: reply}); err != nil {
 		return SerialRequestResponse{}, err
 	}
 	select {
@@ -397,7 +400,7 @@ func (a *serialActor) run() {
 					command.reply <- serialCommandResult{err: fmt.Errorf("serial device %q is not open", a.deviceID)}
 					break
 				}
-				n, err := port.Write(command.data)
+				n, err := serialWriteAll(command.ctx, port, command.data)
 				if err != nil {
 					a.setError(err)
 					a.recordEvent("write_error", nil, err)
@@ -428,7 +431,7 @@ func (a *serialActor) run() {
 				if timeoutMillis <= 0 {
 					timeoutMillis = 1000
 				}
-				n, err := port.Write(command.request.data)
+				n, err := serialWriteAll(command.ctx, port, command.request.data)
 				if err != nil {
 					a.setError(err)
 					a.recordEvent("write_error", nil, err)
@@ -546,6 +549,35 @@ func serialReadLoop(port serial.Port, readCh chan<- serialReadResult) {
 			return
 		}
 	}
+}
+
+func serialWriteAll(ctx context.Context, port serial.Port, data []byte) (int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	total := 0
+	for total < len(data) {
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+		end := total + serialWriteChunkBytes
+		if end > len(data) {
+			end = len(data)
+		}
+		n, err := port.Write(data[total:end])
+		if n > 0 {
+			total += n
+		}
+		if err != nil {
+			return total, err
+		}
+		if n == 0 {
+			return total, io.ErrShortWrite
+		}
+	}
+	return total, nil
 }
 
 func (r *pendingSerialRequest) accept(data []byte) bool {

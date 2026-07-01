@@ -124,7 +124,8 @@ function renderState() {
 
 function appendTerminal(line) {
   if (!line || typeof line.text !== "string") return;
-  const prefix = `[${stamp(line.at)}] `;
+  const action = line.action_id ? ` ${line.action_id}` : "";
+  const prefix = `[${stamp(line.at)}${action}] `;
   const text = line.text.endsWith("\n") ? line.text : `${line.text}\n`;
   els.terminal.textContent += `${prefix}${text}`;
   els.terminal.scrollTop = els.terminal.scrollHeight;
@@ -139,7 +140,8 @@ function setTerminal(lines) {
 
 function appendDebug(entry) {
   if (!entry) return;
-  els.debugLog.textContent += `${stamp(entry.at)} ${entry.kind || "event"}\n${JSON.stringify(entry.payload ?? {}, null, 2)}\n\n`;
+  const action = entry.action_id ? ` ${entry.action_id}` : "";
+  els.debugLog.textContent += `${stamp(entry.at)} ${entry.kind || "event"}${action}\n${JSON.stringify(entry.payload ?? {}, null, 2)}\n\n`;
   els.debugLog.scrollTop = els.debugLog.scrollHeight;
 }
 

@@ -1,9 +1,11 @@
-TOPIC = "serial-terminal-pipes.session"
+SESSION_TOPIC = "serial-terminal-pipes.session"
+WRITE_TOPIC = "serial-terminal-pipes.write"
 STATE_KEY = "serial-terminal-pipes.state"
 TERMINAL_KEY = "serial-terminal-pipes.terminal"
 DEBUG_KEY = "serial-terminal-pipes.debug"
 MAX_TERMINAL_LINES = 500
 MAX_DEBUG_LINES = 240
+MAX_TERMINAL_WRITE_BYTES = 4096
 
 def _device_summary(device):
     return {
@@ -67,25 +69,31 @@ def _append_line(key, item, limit):
     memory.set(key, lines)
     return lines
 
-def _terminal(kind, text, by = ""):
+def _terminal(kind, text, by = "", action_id = ""):
     if type(text) != "string" or text == "":
         return None
-    return {
+    item = {
         "at": "",
         "kind": kind,
         "text": text,
         "by": by,
     }
+    if action_id != "":
+        item["action_id"] = action_id
+    return item
 
-def _debug(kind, payload):
-    return {
+def _debug(kind, payload, action_id = ""):
+    item = {
         "at": "",
         "kind": kind,
         "payload": payload,
     }
+    if action_id != "":
+        item["action_id"] = action_id
+    return item
 
-def _remember_debug(kind, payload):
-    item = _debug(kind, payload)
+def _remember_debug(kind, payload, action_id = ""):
+    item = _debug(kind, payload, action_id)
     _append_line(DEBUG_KEY, item, MAX_DEBUG_LINES)
     return item
 
@@ -100,8 +108,17 @@ def _snapshot(extra = {}):
         out[key] = extra[key]
     return out
 
-def _publish(message):
-    events.publish(TOPIC, message)
+def _with_action(message, action_id):
+    if action_id == "":
+        return message
+    out = {}
+    for key in message:
+        out[key] = message[key]
+    out["action_id"] = action_id
+    return out
+
+def _publish(message, action_id = ""):
+    events.publish(SESSION_TOPIC, _with_action(message, action_id), action_id=action_id)
 
 def _state_changed():
     _publish({
@@ -151,15 +168,15 @@ def _refresh_devices():
     _remember_debug("devices", {"count": len(devices), "selected": selected})
     _state_changed()
 
-def _append_terminal_and_publish(item):
+def _append_terminal_and_publish(item, action_id = ""):
     if item == None:
         return
     _append_line(TERMINAL_KEY, item, MAX_TERMINAL_LINES)
-    _publish({"type": "terminal", "line": item})
+    _publish({"type": "terminal", "line": item}, action_id)
 
-def _append_debug_and_publish(kind, payload):
-    item = _remember_debug(kind, payload)
-    _publish({"type": "debug", "entry": item})
+def _append_debug_and_publish(kind, payload, action_id = ""):
+    item = _remember_debug(kind, payload, action_id)
+    _publish({"type": "debug", "entry": item}, action_id)
 
 def _topic_parts(topic):
     parts = topic.split(".")
@@ -226,9 +243,56 @@ def _apply_serial_event(topic, payload):
     if kind == "overflow":
         _append_terminal_and_publish(_terminal("error", "! serial event overflow"))
 
+def _apply_write_request(event):
+    payload = event.payload
+    if type(payload) != "dict":
+        return
+    action_id = event.action_id
+    alias = payload.get("device", "")
+    text = payload.get("text", "")
+    data = payload.get("data", "")
+    by = payload.get("by", "")
+    state = _state()
+    if alias == "" or alias != state.get("selected", "") or not state.get("connected", False):
+        _append_debug_and_publish("write_rejected", {
+            "device": alias,
+            "reason": "not connected",
+            "by": by,
+        }, action_id)
+        return
+    if type(data) != "string" or data == "":
+        _append_debug_and_publish("write_rejected", {
+            "device": alias,
+            "reason": "empty write",
+            "by": by,
+        }, action_id)
+        return
+    if len(data) > MAX_TERMINAL_WRITE_BYTES:
+        _append_debug_and_publish("write_rejected", {
+            "device": alias,
+            "reason": "write too large",
+            "bytes": len(data),
+            "max_bytes": MAX_TERMINAL_WRITE_BYTES,
+            "by": by,
+        }, action_id)
+        return
+
+    _append_debug_and_publish("write_started", {
+        "device": alias,
+        "text": text,
+        "by": by,
+    }, action_id)
+    serial.write(alias, data)
+    _append_debug_and_publish("write_completed", {
+        "device": alias,
+        "text": text,
+        "by": by,
+    }, action_id)
+    _append_terminal_and_publish(_terminal("input", "> " + text, by, action_id), action_id)
+
 def on_connect(ctx):
     state = _state()
-    ws.subscribe(ctx.conn_id, TOPIC)
+    ws.subscribe(ctx.conn_id, SESSION_TOPIC)
     ws.send(ctx.conn_id, {"type": "ready", "conn_id": ctx.conn_id})
     if len(state.get("devices", [])) == 0 and not state.get("locked", False):
         _refresh_devices()
@@ -325,9 +389,28 @@ def on_message(ctx, msg):
             return
         settings = _clean_settings(state.get("settings", {}))
         data = text + _line_ending(settings.get("line_ending", "lf"))
-        serial.write(alias, data)
-        _append_debug_and_publish("write", {"device": alias, "text": text, "by": ctx.conn_id})
-        _append_terminal_and_publish(_terminal("input", "> " + text, ctx.conn_id))
+        if len(data) > MAX_TERMINAL_WRITE_BYTES:
+            ws.send(ctx.conn_id, {
+                "type": "error",
+                "message": "terminal writes are limited to " + str(MAX_TERMINAL_WRITE_BYTES) + " bytes",
+            })
+            _append_debug_and_publish("write_rejected", {
+                "device": alias,
+                "reason": "write too large",
+                "bytes": len(data),
+                "max_bytes": MAX_TERMINAL_WRITE_BYTES,
+                "by": ctx.conn_id,
+            })
+            return
+        action_id = events.new_action_id()
+        events.publish(WRITE_TOPIC, {
+            "type": "serial_write_requested",
+            "device": alias,
+            "text": text,
+            "data": data,
+            "by": ctx.conn_id,
+        }, action_id=action_id)
+        _append_debug_and_publish("write_queued", {"device": alias, "text": text, "by": ctx.conn_id}, action_id)
         return
 
     if msg_type == "clear_terminal":
@@ -351,6 +434,9 @@ def on_event(ctx, event):
 
 def on_hardware_event(ctx, event):
     _apply_serial_event(event.topic, event.payload)
+
+def on_write_request(ctx, event):
+    _apply_write_request(event)
 
 def on_disconnect(ctx):
     ws.unsubscribe_all(ctx.conn_id)

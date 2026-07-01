@@ -3,6 +3,8 @@ package hardware
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -71,11 +73,76 @@ func TestSerialProviderOpenThenWrite(t *testing.T) {
 	}
 }
 
+func TestSerialProviderWriteLoopsThroughPartialWrites(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	port.maxWrite = 2
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeResp, err := provider.WriteSerial(context.Background(), SerialWriteRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     []byte("HELLO"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeResp.Bytes != 5 || string(port.written()) != "HELLO" {
+		t.Fatalf("write resp/data = %+v/%q, want 5 bytes and HELLO", writeResp, string(port.written()))
+	}
+	if got := port.writeCallLengths(); strings.Join(got, ",") != "2,2,1" {
+		t.Fatalf("write call lengths = %v, want [2 2 1]", got)
+	}
+}
+
+func TestSerialProviderWriteTreatsZeroByteWriteAsShortWrite(t *testing.T) {
+	provider := NewSerialProvider()
+	port := newFakeSerialPort()
+	port.zeroWrite = true
+	provider.openPort = func(string, *serial.Mode) (serial.Port, error) {
+		return port, nil
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	if _, err := provider.OpenSerial(context.Background(), SerialOpenRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := provider.WriteSerial(context.Background(), SerialWriteRequest{
+		DeviceID: "meter",
+		Path:     "/dev/ttyUSB0",
+		Data:     []byte("READ\n"),
+	})
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("WriteSerial error = %v, want short write", err)
+	}
+}
+
 type fakeSerialPort struct {
-	mu      sync.Mutex
-	closed  bool
-	writes  []byte
-	closeCh chan struct{}
+	mu        sync.Mutex
+	closed    bool
+	writes    []byte
+	maxWrite  int
+	zeroWrite bool
+	callLens  []int
+	closeCh   chan struct{}
 }
 
 func newFakeSerialPort() *fakeSerialPort {
@@ -95,8 +162,17 @@ func (p *fakeSerialPort) Write(data []byte) (int, error) {
 	if p.closed {
 		return 0, errors.New("closed")
 	}
-	p.writes = append(p.writes, data...)
-	return len(data), nil
+	if p.zeroWrite {
+		p.callLens = append(p.callLens, 0)
+		return 0, nil
+	}
+	n := len(data)
+	if p.maxWrite > 0 && n > p.maxWrite {
+		n = p.maxWrite
+	}
+	p.callLens = append(p.callLens, n)
+	p.writes = append(p.writes, data[:n]...)
+	return n, nil
 }
 
 func (p *fakeSerialPort) Drain() error             { return nil }
@@ -125,4 +201,14 @@ func (p *fakeSerialPort) written() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]byte(nil), p.writes...)
+}
+
+func (p *fakeSerialPort) writeCallLengths() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, 0, len(p.callLens))
+	for _, n := range p.callLens {
+		out = append(out, fmt.Sprintf("%d", n))
+	}
+	return out
 }

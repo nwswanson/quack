@@ -1406,7 +1406,54 @@ func TestDemoSerialTerminalPipesWebSocketExecutes(t *testing.T) {
 
 	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
 		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
+		Message: []byte(fmt.Sprintf(`{"type":"write","text":"%s"}`, strings.Repeat("A", 5000))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hardwareSvc.writeReq.DeviceID != "" {
+		t.Fatalf("oversized write reached hardware: %+v", hardwareSvc.writeReq)
+	}
+	foundTooLarge := false
+	for _, effect := range effects {
+		if effect.Type == WebSocketEffectSend && strings.Contains(string(effect.Payload), "limited to 4096 bytes") {
+			foundTooLarge = true
+		}
+		if effect.Type == WebSocketEffectPublish && effect.Topic == "serial-terminal-pipes.write" {
+			t.Fatalf("oversized write effects = %+v, want no write request publish", effects)
+		}
+	}
+	if !foundTooLarge {
+		t.Fatalf("oversized write effects = %+v, want size error", effects)
+	}
+
+	effects, err = executor.InvokeWebSocket(context.Background(), bundle, WebSocketEvent{
+		Site: "demo-serial-terminal-pipes", Version: 1, Route: "/ws", ConnID: "c1", EventType: WebSocketEventMessage,
 		Message: []byte(`{"type":"write","text":"READ"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hardwareSvc.writeReq.DeviceID != "" {
+		t.Fatalf("write was sent directly from websocket handler: %+v", hardwareSvc.writeReq)
+	}
+	var writeRequest WebSocketEffect
+	for _, effect := range effects {
+		if strings.Contains(string(effect.Payload), `42`) {
+			t.Fatalf("write effects = %+v, want no read output until hardware event", effects)
+		}
+		if effect.Type == WebSocketEffectPublish && effect.Topic == "serial-terminal-pipes.write" {
+			writeRequest = effect
+		}
+	}
+	if writeRequest.Type != WebSocketEffectPublish || !strings.HasPrefix(writeRequest.ActionID, "act_") || !strings.Contains(string(writeRequest.Payload), `"type":"serial_write_requested"`) {
+		t.Fatalf("write effects = %+v, want action-tagged write request publish", effects)
+	}
+
+	effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{
+		Site: "demo-serial-terminal-pipes", Version: 1, Entrypoint: "api/terminal.star", Handler: "on_write_request",
+		Topic: "serial-terminal-pipes.write", Payload: writeRequest.Payload,
+		Event: EventEnvelope{Topic: "serial-terminal-pipes.write", ActionID: writeRequest.ActionID, Payload: writeRequest.Payload},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1414,10 +1461,21 @@ func TestDemoSerialTerminalPipesWebSocketExecutes(t *testing.T) {
 	if got := string(hardwareSvc.writeReq.Data); got != "READ\n" {
 		t.Fatalf("write data = %q, want READ newline", got)
 	}
+	foundWriteCompleted := false
+	foundInput := false
 	for _, effect := range effects {
-		if strings.Contains(string(effect.Payload), `42`) {
-			t.Fatalf("write effects = %+v, want no read output until hardware event", effects)
+		if effect.Type != WebSocketEffectPublish || effect.Topic != "serial-terminal-pipes.session" || effect.ActionID != writeRequest.ActionID {
+			continue
 		}
+		if strings.Contains(string(effect.Payload), `"kind":"write_completed"`) {
+			foundWriteCompleted = true
+		}
+		if strings.Contains(string(effect.Payload), `"kind":"input"`) && strings.Contains(string(effect.Payload), `"action_id":"`+writeRequest.ActionID+`"`) {
+			foundInput = true
+		}
+	}
+	if !foundWriteCompleted || !foundInput {
+		t.Fatalf("write request effects = %+v, want action-tagged write completed debug and input terminal events", effects)
 	}
 
 	effects, err = executor.InvokeEvent(context.Background(), bundle, EventInvocation{

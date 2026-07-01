@@ -3,6 +3,8 @@ routes:
     kind: websocket
     runtime: starlark
     entrypoint: api/terminal.star
+    limits:
+      max_request_bytes: 8192
 
   - path: /
     kind: static
@@ -16,6 +18,13 @@ pipes:
   - name: serial-terminal-pipes.session
     retain: 64
 
+  - name: serial-terminal-pipes.write
+    retain: 64
+
 events:
   - selector: "hardware.serial.*"
     on_event: api/terminal.star:on_hardware_event
+
+  - selector: "serial-terminal-pipes.write"
+    concurrency: serial_by_topic
+    on_event: api/terminal.star:on_write_request

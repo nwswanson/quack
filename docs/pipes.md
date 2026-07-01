@@ -47,6 +47,14 @@ entrypoint when matching events are published.
 Pipes and event routes are declared in `site.yml`:
 
 ```yaml
+routes:
+  - path: /ws
+    kind: websocket
+    runtime: starlark
+    entrypoint: api/terminal.star
+    limits:
+      max_request_bytes: 8192
+
 pipes:
   - name: serial-terminal-pipes.session
     retain: 64
@@ -57,9 +65,16 @@ pipes:
     overflow: drop_oldest
     key_by: selector
 
+  - name: serial-terminal-pipes.write
+    retain: 64
+
 events:
   - selector: "hardware.serial.*"
     on_event: api/terminal.star:on_hardware_event
+
+  - selector: "serial-terminal-pipes.write"
+    concurrency: serial_by_topic
+    on_event: api/terminal.star:on_write_request
 ```
 
 Pipe names, pipe selectors, and event selectors are dotted names. Each name
@@ -534,12 +549,20 @@ serial actor
   -> websocket subscribers
 ```
 
-Opening and writing are command-style operations initiated from Starlark:
+Opening is a command-style operation initiated from Starlark:
 
 ```python
 serial.open(alias)
-serial.write(alias, data)
 ```
+
+Writes in `demos/serial-terminal-pipes` are queued as events on
+`serial-terminal-pipes.write` with an `action_id`. The manifest routes that pipe
+through `concurrency: serial_by_topic`, and the write handler performs
+`serial.write(alias, data)` one request at a time. Session/debug events emitted
+from that handler keep the same action ID so the browser and trace logs can
+follow each write lifecycle. The WebSocket route also uses a small
+`max_request_bytes` limit because this terminal demo is for interactive commands,
+not bulk serial transfer.
 
 Reads and device state changes flow back through hardware events. In
 `demos/serial-terminal-pipes`, the manifest subscribes an event handler to all
